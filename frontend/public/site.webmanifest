@@ -1,0 +1,21 @@
+{
+  "name": "Tabel",
+  "short_name": "Tabel",
+  "description": "Учебная платформа для менторов, студентов и администраторов.",
+  "start_url": "/",
+  "display": "standalone",
+  "background_color": "#ffffff",
+  "theme_color": "#3730e5",
+  "icons": [
+    {
+      "src": "/favicon.png",
+      "sizes": "32x32",
+      "type": "image/png"
+    },
+    {
+      "src": "/apple-touch-icon.png",
+      "sizes": "180x180",
+      "type": "image/png"
+    }
+  ]
+}
