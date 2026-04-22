@@ -40,6 +40,7 @@ function serializeGradeMap(gradeMap = {}) {
 export function GradebookPage({ api, sessionToken, user, groupId, routeMonth, onNotice, mode = "group" }) {
   const resolvedGroupId = mode === "student" ? user.group_id : groupId;
   const monthValue = routeMonth || toMonthValue();
+  const lockedGradebook = mode === "student" || user.role === "MENTOR" || user.role === "ADMIN";
   const [draftGrades, setDraftGrades] = useState({});
   const [persistedGrades, setPersistedGrades] = useState({});
   const [saveStatus, setSaveStatus] = useState("synced");
@@ -190,7 +191,7 @@ export function GradebookPage({ api, sessionToken, user, groupId, routeMonth, on
       onMonthStep={handleMonthNavigation}
       dirty={dirty}
       mentorMode={user.role === "MENTOR"}
-      lockedMode={user.role === "MENTOR" || mode === "student"}
+      lockedMode={lockedGradebook}
     />
   );
 }

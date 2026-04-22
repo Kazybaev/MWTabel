@@ -12,6 +12,7 @@ from .views import (
     LessonViewSet,
     LogoutAPIView,
     MentorProfileViewSet,
+    ReportDispatchAPIView,
     StudentProfileViewSet,
 )
 
@@ -31,5 +32,6 @@ urlpatterns = [
     path("api/me/", CurrentUserAPIView.as_view(), name="api-me"),
     path("api/dashboard/", DashboardAPIView.as_view(), name="api-dashboard"),
     path("api/meta/", AppMetaAPIView.as_view(), name="api-meta"),
+    path("api/reports/send/", ReportDispatchAPIView.as_view(), name="api-report-dispatch"),
     path("api/", include(api_router.urls)),
 ]

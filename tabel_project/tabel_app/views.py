@@ -7,6 +7,7 @@ from django.db.models import Count
 from django.http import FileResponse, Http404, HttpResponse
 from django.shortcuts import get_object_or_404
 from django.utils import timezone
+from drf_spectacular.utils import OpenApiResponse, extend_schema
 from rest_framework import generics, permissions, status, viewsets
 from rest_framework.decorators import action
 from rest_framework.exceptions import ValidationError
@@ -16,6 +17,7 @@ from rest_framework_simplejwt.tokens import RefreshToken
 from rest_framework_simplejwt.views import TokenObtainPairView
 
 from .models import Group, Lesson, LessonRecord, MentorProfile, StudentProfile, User
+from .report import send_student_month_report
 from .serializers import (
     GroupDetailSerializer,
     GroupListSerializer,
@@ -23,6 +25,7 @@ from .serializers import (
     LessonSerializer,
     LoginSerializer,
     MentorProfileSerializer,
+    ReportDispatchRequestSerializer,
     StudentProfileSerializer,
     UserSerializer,
 )
@@ -449,6 +452,9 @@ class ApiRootAPIView(APIView):
                     "refresh": "/api/auth/refresh/",
                     "logout": "/api/auth/logout/",
                 },
+                "reports": {
+                    "dispatch": "/api/reports/send/",
+                },
             }
         )
 
@@ -499,6 +505,45 @@ class AppMetaAPIView(APIView):
                 "grade_choices": serialize_choice_pairs(LessonRecord.GRADE_CHOICES),
             }
         )
+
+
+class ReportDispatchAPIView(APIView):
+    permission_classes = [permissions.IsAuthenticated]
+
+    @extend_schema(
+        summary="Send one student monthly report to Dify",
+        request=ReportDispatchRequestSerializer,
+        responses={
+            200: OpenApiResponse(description="Report request processed."),
+            502: OpenApiResponse(description="Dify rejected the report or delivery failed."),
+        },
+    )
+    def post(self, request, *args, **kwargs):
+        if request.user.role not in {User.ROLE_ADMIN, User.ROLE_MENTOR}:
+            raise PermissionDenied
+
+        serializer = ReportDispatchRequestSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+
+        student = get_object_or_404(
+            students_for_user(request.user).select_related("user", "group", "group__mentor__user"),
+            pk=serializer.validated_data["student_id"],
+        )
+
+        month_value = serializer.validated_data.get("month")
+        month_start = parse_month_value(month_value) if month_value else None
+        if month_value and month_start is None:
+            raise ValidationError({"month": "Use YYYY-MM format for the report month."})
+
+        result = send_student_month_report(
+            student,
+            run_date=serializer.validated_data.get("run_date"),
+            month_start=month_start,
+            dry_run=serializer.validated_data.get("dry_run", False),
+            force=serializer.validated_data.get("force", True),
+        )
+        response_status = status.HTTP_502_BAD_GATEWAY if result.get("status") == "failed" else status.HTTP_200_OK
+        return Response(result, status=response_status)
 
 
 class MentorProfileViewSet(viewsets.ModelViewSet):

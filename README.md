@@ -174,6 +174,69 @@ git push -u origin main
 - добавить CI для тестов и сборки
 - подключить деплой на Render, Railway или VPS
 
+## Production запуск через Docker
+
+В проект уже добавлены:
+- `Dockerfile`
+- `docker-compose.yml`
+- `docker/nginx/default.conf`
+- `docker/entrypoint.sh`
+
+### 1. Подготовить `.env` для сервера
+
+Используй обычный файл `.env`. Он уже добавлен в [`.gitignore`](/d:/Tabel/.gitignore), поэтому ключи не попадут в GitHub.
+
+В `.env` заполни:
+- `SECRET_KEY`
+- `ALLOWED_HOSTS`
+- `CSRF_TRUSTED_ORIGINS`
+- `DB_PASSWORD`
+- `DIFY_API_KEY`
+
+### 2. Собрать и поднять контейнеры
+
+```bash
+docker compose up --build -d
+```
+
+После этого поднимутся:
+- `db` — PostgreSQL
+- `web` — Django + Gunicorn
+- `nginx` — reverse proxy
+
+### 3. Проверить логи
+
+```bash
+docker compose logs -f web
+docker compose logs -f nginx
+```
+
+### 4. Открыть проект
+
+```text
+http://<server-ip>/
+```
+
+### Полезные команды
+
+Создать администратора:
+
+```bash
+docker compose exec web python manage.py createsuperuser
+```
+
+Запустить demo-данные:
+
+```bash
+docker compose exec web python manage.py seed_demo
+```
+
+Ручная отправка отчётов:
+
+```bash
+docker compose exec web python manage.py send_monthly_reports --force
+```
+
 ## Лицензия
 
 Проект распространяется по лицензии `MIT`. Подробности смотри в [LICENSE](./LICENSE).

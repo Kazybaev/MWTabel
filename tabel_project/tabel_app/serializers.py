@@ -29,6 +29,14 @@ class LoginSerializer(serializers.Serializer):
         }
 
 
+class ReportDispatchRequestSerializer(serializers.Serializer):
+    student_id = serializers.IntegerField()
+    month = serializers.RegexField(regex=r"^\d{4}-\d{2}$", required=False)
+    run_date = serializers.DateField(required=False)
+    dry_run = serializers.BooleanField(required=False, default=False)
+    force = serializers.BooleanField(required=False, default=True)
+
+
 class UserSerializer(serializers.ModelSerializer):
     mentor_profile_id = serializers.SerializerMethodField()
     student_profile_id = serializers.SerializerMethodField()

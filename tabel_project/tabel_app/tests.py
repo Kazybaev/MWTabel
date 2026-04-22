@@ -1,3 +1,4 @@
+import os
 from datetime import date
 from unittest.mock import patch
 
@@ -14,7 +15,7 @@ from .models import (
     StudentProfile,
     User,
 )
-from .report import build_student_month_report, send_due_monthly_reports
+from .report import build_dify_inputs, build_student_month_report, run_dify_workflow, send_due_monthly_reports
 
 
 SQLITE_TEST_DATABASES = {
@@ -185,6 +186,84 @@ class TabelApiTests(APITestCase):
         self.assertEqual(response.data["student_overview"]["grades_count"], 1)
         self.assertEqual(response.data["student_overview"]["attendance_count"], 1)
 
+    @patch("tabel_app.views.send_student_month_report")
+    def test_mentor_can_trigger_report_dispatch_endpoint(self, mocked_send_student_month_report):
+        mocked_send_student_month_report.return_value = {
+            "student_id": self.student.pk,
+            "student_name": self.student.user.full_name,
+            "status": "sent",
+            "dispatch_id": 7,
+            "workflow_run_id": "run-007",
+        }
+
+        client = self.auth_client("mentor", "mentor-pass-123")
+        response = client.post(
+            "/api/reports/send/",
+            {
+                "student_id": self.student.pk,
+                "month": "2026-04",
+                "run_date": "2026-04-30",
+                "dry_run": False,
+            },
+            format="json",
+        )
+
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        mocked_send_student_month_report.assert_called_once()
+        called_student = mocked_send_student_month_report.call_args.args[0]
+        self.assertEqual(called_student.pk, self.student.pk)
+        self.assertEqual(mocked_send_student_month_report.call_args.kwargs["month_start"], date(2026, 4, 1))
+        self.assertEqual(mocked_send_student_month_report.call_args.kwargs["run_date"], date(2026, 4, 30))
+        self.assertFalse(mocked_send_student_month_report.call_args.kwargs["dry_run"])
+        self.assertTrue(mocked_send_student_month_report.call_args.kwargs["force"])
+        self.assertEqual(response.data["workflow_run_id"], "run-007")
+
+    def test_student_cannot_trigger_report_dispatch_endpoint(self):
+        client = self.auth_client("student", "student-pass-123")
+        response = client.post(
+            "/api/reports/send/",
+            {"student_id": self.student.pk},
+            format="json",
+        )
+
+        self.assertEqual(response.status_code, status.HTTP_403_FORBIDDEN)
+
+    def test_mentor_cannot_trigger_report_dispatch_for_foreign_student(self):
+        foreign_mentor_user = User.objects.create_user(
+            username="mentor-foreign",
+            password="mentor-pass-456",
+            full_name="Foreign Mentor",
+            role=User.ROLE_MENTOR,
+        )
+        foreign_mentor = MentorProfile.objects.create(user=foreign_mentor_user)
+        foreign_group = Group.objects.create(
+            course_name="Foreign Group",
+            mentor=foreign_mentor,
+            study_days=Group.TUE_THU_SUN,
+            description="Another mentor group",
+        )
+        foreign_student_user = User.objects.create_user(
+            username="foreign-student",
+            password="student-pass-789",
+            full_name="Foreign Student",
+            role=User.ROLE_STUDENT,
+        )
+        foreign_student = StudentProfile.objects.create(
+            user=foreign_student_user,
+            parent_name="Foreign Parent",
+            parent_phone="+996700000003",
+            group=foreign_group,
+        )
+
+        client = self.auth_client("mentor", "mentor-pass-123")
+        response = client.post(
+            "/api/reports/send/",
+            {"student_id": foreign_student.pk},
+            format="json",
+        )
+
+        self.assertEqual(response.status_code, status.HTTP_404_NOT_FOUND)
+
 
 @override_settings(DATABASES=SQLITE_TEST_DATABASES)
 class MonthlyReportServiceTests(APITestCase):
@@ -247,6 +326,70 @@ class MonthlyReportServiceTests(APITestCase):
         self.assertEqual(payload["summary"]["average_grade"], 4.5)
         self.assertEqual(payload["period"]["last_lesson_date"], "2026-04-30")
         self.assertEqual(len(payload["lessons"]), 3)
+
+    def test_build_dify_inputs_matches_workflow_fields(self):
+        LessonRecord.objects.create(student=self.student, lesson=self.first_lesson, grade="5", comment="Great")
+        payload = build_student_month_report(self.student, month_start=self.month_start)
+
+        inputs = build_dify_inputs(payload)
+
+        self.assertEqual(
+            set(inputs.keys()),
+            {
+                "report",
+                "student_name",
+                "recipient_name",
+                "recipient_phone",
+                "group_name",
+                "mentor_name",
+                "month",
+                "average_grade",
+                "attendance_count",
+                "absence_count",
+                "attendance_rate",
+            },
+        )
+        self.assertEqual(inputs["student_name"], "Report Student")
+        self.assertEqual(inputs["recipient_phone"], "+996700123456")
+        self.assertEqual(inputs["group_name"], "Motion Web")
+
+    @patch("tabel_app.report.request.urlopen")
+    def test_run_dify_workflow_sends_user_agent_header(self, mocked_urlopen):
+        captured = {}
+
+        class FakeResponse:
+            def __enter__(self):
+                return self
+
+            def __exit__(self, exc_type, exc, tb):
+                return False
+
+            def read(self):
+                return b'{"workflow_run_id":"run-ua"}'
+
+        def fake_urlopen(http_request, timeout=0):
+            captured["headers"] = {key.lower(): value for key, value in http_request.header_items()}
+            captured["timeout"] = timeout
+            return FakeResponse()
+
+        mocked_urlopen.side_effect = fake_urlopen
+
+        with patch.dict(
+            os.environ,
+            {
+                "DIFY_API_KEY": "app-test-key",
+                "DIFY_API_URL": "https://api.dify.ai/v1/workflows/run",
+            },
+            clear=False,
+        ):
+            response_payload = run_dify_workflow(
+                {"student_name": "Report Student", "month": "2026-04"},
+                "report:1:2026-04",
+            )
+
+        self.assertEqual(response_payload["workflow_run_id"], "run-ua")
+        self.assertIn("user-agent", captured["headers"])
+        self.assertIn("TabelBackend/1.0", captured["headers"]["user-agent"])
 
     @patch("tabel_app.report.run_dify_workflow")
     def test_reports_are_sent_individually_on_last_lesson_day(self, mocked_run_dify_workflow):

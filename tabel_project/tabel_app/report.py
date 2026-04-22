@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import logging
 import os
 from datetime import date, datetime, timedelta
 from typing import Any
@@ -13,6 +14,15 @@ from .models import Group, Lesson, LessonRecord, MonthlyStudentReportDispatch, S
 
 ABSENCE_GRADE = "\u041d"
 ABSENCE_GRADE_VALUES = {ABSENCE_GRADE, ABSENCE_GRADE.lower()}
+
+logger = logging.getLogger("tabel_app.reports")
+if not logger.handlers:
+    handler = logging.StreamHandler()
+    formatter = logging.Formatter("[%(asctime)s] [reports] %(levelname)s: %(message)s")
+    handler.setFormatter(formatter)
+    logger.addHandler(handler)
+logger.setLevel(getattr(logging, os.getenv("REPORT_LOG_LEVEL", "INFO").upper(), logging.INFO))
+logger.propagate = False
 
 
 class ReportConfigurationError(Exception):
@@ -196,8 +206,6 @@ def build_dify_inputs(report_payload: dict[str, Any]) -> dict[str, Any]:
         "attendance_count": summary["attendance_count"],
         "absence_count": summary["absence_count"],
         "attendance_rate": summary["attendance_rate"],
-        "grades": summary["grades"],
-        "lessons": report_payload["lessons"],
     }
 
 
@@ -206,10 +214,21 @@ def get_dify_run_url() -> str:
     if explicit_url:
         return explicit_url
 
+    legacy_url = os.getenv("DIFY_API_URL", "").strip()
+    if legacy_url:
+        return legacy_url
+
     base_url = os.getenv("DIFY_BASE_URL", "").strip().rstrip("/")
     if not base_url:
-        raise ReportConfigurationError("DIFY_BASE_URL or DIFY_WORKFLOW_RUN_URL must be configured.")
+        raise ReportConfigurationError("DIFY_BASE_URL, DIFY_WORKFLOW_RUN_URL, or DIFY_API_URL must be configured.")
     return f"{base_url}/workflows/run"
+
+
+def get_dify_user_agent() -> str:
+    return os.getenv(
+        "DIFY_USER_AGENT",
+        "TabelBackend/1.0 (+https://tabel.local; Python urllib)",
+    ).strip()
 
 
 def run_dify_workflow(inputs: dict[str, Any], user_key: str) -> dict[str, Any]:
@@ -225,6 +244,13 @@ def run_dify_workflow(inputs: dict[str, Any], user_key: str) -> dict[str, Any]:
         "response_mode": response_mode,
         "user": user_key,
     }
+    logger.info(
+        "Sending report to Dify for student='%s', month='%s', recipient='%s', url='%s'",
+        inputs.get("student_name", ""),
+        inputs.get("month", ""),
+        inputs.get("recipient_phone", ""),
+        url,
+    )
     encoded_payload = json.dumps(payload).encode("utf-8")
     http_request = request.Request(
         url,
@@ -232,6 +258,7 @@ def run_dify_workflow(inputs: dict[str, Any], user_key: str) -> dict[str, Any]:
         headers={
             "Authorization": f"Bearer {api_key}",
             "Content-Type": "application/json",
+            "User-Agent": get_dify_user_agent(),
         },
         method="POST",
     )
@@ -241,21 +268,47 @@ def run_dify_workflow(inputs: dict[str, Any], user_key: str) -> dict[str, Any]:
             raw_body = response.read().decode("utf-8")
     except error.HTTPError as exc:
         error_body = exc.read().decode("utf-8", errors="replace")
+        logger.error(
+            "Dify HTTP error for student='%s', month='%s': status=%s body=%s",
+            inputs.get("student_name", ""),
+            inputs.get("month", ""),
+            exc.code,
+            error_body,
+        )
         raise ReportDeliveryError(f"Dify returned HTTP {exc.code}: {error_body}") from exc
     except error.URLError as exc:
+        logger.error(
+            "Dify connection error for student='%s', month='%s': %s",
+            inputs.get("student_name", ""),
+            inputs.get("month", ""),
+            exc.reason,
+        )
         raise ReportDeliveryError(f"Could not reach Dify: {exc.reason}") from exc
 
     if not raw_body:
+        logger.info(
+            "Dify returned an empty body for student='%s', month='%s'",
+            inputs.get("student_name", ""),
+            inputs.get("month", ""),
+        )
         return {}
 
     try:
-        return json.loads(raw_body)
+        response_payload = json.loads(raw_body)
     except json.JSONDecodeError:
-        return {"raw_response": raw_body}
+        response_payload = {"raw_response": raw_body}
+
+    logger.info(
+        "Dify response for student='%s', month='%s': %s",
+        inputs.get("student_name", ""),
+        inputs.get("month", ""),
+        response_payload,
+    )
+    return response_payload
 
 
 def build_dispatch_user_key(student: StudentProfile, month_start: date) -> str:
-    return f"monthly-student-report:{student.pk}:{month_start:%Y-%m}"
+    return f"report:{student.pk}:{month_start:%Y-%m}"
 
 
 def send_student_month_report(
@@ -270,6 +323,11 @@ def send_student_month_report(
     trigger_date = get_group_last_lesson_date(student.group, month_start)
 
     if trigger_date is None:
+        logger.info(
+            "Skipping report for student='%s': no lessons in month='%s'",
+            student.user.full_name,
+            month_start.strftime("%Y-%m"),
+        )
         return {
             "student_id": student.pk,
             "student_name": student.user.full_name,
@@ -288,6 +346,11 @@ def send_student_month_report(
 
     dispatch = MonthlyStudentReportDispatch.objects.filter(student=student, month=month_start).first()
     if dispatch and dispatch.status == MonthlyStudentReportDispatch.STATUS_SUCCEEDED and not force:
+        logger.info(
+            "Skipping report for student='%s': already sent for month='%s'",
+            student.user.full_name,
+            month_start.strftime("%Y-%m"),
+        )
         return {
             "student_id": student.pk,
             "student_name": student.user.full_name,
@@ -299,6 +362,11 @@ def send_student_month_report(
     report_payload = build_student_month_report(student, month_start=month_start, trigger_date=trigger_date)
 
     if dry_run:
+        logger.info(
+            "Dry run report prepared for student='%s', month='%s'",
+            student.user.full_name,
+            month_start.strftime("%Y-%m"),
+        )
         return {
             "student_id": student.pk,
             "student_name": student.user.full_name,
@@ -325,6 +393,12 @@ def send_student_month_report(
             build_dispatch_user_key(student, month_start),
         )
     except Exception as exc:
+        logger.error(
+            "Report delivery failed for student='%s', month='%s': %s",
+            student.user.full_name,
+            month_start.strftime("%Y-%m"),
+            exc,
+        )
         dispatch.status = MonthlyStudentReportDispatch.STATUS_FAILED
         dispatch.error_message = str(exc)
         dispatch.save(
@@ -365,6 +439,13 @@ def send_student_month_report(
             "sent_at",
             "updated_at",
         ]
+    )
+    logger.info(
+        "Report sent successfully for student='%s', month='%s', dispatch_id=%s, workflow_run_id='%s'",
+        student.user.full_name,
+        month_start.strftime("%Y-%m"),
+        dispatch.pk,
+        dispatch.workflow_run_id,
     )
     return {
         "student_id": student.pk,
