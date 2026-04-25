@@ -192,6 +192,7 @@ export function GradebookPage({ api, sessionToken, user, groupId, routeMonth, on
       dirty={dirty}
       mentorMode={user.role === "MENTOR"}
       lockedMode={lockedGradebook}
+      studentMode={mode === "student"}
     />
   );
 }

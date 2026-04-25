@@ -1,3 +1,5 @@
+import { useEffect, useState } from "react";
+
 import { Badge, Button, NoticeBanner } from "./Ui";
 import { formatRole } from "../lib/format";
 
@@ -172,10 +174,30 @@ export function AppShell({
     .filter(Boolean)
     .join(" ");
   const sidebarClassName = ["sidebar", isMentor ? "sidebar--mentor" : ""].filter(Boolean).join(" ");
+  const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
+
+  useEffect(() => {
+    setMobileMenuOpen(false);
+  }, [currentPath]);
 
   return (
     <div className={shellClassName}>
-      <aside className={sidebarClassName}>
+      <div
+        className={`app-shell__backdrop ${mobileMenuOpen ? "app-shell__backdrop--visible" : ""}`.trim()}
+        onClick={() => setMobileMenuOpen(false)}
+      />
+
+      <aside className={`${sidebarClassName} ${mobileMenuOpen ? "sidebar--mobile-open" : ""}`.trim()}>
+        <div className="sidebar__mobile-head">
+          <div className="sidebar__mobile-brand">
+            <span>{formatRole(user.role)}</span>
+            <strong>{user.full_name}</strong>
+          </div>
+          <button type="button" className="sidebar__mobile-close" onClick={() => setMobileMenuOpen(false)}>
+            ×
+          </button>
+        </div>
+
         {isMentor ? (
           <MentorSidebar currentPath={currentPath} mentorGroups={mentorGroups} user={user} />
         ) : (
@@ -206,21 +228,28 @@ export function AppShell({
       <div
         className={`workspace ${isMentor ? "workspace--mentor" : ""} ${lockedContent ? "workspace--locked" : ""}`.trim()}
       >
-        <header className="topbar">
-          <div>
-            <p className="topbar__eyebrow">{topbarEyebrow}</p>
-            <h2>{topbarTitle}</h2>
-          </div>
-          <div className="topbar__actions">
-            <span className="topbar__user">{user.full_name}</span>
-            <Button variant="ghost" onClick={onLogout}>
-              Выйти
-            </Button>
-          </div>
-        </header>
+        <div className="workspace__stage">
+          <div className="workspace__stage-inner">
+            <header className="topbar">
+              <div className="topbar__heading">
+                <button type="button" className="topbar__menu-button" onClick={() => setMobileMenuOpen(true)}>
+                  ☰
+                </button>
+                <p className="topbar__eyebrow">{topbarEyebrow}</p>
+                <h2>{topbarTitle}</h2>
+              </div>
+              <div className="topbar__actions">
+                <span className="topbar__user">{user.full_name}</span>
+                <Button variant="ghost" onClick={onLogout}>
+                  Выйти
+                </Button>
+              </div>
+            </header>
 
-        <NoticeBanner notice={notice} onDismiss={onDismissNotice} />
-        <main className="workspace__content">{children}</main>
+            <NoticeBanner notice={notice} onDismiss={onDismissNotice} />
+            <main className="workspace__content">{children}</main>
+          </div>
+        </div>
       </div>
     </div>
   );

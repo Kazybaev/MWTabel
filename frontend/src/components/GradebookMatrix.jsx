@@ -12,8 +12,8 @@ function resolveGradeTone(grade, fallbackTone = "empty") {
       "4": "good",
       "3": "warning",
       "2": "danger",
-      "Н": "absence",
-      "н": "absence",
+      Н: "absence",
+      н: "absence",
       A: "excellent",
       B: "good",
       C: "warning",
@@ -29,6 +29,18 @@ function formatAverageGrade(value) {
   return Number(value).toFixed(1).replace(".", ",");
 }
 
+function buildPanelTitle(data, mentorMode) {
+  return mentorMode ? "" : data.page_title;
+}
+
+function buildPanelDescription(data, mentorMode) {
+  if (mentorMode) {
+    return "";
+  }
+
+  return data.page_copy;
+}
+
 export function GradebookMatrix({
   data,
   draftGrades,
@@ -40,6 +52,7 @@ export function GradebookMatrix({
   dirty,
   mentorMode = false,
   lockedMode = false,
+  studentMode = false,
 }) {
   const saveMessage =
     {
@@ -52,13 +65,14 @@ export function GradebookMatrix({
   return (
     <div
       className={`gradebook-layout ${mentorMode ? "gradebook-layout--mentor" : ""} ${
+        studentMode ? "gradebook-layout--student" : ""
+      } ${
         lockedMode ? "gradebook-layout--locked" : ""
       }`.trim()}
     >
       {mentorMode ? (
         <section className="gradebook-header">
           <div>
-            <p className="gradebook-header__eyebrow">ТАБЕЛЬ ГРУППЫ</p>
             <h2>{data.group.course_name}</h2>
             <p>
               {data.rows.length} студентов · {data.filled_days_count} активных дней в месяце
@@ -72,7 +86,7 @@ export function GradebookMatrix({
       ) : (
         <section className="hero-band">
           <div>
-            <p className="hero-band__eyebrow">МАТРИЦА</p>
+            <p className="hero-band__eyebrow">Матрица</p>
             <h2>{data.page_title}</h2>
             <p>{data.page_copy}</p>
           </div>
@@ -86,9 +100,9 @@ export function GradebookMatrix({
 
       <Panel
         className={lockedMode ? "gradebook-panel" : ""}
-        eyebrow="Месяц"
-        title="Табель группы"
-        description="Только студенты и оценки по датам. Выберите месяц и заполняйте ячейки прямо в таблице."
+        eyebrow={mentorMode ? "" : "Месяц"}
+        title={buildPanelTitle(data, mentorMode)}
+        description={buildPanelDescription(data, mentorMode)}
         actions={
           <div className="month-actions">
             <Button variant="ghost" onClick={() => onMonthStep(data.previous_month_value)}>
