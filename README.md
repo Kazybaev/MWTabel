@@ -1,138 +1,132 @@
 # Tabel
 
-`Tabel` - это учебная платформа для администрирования групп, ведения месячного табеля и просмотра оценок студентами.
+<p align="center">
+  <img src="./assets/motion-community-logo.jfif" alt="Motion Community" width="180" />
+</p>
 
-Проект построен как `React + Django REST Framework`:
-- `React` отвечает за интерфейс
-- `Django + DRF` отвечают за API, роли, табель, уроки и отчёты
-- `PostgreSQL` используется как основная база данных
+<p align="center">
+  Учебная платформа для админа, ментора и студента: группы, месячный табель, оценки, посещаемость и отчёты.
+</p>
 
-## Возможности
+## О проекте
 
-- админ управляет менторами, студентами и группами
-- ментор выставляет оценки по дням в месячном табеле
-- студент видит только свои оценки и краткую сводку
-- поддерживается посещаемость, средний балл и месячная матрица оценок
-- в проект добавлена серверная логика месячных отчётов по каждому студенту с отправкой в Dify
+`Tabel` — это веб-система для учебных центров и IT-школ, где:
 
-## Стек
+- администратор управляет группами, менторами и студентами;
+- ментор работает со своими группами и ведёт табель;
+- студент видит только свои оценки и свою сводку;
+- в конце месяца можно формировать и отправлять отчёты через `Dify`.
 
-- Python
-- Django
-- Django REST Framework
-- JWT (`SimpleJWT`)
-- PostgreSQL
-- React
-- Vite
+Стек проекта:
 
-## Структура проекта
+- `React + Vite` — интерфейс;
+- `Django + Django REST Framework` — backend и API;
+- `PostgreSQL` — production-база данных;
+- `JWT` — авторизация;
+- `Docker + Nginx + Gunicorn` — production-развёртывание.
 
-```text
-.
-├── frontend/                  # React frontend
-├── tabel_project/
-│   ├── tabel_project/         # Django settings, urls, wsgi
-│   └── tabel_app/             # модели, API, отчёты, management commands
-├── .env.example               # пример переменных окружения
-├── requirements.txt
-└── README.md
-```
+## Что умеет система
 
-## Быстрый запуск
+- роли `ADMIN`, `MENTOR`, `STUDENT`;
+- управление группами;
+- управление студентами;
+- управление менторами;
+- месячный табель с оценками по дням;
+- учёт посещаемости;
+- расчёт среднего балла;
+- личный кабинет студента;
+- автоотчёты по студентам через `Dify`;
+- mobile-friendly интерфейс.
 
-### 1. Клонирование
+## Роли и возможности
 
-```bash
-git clone https://github.com/<your-username>/tabel.git
-cd tabel
-```
+### Администратор
 
-### 2. Подготовка окружения
+Администратор может:
 
-Создай `.env` на основе [`.env.example`](./.env.example).
+- создавать и редактировать группы;
+- добавлять менторов;
+- добавлять студентов;
+- назначать студентов в группы;
+- видеть общую сводку по системе;
+- просматривать уроки, группы и состав потоков.
 
-Пример:
+### Ментор
 
-```env
-SECRET_KEY=django-insecure-change-me
-DEBUG=True
-ALLOWED_HOSTS=127.0.0.1,localhost,testserver
+Ментор может:
 
-DB_POSTGRES=motionweb
-DB_USER=postgres
-DB_PASSWORD=change-me
-DB_HOST=localhost
-DB_PORT=5432
+- видеть только свои группы;
+- открывать табель группы по месяцам;
+- выставлять оценки по дням;
+- отмечать пропуски;
+- видеть посещаемость и средний балл студентов;
+- работать с табелем на компьютере и телефоне.
 
-DIFY_BASE_URL=https://your-dify-domain/v1
-DIFY_API_KEY=your-dify-api-key
-DIFY_RESPONSE_MODE=blocking
-DIFY_TIMEOUT_SECONDS=30
-```
+### Студент
 
-### 3. Установка зависимостей backend
+Студент может:
 
-```bash
-python -m venv .venv
-.venv\Scripts\activate
-pip install -r requirements.txt
-```
+- входить только в свой кабинет;
+- видеть только свои оценки;
+- видеть только свой месячный табель;
+- видеть посещаемость;
+- видеть средний балл;
+- пользоваться системой без доступа к другим студентам.
 
-### 4. Установка зависимостей frontend
+## Как пользоваться системой
 
-```bash
-cd frontend
-npm install
-cd ..
-```
+### 1. Вход
 
-### 5. Миграции
+Пользователь открывает проект и входит по своему логину и паролю.
 
-```bash
-python tabel_project\manage.py migrate
-```
+После входа система автоматически показывает интерфейс по роли:
 
-### 6. Демо-данные
+- админу — панель управления;
+- ментору — группы и табель;
+- студенту — личный кабинет и оценки.
 
-```bash
-python tabel_project\manage.py seed_demo
-```
+### 2. Работа администратора
 
-### 7. Сборка frontend
+Обычный сценарий:
 
-```bash
-cd frontend
-npm run build
-cd ..
-```
+1. Создать группу.
+2. Назначить ментора.
+3. Добавить студентов.
+4. Проверить, что группа и состав сохранены.
+5. Передать работу ментору.
 
-### 8. Запуск проекта
+### 3. Работа ментора
 
-```bash
-python tabel_project\manage.py runserver
-```
+Обычный сценарий:
 
-Открыть:
+1. Открыть свою группу.
+2. Выбрать месяц.
+3. Выставить оценки по дням.
+4. Отметить пропуски.
+5. Проверить средний балл и посещаемость.
 
-```text
-http://127.0.0.1:8000/
-```
+### 4. Работа студента
 
-## Демо-аккаунты
+Обычный сценарий:
 
-- `admin_demo / admin12345`
-- `mentor_demo / mentor12345`
-- `student_demo_1 / student12345`
+1. Войти в личный кабинет.
+2. Открыть страницу `Мои оценки`.
+3. Посмотреть табель за месяц.
+4. Проверить средний балл и посещаемость.
 
-## Месячные отчёты в Dify
+## Месячные отчёты
 
-В проекте есть сервис отчётов по студентам:
-- собирает оценки, посещаемость, средний балл и список уроков за месяц
-- определяет последний урок месяца для группы
-- отправляет отчёт в Dify по одному студенту
-- защищён от повторной отправки за тот же месяц
+В проекте есть логика отправки месячных отчётов по студентам.
 
-Команда запуска:
+Что делает система:
+
+- собирает оценки за месяц;
+- считает посещаемость;
+- считает средний балл;
+- формирует данные по студенту;
+- отправляет payload в `Dify Workflow API`.
+
+Ручной запуск:
 
 ```bash
 python tabel_project\manage.py send_monthly_reports
@@ -147,77 +141,86 @@ python tabel_project\manage.py send_monthly_reports --group-id 1
 python tabel_project\manage.py send_monthly_reports --student-id 5
 ```
 
-## Публикация на GitHub
 
-Перед публикацией проверь:
+## Структура проекта
 
-1. `.env` не должен попадать в репозиторий
-2. реальные ключи и пароли должны храниться только локально или в secrets хостинга
-3. `frontend/dist` и `node_modules` не нужно коммитить
-4. перед первым push желательно сделать первый осмысленный commit
-
-Минимальный набор команд:
-
-```bash
-git init
-git add .
-git commit -m "Initial commit"
-git branch -M main
-git remote add origin https://github.com/<your-username>/tabel.git
-git push -u origin main
+```text
+.
+├── assets/                 # логотип и дополнительные изображения
+├── docker/                 # nginx и entrypoint
+├── frontend/               # React frontend
+├── scripts/                # вспомогательные локальные скрипты
+├── tabel_project/
+│   ├── tabel_project/      # settings, urls, wsgi
+│   └── tabel_app/          # модели, API, отчёты, management commands
+├── docker-compose.yml
+├── Dockerfile
+├── requirements.txt
+└── README.md
 ```
 
-## Что ещё можно улучшить
+## Локальный запуск
 
-- добавить Docker и `docker-compose`
-- вынести production settings отдельно
-- добавить CI для тестов и сборки
-- подключить деплой на Render, Railway или VPS
+### Backend
+
+```bash
+python -m venv .venv
+.venv\Scripts\activate
+pip install -r requirements.txt
+python tabel_project\manage.py migrate
+python tabel_project\manage.py seed_demo
+python tabel_project\manage.py runserver
+```
+
+### Frontend
+
+```bash
+cd frontend
+npm install
+npm run dev
+```
+
+Открыть:
+
+- frontend dev: `http://127.0.0.1:5173/`
+- backend: `http://127.0.0.1:8000/`
 
 ## Production запуск через Docker
 
-В проект уже добавлены:
+В проекте уже есть:
+
 - `Dockerfile`
 - `docker-compose.yml`
 - `docker/nginx/default.conf`
 - `docker/entrypoint.sh`
 
-### 1. Подготовить `.env` для сервера
+### Что заполнить в `.env`
 
-Используй обычный файл `.env`. Он уже добавлен в [`.gitignore`](/d:/Tabel/.gitignore), поэтому ключи не попадут в GitHub.
+Обязательно проверь:
 
-В `.env` заполни:
 - `SECRET_KEY`
+- `DEBUG=False`
 - `ALLOWED_HOSTS`
 - `CSRF_TRUSTED_ORIGINS`
+- `DB_USER`
+- `DB_POSTGRES`
 - `DB_PASSWORD`
+- `DB_HOST=db`
+- `DB_PORT=5432`
 - `DIFY_API_KEY`
 
-### 2. Собрать и поднять контейнеры
+### Запуск на сервере
 
 ```bash
 docker compose up --build -d
 ```
 
-После этого поднимутся:
-- `db` — PostgreSQL
-- `web` — Django + Gunicorn
-- `nginx` — reverse proxy
-
-### 3. Проверить логи
+Проверка логов:
 
 ```bash
 docker compose logs -f web
 docker compose logs -f nginx
 ```
-
-### 4. Открыть проект
-
-```text
-http://<server-ip>/
-```
-
-### Полезные команды
 
 Создать администратора:
 
@@ -231,12 +234,23 @@ docker compose exec web python manage.py createsuperuser
 docker compose exec web python manage.py seed_demo
 ```
 
-Ручная отправка отчётов:
+Открыть проект:
 
-```bash
-docker compose exec web python manage.py send_monthly_reports --force
+```text
+http://<server-ip>/
 ```
+
+## Важные замечания
+
+- `.env` не должен попадать в GitHub;
+- реальные ключи и пароли должны храниться только локально или на сервере;
+- перед production лучше использовать новый `SECRET_KEY` и актуальные ключи;
+- для домена и HTTPS потом нужно обновить `ALLOWED_HOSTS`, `CSRF_TRUSTED_ORIGINS` и SSL-настройки.
 
 ## Лицензия
 
-Проект распространяется по лицензии `MIT`. Подробности смотри в [LICENSE](./LICENSE).
+Проект распространяется по лицензии `MIT`.
+
+## Команда
+
+Этот проект создан вместе с командой **Motion Community**.
