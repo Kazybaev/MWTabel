@@ -1,7 +1,7 @@
 {
-  "name": "Tabel",
+  "name": "Motion Web Tabel",
   "short_name": "Tabel",
-  "description": "Учебный портал Motion Web",
+  "description": "Система табеля и оценок студентов Motion Web",
   "start_url": "/",
   "scope": "/",
   "display": "standalone",
@@ -14,8 +14,8 @@
       "type": "image/png"
     },
     {
-      "src": "/apple-touch-icon.png",
-      "sizes": "180x180",
+      "src": "/favicon.png",
+      "sizes": "32x32",
       "type": "image/png"
     }
   ]
