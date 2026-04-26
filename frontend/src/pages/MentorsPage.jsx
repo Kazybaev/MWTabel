@@ -132,10 +132,7 @@ export function MentorsPage({ api, sessionToken, user, onNotice }) {
               <div key={mentor.id} className="list-card list-card--actions">
                 <div>
                   <strong>{mentor.full_name}</strong>
-                  <p>
-                    {mentor.username}
-                    {mentor.email ? ` · ${mentor.email}` : ""}
-                  </p>
+                  <p>{mentor.email || "Доступ к аккаунту ментора настроен"}</p>
                 </div>
                 <div className="list-card__actions">
                   <Badge tone="teal">{mentor.groups_count} групп</Badge>

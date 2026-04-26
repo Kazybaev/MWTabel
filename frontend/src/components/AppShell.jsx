@@ -38,7 +38,8 @@ function buildSidebarIntro(role, currentPath) {
       return {
         eyebrow: "Ментор",
         title: "Табель группы",
-        description: "Вы можете ставить оценки по дням, заполнять месяц и сразу видеть всю группу в одной матрице.",
+        description:
+          "Вы можете ставить оценки по дням, заполнять месяц и сразу видеть всю группу в одной матрице.",
       };
     }
 
@@ -106,7 +107,7 @@ function SidebarIntro({ eyebrow, title, description, compact = false }) {
   );
 }
 
-function MentorSidebar({ currentPath, mentorGroups, user }) {
+function MentorSidebar({ currentPath, mentorGroups, user, onLogout }) {
   const currentGroupId = extractCurrentGroupId(currentPath);
   const intro = buildSidebarIntro("MENTOR", currentPath);
 
@@ -149,7 +150,9 @@ function MentorSidebar({ currentPath, mentorGroups, user }) {
       <div className="sidebar__profile mentor-sidebar__profile">
         <Badge tone="teal">{formatRole(user.role)}</Badge>
         <strong>{user.full_name}</strong>
-        <span>{user.username}</span>
+        <Button variant="ghost" onClick={onLogout}>
+          Выйти
+        </Button>
       </div>
     </>
   );
@@ -199,7 +202,7 @@ export function AppShell({
         </div>
 
         {isMentor ? (
-          <MentorSidebar currentPath={currentPath} mentorGroups={mentorGroups} user={user} />
+          <MentorSidebar currentPath={currentPath} mentorGroups={mentorGroups} user={user} onLogout={onLogout} />
         ) : (
           <>
             <SidebarIntro eyebrow={intro.eyebrow} title={intro.title} description={intro.description} />
@@ -220,6 +223,9 @@ export function AppShell({
               <Badge tone="teal">{formatRole(user.role)}</Badge>
               <strong>{user.full_name}</strong>
               <span>{user.username}</span>
+              <Button variant="ghost" onClick={onLogout}>
+                Выйти
+              </Button>
             </div>
           </>
         )}
@@ -240,9 +246,6 @@ export function AppShell({
               </div>
               <div className="topbar__actions">
                 <span className="topbar__user">{user.full_name}</span>
-                <Button variant="ghost" onClick={onLogout}>
-                  Выйти
-                </Button>
               </div>
             </header>
 

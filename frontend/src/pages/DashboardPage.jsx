@@ -128,7 +128,7 @@ export function DashboardPage({ api, sessionToken, user }) {
                     <div key={mentor.id} className="list-card">
                       <div>
                         <strong>{mentor.full_name}</strong>
-                        <p>{mentor.username}</p>
+                        <p>Куратор учебных групп</p>
                       </div>
                       <Badge tone="teal">{mentor.groups_count} групп</Badge>
                     </div>

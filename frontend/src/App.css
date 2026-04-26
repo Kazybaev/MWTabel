@@ -994,6 +994,30 @@
   border: 1px solid rgba(255, 255, 255, 0.08);
 }
 
+.sidebar__profile .badge,
+.mentor-sidebar__profile .badge {
+  color: #14352d;
+  background: rgba(240, 248, 244, 0.96);
+}
+
+.sidebar__profile .button,
+.mentor-sidebar__profile .button {
+  width: 100%;
+  min-height: 38px;
+  border-radius: 12px;
+  justify-content: center;
+  color: #fff8ea;
+  border-color: rgba(255, 255, 255, 0.12);
+  background: rgba(255, 255, 255, 0.06);
+  box-shadow: none;
+}
+
+.sidebar__profile .button:hover,
+.mentor-sidebar__profile .button:hover {
+  background: rgba(255, 248, 234, 0.14);
+  color: #ffffff;
+}
+
 .mentor-sidebar__profile {
   margin-top: 0;
 }
@@ -3745,6 +3769,7 @@
 
   .topbar {
     padding-top: 12px;
+    padding-right: 120px;
   }
 
   .topbar__menu-button {
@@ -3759,18 +3784,23 @@
   }
 
   .topbar__actions {
-    width: 100%;
-    justify-content: space-between;
-    gap: 10px;
-    flex: 1 1 100%;
+    position: absolute;
+    top: 12px;
+    right: 0;
+    width: auto;
+    justify-content: flex-end;
+    gap: 8px;
+    flex: 0 0 auto;
   }
 
   .topbar__heading {
-    flex: 1 1 100%;
+    flex: 1 1 auto;
+    min-width: 0;
   }
 
   .topbar__user {
-    max-width: calc(100% - 92px);
+    max-width: 110px;
+    text-align: right;
   }
 
   .workspace__content,
@@ -3825,6 +3855,7 @@
   .topbar {
     gap: 10px;
     padding-top: 10px;
+    padding-right: 104px;
   }
 
   .topbar h2 {
@@ -3837,12 +3868,14 @@
   }
 
   .topbar__user {
-    max-width: calc(100% - 86px);
+    max-width: 94px;
     font-size: 0.78rem;
   }
 
   .topbar__actions {
-    justify-content: flex-start;
+    top: 10px;
+    right: 0;
+    justify-content: flex-end;
   }
 
   .button,
@@ -3941,6 +3974,7 @@
 
   .topbar {
     padding-top: 8px;
+    padding-right: 92px;
     gap: 8px;
   }
 
@@ -3956,7 +3990,7 @@
   }
 
   .topbar__user {
-    max-width: calc(100% - 82px);
+    max-width: 82px;
     font-size: 0.72rem;
   }
 
@@ -3965,6 +3999,8 @@
   }
 
   .topbar__actions {
+    top: 8px;
+    right: 0;
     gap: 8px;
   }
 
