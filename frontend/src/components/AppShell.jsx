@@ -222,7 +222,6 @@ export function AppShell({
             <div className="sidebar__profile">
               <Badge tone="teal">{formatRole(user.role)}</Badge>
               <strong>{user.full_name}</strong>
-              <span>{user.username}</span>
               <Button variant="ghost" onClick={onLogout}>
                 Выйти
               </Button>

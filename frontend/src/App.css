@@ -3553,6 +3553,34 @@
   }
 }
 
+.sidebar__profile,
+.mentor-sidebar__profile,
+.sidebar__mobile-brand,
+.topbar__actions {
+  min-width: 0;
+}
+
+.sidebar__profile strong,
+.mentor-sidebar__profile strong,
+.sidebar__mobile-brand strong {
+  display: -webkit-box;
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  word-break: break-word;
+  line-height: 1.24;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+}
+
+.topbar__user {
+  display: block;
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 .workspace__stage,
 .workspace__stage-inner {
   width: 100%;

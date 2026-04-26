@@ -1,11 +1,12 @@
 {
   "name": "Tabel",
   "short_name": "Tabel",
-  "description": "Учебная платформа для менторов, студентов и администраторов.",
+  "description": "Учебный портал Motion Web",
   "start_url": "/",
+  "scope": "/",
   "display": "standalone",
-  "background_color": "#ffffff",
-  "theme_color": "#3730e5",
+  "background_color": "#f7f1e4",
+  "theme_color": "#0f3d35",
   "icons": [
     {
       "src": "/favicon.png",
