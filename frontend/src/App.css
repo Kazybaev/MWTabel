@@ -3209,19 +3209,22 @@
     font-size: 0.7rem;
   }
 
-  .gradebook-layout--student.gradebook-layout--locked {
+  .gradebook-layout--student.gradebook-layout--locked,
+  .gradebook-layout--admin.gradebook-layout--locked {
     min-height: calc(100dvh - 78px);
     height: calc(100dvh - 78px);
     grid-template-rows: auto minmax(0, 1fr);
     overflow: hidden;
   }
 
-  .gradebook-layout--student .hero-band {
+  .gradebook-layout--student .hero-band,
+  .gradebook-layout--admin .hero-band {
     flex: 0 0 auto;
     min-height: 0;
   }
 
-  .gradebook-layout--student .gradebook-panel {
+  .gradebook-layout--student .gradebook-panel,
+  .gradebook-layout--admin .gradebook-panel {
     min-height: 0;
     height: 100%;
     display: flex;
@@ -3229,7 +3232,8 @@
     overflow: hidden;
   }
 
-  .gradebook-layout--student .gradebook-panel .panel__body {
+  .gradebook-layout--student .gradebook-panel .panel__body,
+  .gradebook-layout--admin .gradebook-panel .panel__body {
     min-height: 0;
     height: 100%;
     display: flex;
@@ -3238,7 +3242,9 @@
   }
 
   .gradebook-layout--student .gradebook-scroll,
-  .gradebook-layout--student .gradebook-scroll--locked {
+  .gradebook-layout--student .gradebook-scroll--locked,
+  .gradebook-layout--admin .gradebook-scroll,
+  .gradebook-layout--admin .gradebook-scroll--locked {
     flex: 1;
     min-height: 0;
     height: 100%;
@@ -3248,18 +3254,23 @@
   }
 
   .gradebook-layout--student .gradebook-scroll::-webkit-scrollbar,
-  .gradebook-layout--student .gradebook-scroll--locked::-webkit-scrollbar {
+  .gradebook-layout--student .gradebook-scroll--locked::-webkit-scrollbar,
+  .gradebook-layout--admin .gradebook-scroll::-webkit-scrollbar,
+  .gradebook-layout--admin .gradebook-scroll--locked::-webkit-scrollbar {
     height: 12px;
     width: 10px;
   }
 
-  .gradebook-layout--student .gradebook-table {
+  .gradebook-layout--student .gradebook-table,
+  .gradebook-layout--admin .gradebook-table {
     width: max-content;
     min-width: max-content;
   }
 
   .gradebook-layout--student .gradebook-table__sticky,
-  .gradebook-layout--student .gradebook-table thead .gradebook-table__sticky {
+  .gradebook-layout--student .gradebook-table thead .gradebook-table__sticky,
+  .gradebook-layout--admin .gradebook-table__sticky,
+  .gradebook-layout--admin .gradebook-table thead .gradebook-table__sticky {
     position: static;
     left: auto;
     width: auto;
@@ -3268,31 +3279,36 @@
     box-shadow: none;
   }
 
-  .gradebook-layout--student .gradebook-table__sticky--index {
+  .gradebook-layout--student .gradebook-table__sticky--index,
+  .gradebook-layout--admin .gradebook-table__sticky--index {
     min-width: 38px;
     width: 38px;
     max-width: 38px;
   }
 
-  .gradebook-layout--student .gradebook-table__sticky--name {
+  .gradebook-layout--student .gradebook-table__sticky--name,
+  .gradebook-layout--admin .gradebook-table__sticky--name {
     min-width: 124px;
     width: 124px;
     max-width: 124px;
   }
 
-  .gradebook-layout--student .gradebook-table__sticky--attendance {
+  .gradebook-layout--student .gradebook-table__sticky--attendance,
+  .gradebook-layout--admin .gradebook-table__sticky--attendance {
     min-width: 62px;
     width: 62px;
     max-width: 62px;
   }
 
-  .gradebook-layout--student .gradebook-table__sticky--average {
+  .gradebook-layout--student .gradebook-table__sticky--average,
+  .gradebook-layout--admin .gradebook-table__sticky--average {
     min-width: 68px;
     width: 68px;
     max-width: 68px;
   }
 
-  .gradebook-layout--student .gradebook-toolbar {
+  .gradebook-layout--student .gradebook-toolbar,
+  .gradebook-layout--admin .gradebook-toolbar {
     flex: 0 0 auto;
   }
 }
@@ -3440,29 +3456,35 @@
   }
 
   .gradebook-layout--student .gradebook-table__sticky,
-  .gradebook-layout--student .gradebook-table thead .gradebook-table__sticky {
+  .gradebook-layout--student .gradebook-table thead .gradebook-table__sticky,
+  .gradebook-layout--admin .gradebook-table__sticky,
+  .gradebook-layout--admin .gradebook-table thead .gradebook-table__sticky {
     min-width: 38px;
   }
 
-  .gradebook-layout--student .gradebook-table__sticky--index {
+  .gradebook-layout--student .gradebook-table__sticky--index,
+  .gradebook-layout--admin .gradebook-table__sticky--index {
     min-width: 34px;
     width: 34px;
     max-width: 34px;
   }
 
-  .gradebook-layout--student .gradebook-table__sticky--name {
+  .gradebook-layout--student .gradebook-table__sticky--name,
+  .gradebook-layout--admin .gradebook-table__sticky--name {
     min-width: 108px;
     width: 108px;
     max-width: 108px;
   }
 
-  .gradebook-layout--student .gradebook-table__sticky--attendance {
+  .gradebook-layout--student .gradebook-table__sticky--attendance,
+  .gradebook-layout--admin .gradebook-table__sticky--attendance {
     min-width: 56px;
     width: 56px;
     max-width: 56px;
   }
 
-  .gradebook-layout--student .gradebook-table__sticky--average {
+  .gradebook-layout--student .gradebook-table__sticky--average,
+  .gradebook-layout--admin .gradebook-table__sticky--average {
     min-width: 62px;
     width: 62px;
     max-width: 62px;
@@ -3528,25 +3550,29 @@
     font-size: 0.6rem;
   }
 
-  .gradebook-layout--student .gradebook-table__sticky--index {
+  .gradebook-layout--student .gradebook-table__sticky--index,
+  .gradebook-layout--admin .gradebook-table__sticky--index {
     min-width: 32px;
     width: 32px;
     max-width: 32px;
   }
 
-  .gradebook-layout--student .gradebook-table__sticky--name {
+  .gradebook-layout--student .gradebook-table__sticky--name,
+  .gradebook-layout--admin .gradebook-table__sticky--name {
     min-width: 100px;
     width: 100px;
     max-width: 100px;
   }
 
-  .gradebook-layout--student .gradebook-table__sticky--attendance {
+  .gradebook-layout--student .gradebook-table__sticky--attendance,
+  .gradebook-layout--admin .gradebook-table__sticky--attendance {
     min-width: 52px;
     width: 52px;
     max-width: 52px;
   }
 
-  .gradebook-layout--student .gradebook-table__sticky--average {
+  .gradebook-layout--student .gradebook-table__sticky--average,
+  .gradebook-layout--admin .gradebook-table__sticky--average {
     min-width: 58px;
     width: 58px;
     max-width: 58px;

@@ -51,6 +51,7 @@ export function GradebookMatrix({
   onMonthStep,
   dirty,
   mentorMode = false,
+  adminMode = false,
   lockedMode = false,
   studentMode = false,
 }) {
@@ -65,6 +66,8 @@ export function GradebookMatrix({
   return (
     <div
       className={`gradebook-layout ${mentorMode ? "gradebook-layout--mentor" : ""} ${
+        adminMode ? "gradebook-layout--admin" : ""
+      } ${
         studentMode ? "gradebook-layout--student" : ""
       } ${
         lockedMode ? "gradebook-layout--locked" : ""

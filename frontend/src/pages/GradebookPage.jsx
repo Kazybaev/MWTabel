@@ -191,6 +191,7 @@ export function GradebookPage({ api, sessionToken, user, groupId, routeMonth, on
       onMonthStep={handleMonthNavigation}
       dirty={dirty}
       mentorMode={user.role === "MENTOR"}
+      adminMode={user.role === "ADMIN"}
       lockedMode={lockedGradebook}
       studentMode={mode === "student"}
     />
