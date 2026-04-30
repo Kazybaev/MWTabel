@@ -144,8 +144,8 @@ def build_student_month_report(
     total_lessons = len(lessons)
     marked_lessons_count = len(records)
     unmarked_count = max(total_lessons - marked_lessons_count, 0)
-    average_grade = round(sum(numeric_grades) / len(numeric_grades), 1) if numeric_grades else None
-    attendance_rate = round((attendance_count / total_lessons) * 100, 1) if total_lessons else None
+    average_grade = round(sum(numeric_grades) / len(numeric_grades), 1) if numeric_grades else 0
+    attendance_rate = round((attendance_count / total_lessons) * 100, 1) if total_lessons else  0
 
     mentor_user = student.group.mentor.user
     return {

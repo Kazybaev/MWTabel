@@ -1,0 +1,71 @@
+[33mcommit 44874504f223d6c0a02008d56a1519611688b370[m[33m ([m[1;36mHEAD[m[33m -> [m[1;32mmain[m[33m)[m
+Author: Alymbaek <alymbekibragimov46@gmail.com>
+Date:   Thu Apr 30 04:49:54 2026 +0000
+
+    add update
+
+[33mcommit ab8de12f0cec5560d7c4f18f71549370be2d14a9[m
+Author: Alymbaek <alymbekibragimov46@gmail.com>
+Date:   Sun Apr 26 12:48:36 2026 +0000
+
+    updated fronted, and add CEO
+
+[33mcommit 864c8887f2ffd9b961e4b713cc3a737e7ee7c07f[m
+Author: Alymbaek <alymbekibragimov46@gmail.com>
+Date:   Sun Apr 26 12:47:29 2026 +0000
+
+    updated fronted, and add CEO
+
+[33mcommit abb190661db9e9fbe3dac39ca0751d2f43cb9707[m
+Author: Kazybaev <hhhj61446@gmail.com>
+Date:   Sun Apr 26 18:44:57 2026 +0600
+
+    add domen public --
+
+[33mcommit 3932813dd84bc03d62968565adb03eb0968350bb[m
+Author: Kazybaev <hhhj61446@gmail.com>
+Date:   Sun Apr 26 14:11:35 2026 +0600
+
+    docs Tabel tex soft docum prodject ---
+
+[33mcommit b2461043990ba7ad9a8a9e6a120e0703533b5183[m
+Author: Kazybaev <hhhj61446@gmail.com>
+Date:   Sun Apr 26 13:11:10 2026 +0600
+
+    adaptation of the mobile version
+
+[33mcommit c0f9e2d2f7e0385a2254479e96115253efe9f862[m
+Author: Kazybaev <hhhj61446@gmail.com>
+Date:   Sat Apr 25 21:14:42 2026 +0600
+
+    new css add
+
+[33mcommit da45940c4c4c82fc4d48db48c1dd75ac39a59f4b[m
+Author: Alymbaek <alymbekibragimov46@gmail.com>
+Date:   Wed Apr 22 11:02:29 2026 +0000
+
+    I added new code and updated these ->  docker-compose, Dockerfile, docker/nginx/default.conf, settings.py
+
+[33mcommit 995b041a285f66973afff9b466320a64b9440676[m[33m ([m[1;32mserver_part[m[33m)[m
+Author: Kazybaev <hhhj61446@gmail.com>
+Date:   Wed Apr 22 12:12:24 2026 +0600
+
+    prod version 00.1 test start
+
+[33mcommit 8b4e5d86fc94638e4f867f26a83100c56cf52b45[m
+Author: Kazybaev <hhhj61446@gmail.com>
+Date:   Mon Apr 13 12:08:57 2026 +0600
+
+    new gitignore
+
+[33mcommit d408796f688ac5e64d80c321cf79ff1b75508925[m
+Author: Kazybaev <hhhj61446@gmail.com>
+Date:   Sun Apr 12 22:05:33 2026 +0600
+
+    Add MIT license and prepare repository for GitHub
+
+[33mcommit 0a4ac0dd42c1919c1e8c40dc7441a63e8aaed9aa[m
+Author: Kazybaev <hhhj61446@gmail.com>
+Date:   Sun Apr 12 21:56:15 2026 +0600
+
+    tabel new frontend new backend
