@@ -324,11 +324,18 @@ class MonthlyReportServiceTests(APITestCase):
         self.assertEqual(payload["summary"]["absence_count"], 1)
         self.assertEqual(payload["summary"]["unmarked_count"], 0)
         self.assertEqual(payload["summary"]["average_grade"], 4.5)
+        self.assertEqual(payload["summary"]["total_five"], 1)
+        self.assertEqual(payload["summary"]["total_four"], 1)
+        self.assertEqual(payload["summary"]["total_three"], 0)
+        self.assertEqual(payload["summary"]["total_two"], 0)
+        self.assertEqual(payload["summary"]["total_absence"], 1)
         self.assertEqual(payload["period"]["last_lesson_date"], "2026-04-30")
         self.assertEqual(len(payload["lessons"]), 3)
 
     def test_build_dify_inputs_matches_workflow_fields(self):
         LessonRecord.objects.create(student=self.student, lesson=self.first_lesson, grade="5", comment="Great")
+        LessonRecord.objects.create(student=self.student, lesson=self.second_lesson, grade="4", comment="Stable")
+        LessonRecord.objects.create(student=self.student, lesson=self.third_lesson, grade="\u041d", comment="Absent")
         payload = build_student_month_report(self.student, month_start=self.month_start)
 
         inputs = build_dify_inputs(payload)
@@ -346,12 +353,22 @@ class MonthlyReportServiceTests(APITestCase):
                 "average_grade",
                 "attendance_count",
                 "absence_count",
+                "total_five",
+                "total_four",
+                "total_three",
+                "total_two",
+                "total_absence",
                 "attendance_rate",
             },
         )
         self.assertEqual(inputs["student_name"], "Report Student")
         self.assertEqual(inputs["recipient_phone"], "+996700123456")
         self.assertEqual(inputs["group_name"], "Motion Web")
+        self.assertEqual(inputs["total_five"], 1)
+        self.assertEqual(inputs["total_four"], 1)
+        self.assertEqual(inputs["total_three"], 0)
+        self.assertEqual(inputs["total_two"], 0)
+        self.assertEqual(inputs["total_absence"], 1)
 
     @patch("tabel_app.report.request.urlopen")
     def test_run_dify_workflow_sends_user_agent_header(self, mocked_urlopen):
