@@ -106,27 +106,17 @@ export function TextField({
   required = false,
   help,
   revealable = false,
-<<<<<<< ours
   onGenerate,
 }) {
   const [revealed, setRevealed] = useState(false);
   const isPasswordField = type === "password";
   const hasPasswordActions = isPasswordField && (revealable || Boolean(onGenerate));
-=======
-}) {
-  const [revealed, setRevealed] = useState(false);
-  const isPasswordField = type === "password";
->>>>>>> theirs
   const inputType = isPasswordField && revealable && revealed ? "text" : type;
 
   return (
     <label className="form-field">
       <span>{label}</span>
-<<<<<<< ours
       <div className={`form-field__input-wrap ${hasPasswordActions ? "form-field__input-wrap--password-actions" : ""}`.trim()}>
-=======
-      <div className={`form-field__input-wrap ${isPasswordField && revealable ? "form-field__input-wrap--revealable" : ""}`.trim()}>
->>>>>>> theirs
         <input
           type={inputType}
           value={value}
@@ -134,7 +124,6 @@ export function TextField({
           placeholder={placeholder}
           required={required}
         />
-<<<<<<< ours
         {hasPasswordActions ? (
           <div className="form-field__actions">
             {onGenerate ? (
@@ -158,17 +147,6 @@ export function TextField({
               </button>
             ) : null}
           </div>
-=======
-        {isPasswordField && revealable ? (
-          <button
-            type="button"
-            className="form-field__reveal"
-            onClick={() => setRevealed((current) => !current)}
-            aria-label={revealed ? "Скрыть пароль" : "Показать пароль"}
-          >
-            {revealed ? "Скрыть" : "Показать"}
-          </button>
->>>>>>> theirs
         ) : null}
       </div>
       {help ? <small>{help}</small> : null}
