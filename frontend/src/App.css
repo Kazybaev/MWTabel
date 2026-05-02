@@ -1556,21 +1556,15 @@
   position: relative;
 }
 
-.form-field__input-wrap--password-actions input {
-  padding-right: 242px;
-}
-
-.form-field__actions {
-  position: absolute;
-  top: 50%;
-  right: 10px;
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  transform: translateY(-50%);
+.form-field__input-wrap--revealable input {
+  padding-right: 102px;
 }
 
 .form-field__reveal {
+  position: absolute;
+  top: 50%;
+  right: 10px;
+  transform: translateY(-50%);
   min-height: 34px;
   padding: 0 12px;
   border: 1px solid rgba(15, 54, 47, 0.12);
