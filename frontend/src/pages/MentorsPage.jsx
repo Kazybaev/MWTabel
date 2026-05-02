@@ -1,5 +1,6 @@
 import { useDeferredValue, useState } from "react";
 
+import { generateStrongPassword } from "../lib/password";
 import { useResource } from "../lib/useResource";
 import { Badge, Button, EmptyState, ErrorBlock, LoadingBlock, Modal, Panel, TextField } from "../components/Ui";
 
@@ -191,6 +192,8 @@ export function MentorsPage({ api, sessionToken, user, onNotice }) {
             value={draft.password}
             onChange={(value) => setDraft((current) => ({ ...current, password: value }))}
             type="password"
+            revealable
+            onGenerate={() => setDraft((current) => ({ ...current, password: generateStrongPassword() }))}
             help={editingId ? "Оставьте пустым, если менять пароль не нужно." : "Задайте стартовый пароль."}
           />
         </form>

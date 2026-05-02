@@ -1,3 +1,5 @@
+import { useState } from "react";
+
 export function NoticeBanner({ notice, onDismiss }) {
   if (!notice) {
     return null;
@@ -103,17 +105,50 @@ export function TextField({
   type = "text",
   required = false,
   help,
+  revealable = false,
+  onGenerate,
 }) {
+  const [revealed, setRevealed] = useState(false);
+  const isPasswordField = type === "password";
+  const hasPasswordActions = isPasswordField && (revealable || Boolean(onGenerate));
+  const inputType = isPasswordField && revealable && revealed ? "text" : type;
+
   return (
     <label className="form-field">
       <span>{label}</span>
-      <input
-        type={type}
-        value={value}
-        onChange={(event) => onChange(event.target.value)}
-        placeholder={placeholder}
-        required={required}
-      />
+      <div className={`form-field__input-wrap ${hasPasswordActions ? "form-field__input-wrap--password-actions" : ""}`.trim()}>
+        <input
+          type={inputType}
+          value={value}
+          onChange={(event) => onChange(event.target.value)}
+          placeholder={placeholder}
+          required={required}
+        />
+        {hasPasswordActions ? (
+          <div className="form-field__actions">
+            {onGenerate ? (
+              <button
+                type="button"
+                className="form-field__reveal"
+                onClick={onGenerate}
+                aria-label="Сгенерировать пароль"
+              >
+                Сгенерировать
+              </button>
+            ) : null}
+            {isPasswordField && revealable ? (
+              <button
+                type="button"
+                className="form-field__reveal"
+                onClick={() => setRevealed((current) => !current)}
+                aria-label={revealed ? "Скрыть пароль" : "Показать пароль"}
+              >
+                {revealed ? "Скрыть" : "Показать"}
+              </button>
+            ) : null}
+          </div>
+        ) : null}
+      </div>
       {help ? <small>{help}</small> : null}
     </label>
   );

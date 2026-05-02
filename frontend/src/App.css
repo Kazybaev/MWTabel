@@ -1552,6 +1552,41 @@
   gap: 8px;
 }
 
+.form-field__input-wrap {
+  position: relative;
+}
+
+.form-field__input-wrap--password-actions input {
+  padding-right: 242px;
+}
+
+.form-field__actions {
+  position: absolute;
+  top: 50%;
+  right: 10px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  transform: translateY(-50%);
+}
+
+.form-field__reveal {
+  min-height: 34px;
+  padding: 0 12px;
+  border: 1px solid rgba(15, 54, 47, 0.12);
+  border-radius: 12px;
+  background: rgba(247, 241, 228, 0.96);
+  color: var(--ink-strong);
+  font: inherit;
+  font-size: 0.84rem;
+  font-weight: 700;
+  cursor: pointer;
+}
+
+.form-field__reveal:hover {
+  background: #f1ead9;
+}
+
 .form-field span {
   font-weight: 700;
   color: var(--ink-strong);

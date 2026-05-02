@@ -1,5 +1,6 @@
 import { useDeferredValue, useState } from "react";
 
+import { generateStrongPassword } from "../lib/password";
 import { useResource } from "../lib/useResource";
 import {
   Badge,
@@ -228,6 +229,8 @@ export function StudentsPage({ api, sessionToken, user, onNotice }) {
             value={draft.password}
             onChange={(value) => setDraft((current) => ({ ...current, password: value }))}
             type="password"
+            revealable
+            onGenerate={() => setDraft((current) => ({ ...current, password: generateStrongPassword() }))}
             help={editingId ? "Оставьте пустым, если менять пароль не нужно." : "Задайте стартовый пароль."}
           />
           <TextField
