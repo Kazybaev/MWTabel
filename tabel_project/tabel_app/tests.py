@@ -328,7 +328,6 @@ class MonthlyReportServiceTests(APITestCase):
         self.assertEqual(payload["summary"]["total_four"], 1)
         self.assertEqual(payload["summary"]["total_three"], 0)
         self.assertEqual(payload["summary"]["total_two"], 0)
-        self.assertEqual(payload["summary"]["total_absence"], 1)
         self.assertEqual(payload["period"]["last_lesson_date"], "2026-04-30")
         self.assertEqual(len(payload["lessons"]), 3)
 
@@ -357,7 +356,6 @@ class MonthlyReportServiceTests(APITestCase):
                 "total_four",
                 "total_three",
                 "total_two",
-                "total_absence",
                 "attendance_rate",
             },
         )
@@ -368,7 +366,6 @@ class MonthlyReportServiceTests(APITestCase):
         self.assertEqual(inputs["total_four"], 1)
         self.assertEqual(inputs["total_three"], 0)
         self.assertEqual(inputs["total_two"], 0)
-        self.assertEqual(inputs["total_absence"], 1)
 
     @patch("tabel_app.report.request.urlopen")
     def test_run_dify_workflow_sends_user_agent_header(self, mocked_urlopen):

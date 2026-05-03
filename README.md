@@ -138,7 +138,6 @@
 - `total_four`
 - `total_three`
 - `total_two`
-- `total_absence`
 - `attendance_rate`
 - `report`
 
@@ -168,7 +167,6 @@ python tabel_project\manage.py send_monthly_reports --student-id 5
   - `total_four`
   - `total_three`
   - `total_two`
-  - `total_absence`
 - обновлены SEO-файлы:
   - `index.html`
   - `robots.txt`

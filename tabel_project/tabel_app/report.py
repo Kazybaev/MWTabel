@@ -200,7 +200,6 @@ def build_student_month_report(
             "total_four": grade_totals["4"],
             "total_three": grade_totals["3"],
             "total_two": grade_totals["2"],
-            "total_absence": grade_totals["Н"],
             "grades": [row["grade"] for row in lesson_rows if row["grade"]],
         },
         "lessons": lesson_rows,
@@ -224,7 +223,6 @@ def build_dify_inputs(report_payload: dict[str, Any]) -> dict[str, Any]:
         "total_four": summary["total_four"],
         "total_three": summary["total_three"],
         "total_two": summary["total_two"],
-        "total_absence": summary["total_absence"],
         "attendance_rate": summary["attendance_rate"],
     }
 
