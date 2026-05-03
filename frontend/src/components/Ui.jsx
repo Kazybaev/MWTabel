@@ -139,11 +139,16 @@ export function TextField({
             {isPasswordField && revealable ? (
               <button
                 type="button"
-                className="form-field__reveal"
+                className="form-field__reveal form-field__reveal--icon"
                 onClick={() => setRevealed((current) => !current)}
                 aria-label={revealed ? "Скрыть пароль" : "Показать пароль"}
+                title={revealed ? "Скрыть пароль" : "Показать пароль"}
               >
-                {revealed ? "Скрыть" : "Показать"}
+                <svg viewBox="0 0 24 24" aria-hidden="true">
+                  <path d="M2.4 12s3.4-6 9.6-6 9.6 6 9.6 6-3.4 6-9.6 6-9.6-6-9.6-6Z" />
+                  <circle cx="12" cy="12" r="3.1" />
+                  {revealed ? null : <path className="form-field__reveal-slash" d="M4.5 19.5 19.5 4.5" />}
+                </svg>
               </button>
             ) : null}
           </div>

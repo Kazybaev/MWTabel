@@ -47,6 +47,7 @@ export function LoginPage({ onLogin, loading, error }) {
                 onChange={(value) => setForm((current) => ({ ...current, password: value }))}
                 type="password"
                 placeholder="Введите пароль"
+                revealable
                 required
               />
               {error ? <p className="form-error">{error}</p> : null}

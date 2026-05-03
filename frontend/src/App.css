@@ -1556,20 +1556,27 @@
   position: relative;
 }
 
+.form-field__input-wrap--password-actions input,
 .form-field__input-wrap--revealable input {
-  padding-right: 102px;
+  padding-right: 112px;
 }
 
-.form-field__reveal {
+.form-field__actions {
   position: absolute;
   top: 50%;
   right: 10px;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
   transform: translateY(-50%);
+}
+
+.form-field__reveal {
   min-height: 34px;
   padding: 0 12px;
-  border: 1px solid rgba(15, 54, 47, 0.12);
-  border-radius: 12px;
-  background: rgba(247, 241, 228, 0.96);
+  border: 0;
+  border-radius: 999px;
+  background: transparent;
   color: var(--ink-strong);
   font: inherit;
   font-size: 0.84rem;
@@ -1578,7 +1585,34 @@
 }
 
 .form-field__reveal:hover {
-  background: #f1ead9;
+  background: rgba(17, 77, 67, 0.08);
+}
+
+.form-field__reveal--icon {
+  width: 38px;
+  min-width: 38px;
+  padding: 0;
+  line-height: 1;
+}
+
+.form-field__reveal--icon svg {
+  width: 22px;
+  height: 22px;
+  display: block;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 1.8;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+
+.form-field__reveal--icon circle {
+  fill: currentColor;
+  stroke: none;
+}
+
+.form-field__reveal-slash {
+  stroke-width: 2.2;
 }
 
 .form-field span {
