@@ -29,12 +29,12 @@ function formatAverageGrade(value) {
   return Number(value).toFixed(1).replace(".", ",");
 }
 
-function buildPanelTitle(data, mentorMode) {
-  return mentorMode ? "" : data.page_title;
+function buildPanelTitle(data, compactGroupMode) {
+  return compactGroupMode ? "" : data.page_title;
 }
 
-function buildPanelDescription(data, mentorMode) {
-  if (mentorMode) {
+function buildPanelDescription(data, compactGroupMode) {
+  if (compactGroupMode) {
     return "";
   }
 
@@ -103,9 +103,9 @@ export function GradebookMatrix({
 
       <Panel
         className={lockedMode ? "gradebook-panel" : ""}
-        eyebrow={mentorMode ? "" : "Месяц"}
-        title={buildPanelTitle(data, mentorMode)}
-        description={buildPanelDescription(data, mentorMode)}
+        eyebrow={mentorMode || adminMode ? "" : "Месяц"}
+        title={buildPanelTitle(data, mentorMode || adminMode)}
+        description={buildPanelDescription(data, mentorMode || adminMode)}
         actions={
           <div className="month-actions">
             <Button variant="ghost" onClick={() => onMonthStep(data.previous_month_value)}>
@@ -123,7 +123,7 @@ export function GradebookMatrix({
           </div>
         }
       >
-        <div className={`gradebook-scroll ${lockedMode ? "gradebook-scroll--locked" : ""}`.trim()}>
+        <div className={`gradebook-scroll gradebook-scroll--matrix ${lockedMode ? "gradebook-scroll--locked" : ""}`.trim()}>
           <table className="gradebook-table">
             <thead>
               <tr>

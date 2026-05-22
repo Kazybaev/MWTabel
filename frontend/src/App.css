@@ -4208,6 +4208,80 @@
   background: rgba(17, 114, 93, 0.1);
 }
 
+/* Group gradebook needs its own vertical scroll so all students stay visible. */
+.gradebook-layout--admin.gradebook-layout--locked,
+.gradebook-layout--mentor.gradebook-layout--locked {
+  min-height: 0;
+  height: calc(100vh - 92px);
+  grid-template-rows: auto minmax(0, 1fr);
+  overflow: hidden;
+}
+
+.gradebook-layout--admin .hero-band,
+.gradebook-layout--mentor .gradebook-header {
+  flex: 0 0 auto;
+}
+
+.gradebook-layout--admin .gradebook-panel,
+.gradebook-layout--mentor .gradebook-panel {
+  min-height: 0;
+  height: 100%;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+.gradebook-layout--admin .gradebook-panel .panel__body,
+.gradebook-layout--mentor .gradebook-panel .panel__body {
+  flex: 1;
+  min-height: 0;
+  overflow: hidden;
+}
+
+.gradebook-layout--admin .gradebook-panel .panel__header,
+.gradebook-layout--mentor .gradebook-panel .panel__header {
+  padding: 12px 16px 8px;
+}
+
+.gradebook-layout--admin .gradebook-panel .panel__header > div:first-child,
+.gradebook-layout--mentor .gradebook-panel .panel__header > div:first-child {
+  display: none;
+}
+
+.gradebook-layout--admin .gradebook-panel .panel__actions,
+.gradebook-layout--mentor .gradebook-panel .panel__actions {
+  width: 100%;
+  display: flex;
+  justify-content: flex-end;
+}
+
+.gradebook-layout--admin .gradebook-panel .panel__body,
+.gradebook-layout--mentor .gradebook-panel .panel__body {
+  padding-top: 6px;
+}
+
+.gradebook-layout--admin .gradebook-scroll--matrix,
+.gradebook-layout--mentor .gradebook-scroll--matrix {
+  flex: 1;
+  min-height: 0;
+  max-height: 100%;
+  overflow-x: auto;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+}
+
+.gradebook-layout--admin .gradebook-table th,
+.gradebook-layout--mentor .gradebook-table th {
+  top: 0;
+}
+
+@media (max-width: 1024px) {
+  .gradebook-layout--admin.gradebook-layout--locked,
+  .gradebook-layout--mentor.gradebook-layout--locked {
+    height: calc(100dvh - 78px);
+  }
+}
+
 /* Admin dashboard cards must scroll independently when lists are long. */
 .dashboard-page--admin .dashboard-panels {
   align-items: stretch;
