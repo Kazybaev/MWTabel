@@ -4197,3 +4197,53 @@
   border-radius: 999px;
   background: rgba(17, 114, 93, 0.1);
 }
+
+/* Admin dashboard cards must scroll independently when lists are long. */
+.dashboard-page--admin .dashboard-panels {
+  align-items: stretch;
+}
+
+.dashboard-page--admin .dashboard-panel {
+  height: clamp(320px, calc(100vh - 420px), 520px);
+  min-height: 0;
+  overflow: hidden;
+}
+
+.dashboard-page--admin .dashboard-panel .panel__body {
+  flex: 1;
+  min-height: 0;
+  overflow: hidden;
+}
+
+.dashboard-page--admin .dashboard-panel__scroll {
+  flex: 1;
+  min-height: 0;
+  height: 100%;
+  overflow-x: hidden;
+  overflow-y: auto;
+  padding-right: 8px;
+  scrollbar-width: thin;
+  scrollbar-color: rgba(17, 114, 93, 0.5) rgba(17, 114, 93, 0.09);
+  overscroll-behavior: contain;
+}
+
+.dashboard-page--admin .dashboard-panel__scroll::-webkit-scrollbar {
+  width: 10px;
+}
+
+.dashboard-page--admin .dashboard-panel__scroll::-webkit-scrollbar-thumb {
+  border-radius: 999px;
+  background: rgba(17, 114, 93, 0.48);
+  border: 3px solid rgba(255, 255, 255, 0.55);
+}
+
+.dashboard-page--admin .dashboard-panel__scroll::-webkit-scrollbar-track {
+  border-radius: 999px;
+  background: rgba(17, 114, 93, 0.09);
+}
+
+@media (max-width: 720px) {
+  .dashboard-page--admin .dashboard-panel {
+    height: min(420px, 62vh);
+  }
+}
