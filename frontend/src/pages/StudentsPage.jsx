@@ -204,43 +204,63 @@ export function StudentsPage({ api, sessionToken, user, onNotice }) {
           </>
         }
       >
-        <form id="student-form" className="form-grid" onSubmit={handleSave}>
+        <form id="student-form" className="form-grid" onSubmit={handleSave} autoComplete="off" data-form-type="other">
+          <input type="text" name="fake_user_field" autoComplete="username" tabIndex="-1" aria-hidden="true" className="autofill-trap" />
+          <input type="password" name="fake_password_field" autoComplete="current-password" tabIndex="-1" aria-hidden="true" className="autofill-trap" />
           <TextField
             label="Полное имя"
+            name="student_profile_full_name"
             value={draft.full_name}
             onChange={(value) => setDraft((current) => ({ ...current, full_name: value }))}
+            autoComplete="off"
+            disableAutoFill
             required
           />
           <TextField
             label="Логин"
+            name="student_profile_login_value"
             value={draft.username}
             onChange={(value) => setDraft((current) => ({ ...current, username: value }))}
+            autoComplete="off"
+            disableAutoFill
             required
           />
           <TextField
             label="Email"
+            name="student_profile_contact_value"
             value={draft.email}
             onChange={(value) => setDraft((current) => ({ ...current, email: value }))}
             type="email"
+            autoComplete="off"
+            disableAutoFill
           />
           <TextField
             label="Пароль"
+            name="student_profile_secret_value"
             value={draft.password}
             onChange={(value) => setDraft((current) => ({ ...current, password: value }))}
             type="password"
+            autoComplete="off"
+            disableAutoFill
             revealable
             help={editingId ? "Оставьте пустым, если менять пароль не нужно." : "Задайте стартовый пароль."}
           />
           <TextField
             label="Имя родителя"
+            name="student_parent_name"
             value={draft.parent_name}
             onChange={(value) => setDraft((current) => ({ ...current, parent_name: value }))}
+            autoComplete="off"
+            disableAutoFill
             required
           />
           <TextField
             label="Телефон родителя"
+            name="student_parent_phone"
             value={draft.parent_phone}
             onChange={(value) => setDraft((current) => ({ ...current, parent_phone: value }))}
+            autoComplete="off"
+            disableAutoFill
             required
           />
           <SelectField

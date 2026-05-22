@@ -107,22 +107,34 @@ export function TextField({
   help,
   revealable = false,
   onGenerate,
+  autoComplete = "off",
+  name,
+  disableAutoFill = false,
 }) {
   const [revealed, setRevealed] = useState(false);
   const isPasswordField = type === "password";
   const hasPasswordActions = isPasswordField && (revealable || Boolean(onGenerate));
   const inputType = isPasswordField && revealable && revealed ? "text" : type;
+  const safeName = name || (disableAutoFill ? `field_${label.replace(/\s+/g, "_")}` : undefined);
 
   return (
     <label className="form-field">
       <span>{label}</span>
       <div className={`form-field__input-wrap ${hasPasswordActions ? "form-field__input-wrap--password-actions" : ""}`.trim()}>
         <input
+          name={safeName}
           type={inputType}
           value={value}
           onChange={(event) => onChange(event.target.value)}
           placeholder={placeholder}
           required={required}
+          autoComplete={autoComplete}
+          autoCorrect="off"
+          autoCapitalize="off"
+          spellCheck="false"
+          data-lpignore={disableAutoFill ? "true" : undefined}
+          data-1p-ignore={disableAutoFill ? "true" : undefined}
+          data-form-type={disableAutoFill ? "other" : undefined}
         />
         {hasPasswordActions ? (
           <div className="form-field__actions">
