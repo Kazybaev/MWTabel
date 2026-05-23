@@ -122,7 +122,11 @@ export async function apiRequest(
   ) {
     try {
       const refreshed = await refreshAccessToken(session.refresh);
-      const nextSession = { ...session, access: refreshed.access };
+      const nextSession = {
+        ...session,
+        access: refreshed.access,
+        refresh: refreshed.refresh ?? session.refresh,
+      };
       writeStoredSession(nextSession);
       onSessionChange?.(nextSession);
       requestInit.headers.Authorization = `Bearer ${nextSession.access}`;
