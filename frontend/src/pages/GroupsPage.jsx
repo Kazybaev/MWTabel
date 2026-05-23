@@ -135,6 +135,7 @@ export function GroupsPage({ api, meta, sessionToken, user, onNotice }) {
   return (
     <div className="page-stack">
       <Panel
+        className={isMentorView ? "groups-panel groups-panel--mentor" : "groups-panel"}
         eyebrow={isMentorView ? "МОИ ГРУППЫ" : "Потоки"}
         title={isMentorView ? "Выберите группу" : "Группы"}
         description={

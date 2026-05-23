@@ -726,6 +726,43 @@
   grid-template-columns: 1fr;
 }
 
+.groups-panel--mentor {
+  height: min(720px, calc(100dvh - 120px));
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+.groups-panel--mentor .panel__body {
+  flex: 1;
+  min-height: 0;
+  overflow: hidden;
+}
+
+.groups-panel--mentor .mentor-groups-grid {
+  max-height: 100%;
+  overflow-x: hidden;
+  overflow-y: auto;
+  padding-right: 8px;
+  scrollbar-width: thin;
+  scrollbar-color: rgba(17, 114, 93, 0.5) rgba(17, 114, 93, 0.09);
+  overscroll-behavior: contain;
+}
+
+.groups-panel--mentor .mentor-groups-grid::-webkit-scrollbar {
+  width: 10px;
+}
+
+.groups-panel--mentor .mentor-groups-grid::-webkit-scrollbar-thumb {
+  border-radius: 999px;
+  background: rgba(17, 114, 93, 0.45);
+}
+
+.groups-panel--mentor .mentor-groups-grid::-webkit-scrollbar-track {
+  background: rgba(17, 114, 93, 0.08);
+}
+
 .mentor-group-card {
   display: grid;
   gap: 10px;
