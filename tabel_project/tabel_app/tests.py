@@ -157,7 +157,7 @@ class TabelApiTests(APITestCase):
         LessonRecord.objects.create(student=self.student, lesson=self.lesson, grade="5", comment="Great")
         second_day = self.lesson.lesson_date.day + 1 if self.lesson.lesson_date.day < 28 else self.lesson.lesson_date.day - 1
         second_lesson = Lesson.objects.create(group=self.group, lesson_date=self.lesson.lesson_date.replace(day=second_day))
-        LessonRecord.objects.create(student=self.student, lesson=second_lesson, grade="Рќ", comment="Absent")
+        LessonRecord.objects.create(student=self.student, lesson=second_lesson, grade="Н", comment="Absent")
 
         client = self.auth_client("mentor", "mentor-pass-123")
         month_value = self.lesson.lesson_date.strftime("%Y-%m")

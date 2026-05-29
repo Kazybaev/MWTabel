@@ -17,7 +17,7 @@ from rest_framework_simplejwt.tokens import RefreshToken
 from rest_framework_simplejwt.views import TokenObtainPairView
 
 from .models import Group, Lesson, LessonRecord, MentorProfile, StudentProfile, User
-from .report import send_student_month_report
+from .report import is_absence_grade, send_student_month_report
 from .serializers import (
     GroupDetailSerializer,
     GroupListSerializer,
@@ -157,7 +157,7 @@ def build_gradebook_rows(group, students, month_days, lessons_by_date):
             grade = record.grade if record else ""
             if grade.isdigit():
                 numeric_grades.append(int(grade))
-            if grade and grade not in {"Рќ", "РЅ"}:
+            if grade and not is_absence_grade(grade):
                 attendance_count += 1
             cells.append(
                 {
