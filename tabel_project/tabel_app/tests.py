@@ -405,8 +405,9 @@ class MonthlyReportServiceTests(APITestCase):
         self.assertIn("user-agent", captured["headers"])
         self.assertIn("TabelBackend/1.0", captured["headers"]["user-agent"])
 
+    @patch("tabel_app.report.time.sleep")
     @patch("tabel_app.report.run_dify_workflow")
-    def test_reports_are_sent_individually_on_last_lesson_day(self, mocked_run_dify_workflow):
+    def test_reports_are_sent_individually_on_last_lesson_day(self, mocked_run_dify_workflow, mocked_sleep):
         mocked_run_dify_workflow.side_effect = [
             {"workflow_run_id": "run-1", "data": {"status": "succeeded"}},
             {"workflow_run_id": "run-2", "data": {"status": "succeeded"}},
@@ -419,6 +420,7 @@ class MonthlyReportServiceTests(APITestCase):
         second_due_results = send_due_monthly_reports(run_date=date(2026, 4, 30))
 
         self.assertEqual(mocked_run_dify_workflow.call_count, 2)
+        mocked_sleep.assert_called_once_with(5)
         self.assertTrue(all(result["status"] == "skipped" for result in early_results))
         self.assertEqual(
             [result["status"] for result in due_results],

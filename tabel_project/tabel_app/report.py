@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import logging
 import os
+import time
 from datetime import date, datetime, timedelta
 from typing import Any
 from urllib import error, request
@@ -23,6 +24,9 @@ if not logger.handlers:
     logger.addHandler(handler)
 logger.setLevel(getattr(logging, os.getenv("REPORT_LOG_LEVEL", "INFO").upper(), logging.INFO))
 logger.propagate = False
+
+REPORT_DISPATCH_DELAY_SECONDS = 5
+REPORT_DISPATCH_DELAY_STATUSES = {"sent", "failed"}
 
 
 class ReportConfigurationError(Exception):
@@ -502,14 +506,16 @@ def send_due_monthly_reports(
         students = students.filter(group_id=group_id)
 
     results = []
-    for student in students.order_by("group__course_name", "user__full_name"):
-        results.append(
-            send_student_month_report(
-                student,
-                run_date=run_date,
-                month_start=month_start,
-                dry_run=dry_run,
-                force=force,
-            )
+    ordered_students = list(students.order_by("group__course_name", "user__full_name"))
+    for index, student in enumerate(ordered_students):
+        result = send_student_month_report(
+            student,
+            run_date=run_date,
+            month_start=month_start,
+            dry_run=dry_run,
+            force=force,
         )
+        results.append(result)
+        if result["status"] in REPORT_DISPATCH_DELAY_STATUSES and index < len(ordered_students) - 1:
+            time.sleep(REPORT_DISPATCH_DELAY_SECONDS)
     return results
