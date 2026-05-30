@@ -25,7 +25,7 @@ if not logger.handlers:
 logger.setLevel(getattr(logging, os.getenv("REPORT_LOG_LEVEL", "INFO").upper(), logging.INFO))
 logger.propagate = False
 
-REPORT_DISPATCH_DELAY_SECONDS = 5
+REPORT_DISPATCH_DELAY_SECONDS = 10
 REPORT_DISPATCH_DELAY_STATUSES = {"sent", "failed"}
 
 

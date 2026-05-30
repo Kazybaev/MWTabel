@@ -420,7 +420,7 @@ class MonthlyReportServiceTests(APITestCase):
         second_due_results = send_due_monthly_reports(run_date=date(2026, 4, 30))
 
         self.assertEqual(mocked_run_dify_workflow.call_count, 2)
-        mocked_sleep.assert_called_once_with(5)
+        mocked_sleep.assert_called_once_with(10)
         self.assertTrue(all(result["status"] == "skipped" for result in early_results))
         self.assertEqual(
             [result["status"] for result in due_results],
