@@ -34,7 +34,7 @@ class ReportDispatchRequestSerializer(serializers.Serializer):
     month = serializers.RegexField(regex=r"^\d{4}-\d{2}$", required=False)
     run_date = serializers.DateField(required=False)
     dry_run = serializers.BooleanField(required=False, default=False)
-    force = serializers.BooleanField(required=False, default=True)
+    force = serializers.BooleanField(required=False, default=False)
 
 
 class UserSerializer(serializers.ModelSerializer):

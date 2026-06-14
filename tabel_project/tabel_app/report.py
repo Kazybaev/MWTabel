@@ -8,6 +8,7 @@ from datetime import date, datetime, timedelta
 from typing import Any
 from urllib import error, request
 
+from django.db import IntegrityError, transaction
 from django.utils import timezone
 
 from .models import Group, Lesson, LessonRecord, MonthlyStudentReportDispatch, StudentProfile
@@ -64,14 +65,50 @@ def is_absence_grade(grade: str | None) -> bool:
     return normalized in ABSENCE_GRADE_VALUES
 
 
+def get_group_study_weekdays(group: Group) -> set[int]:
+    if group.study_days == Group.MON_WED_SAT:
+        return {0, 2, 5}
+    if group.study_days == Group.TUE_THU_SUN:
+        return {1, 3, 6}
+    return set()
+
+
 def get_group_last_lesson_date(group: Group, month_start: date) -> date | None:
     month_start, month_end = month_bounds(month_start)
+    study_weekdays = get_group_study_weekdays(group)
+    if study_weekdays:
+        current_date = month_end
+        while current_date >= month_start:
+            if current_date.weekday() in study_weekdays:
+                return current_date
+            current_date -= timedelta(days=1)
+        return None
+
     return (
         group.lessons.filter(lesson_date__gte=month_start, lesson_date__lte=month_end)
         .order_by("-lesson_date", "-id")
         .values_list("lesson_date", flat=True)
         .first()
     )
+
+
+def get_student_trigger_lesson(student: StudentProfile, month_start: date) -> Lesson | None:
+    trigger_date = get_group_last_lesson_date(student.group, month_start)
+    if trigger_date is None:
+        return None
+
+    return (
+        Lesson.objects.filter(
+            group=student.group,
+            lesson_date=trigger_date,
+        )
+        .order_by("-id")
+        .first()
+    )
+
+
+def has_student_trigger_lesson_record(student: StudentProfile, trigger_lesson: Lesson) -> bool:
+    return LessonRecord.objects.filter(student=student, lesson=trigger_lesson).exists()
 
 
 def get_month_lessons_for_student(student: StudentProfile, month_start: date) -> list[Lesson]:
@@ -343,6 +380,7 @@ def send_student_month_report(
     run_date = normalize_run_date(run_date)
     month_start = normalize_month_start(month_start or run_date)
     trigger_date = get_group_last_lesson_date(student.group, month_start)
+    trigger_lesson = get_student_trigger_lesson(student, month_start)
 
     if trigger_date is None:
         logger.info(
@@ -357,7 +395,7 @@ def send_student_month_report(
             "reason": "no_lessons_in_month",
         }
 
-    if not force and run_date != trigger_date:
+    if run_date != trigger_date:
         return {
             "student_id": student.pk,
             "student_name": student.user.full_name,
@@ -366,8 +404,26 @@ def send_student_month_report(
             "trigger_date": trigger_date.isoformat(),
         }
 
+    if trigger_lesson is None:
+        return {
+            "student_id": student.pk,
+            "student_name": student.user.full_name,
+            "status": "skipped",
+            "reason": "trigger_lesson_not_created",
+            "trigger_date": trigger_date.isoformat(),
+        }
+
+    if not has_student_trigger_lesson_record(student, trigger_lesson):
+        return {
+            "student_id": student.pk,
+            "student_name": student.user.full_name,
+            "status": "skipped",
+            "reason": "trigger_lesson_not_marked",
+            "trigger_date": trigger_date.isoformat(),
+        }
+
     dispatch = MonthlyStudentReportDispatch.objects.filter(student=student, month=month_start).first()
-    if dispatch and dispatch.status == MonthlyStudentReportDispatch.STATUS_SUCCEEDED and not force:
+    if dispatch and dispatch.status == MonthlyStudentReportDispatch.STATUS_SUCCEEDED:
         logger.info(
             "Skipping report for student='%s': already sent for month='%s'",
             student.user.full_name,
@@ -397,17 +453,55 @@ def send_student_month_report(
             "payload": report_payload,
         }
 
-    if dispatch is None:
-        dispatch = MonthlyStudentReportDispatch(student=student, month=month_start)
+    try:
+        with transaction.atomic():
+            dispatch, _ = MonthlyStudentReportDispatch.objects.select_for_update().get_or_create(
+                student=student,
+                month=month_start,
+                defaults={"trigger_date": trigger_date},
+            )
 
-    dispatch.trigger_date = trigger_date
-    dispatch.status = MonthlyStudentReportDispatch.STATUS_PENDING
-    dispatch.payload = report_payload
-    dispatch.error_message = ""
-    dispatch.response_payload = {}
-    dispatch.workflow_run_id = ""
-    dispatch.attempts += 1
-    dispatch.save()
+            if dispatch.status == MonthlyStudentReportDispatch.STATUS_SUCCEEDED:
+                return {
+                    "student_id": student.pk,
+                    "student_name": student.user.full_name,
+                    "status": "skipped",
+                    "reason": "already_sent",
+                    "dispatch_id": dispatch.pk,
+                }
+
+            if (
+                dispatch.status == MonthlyStudentReportDispatch.STATUS_PENDING
+                and dispatch.attempts > 0
+                and not force
+            ):
+                return {
+                    "student_id": student.pk,
+                    "student_name": student.user.full_name,
+                    "status": "skipped",
+                    "reason": "send_already_in_progress",
+                    "dispatch_id": dispatch.pk,
+                    "trigger_date": trigger_date.isoformat(),
+                }
+
+            dispatch.trigger_date = trigger_date
+            dispatch.status = MonthlyStudentReportDispatch.STATUS_PENDING
+            dispatch.payload = report_payload
+            dispatch.error_message = ""
+            dispatch.response_payload = {}
+            dispatch.workflow_run_id = ""
+            dispatch.attempts += 1
+            dispatch.save()
+    except IntegrityError:
+        dispatch = MonthlyStudentReportDispatch.objects.get(student=student, month=month_start)
+        return {
+            "student_id": student.pk,
+            "student_name": student.user.full_name,
+            "status": "skipped",
+            "reason": "send_already_in_progress",
+            "dispatch_id": dispatch.pk,
+            "trigger_date": trigger_date.isoformat(),
+        }
 
     try:
         response_payload = run_dify_workflow(

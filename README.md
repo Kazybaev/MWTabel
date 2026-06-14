@@ -1,290 +1,178 @@
 # Tabel
 
-<p align="center">
-  <img src="./assets/motion-community-logo.jfif" alt="Motion Community" width="180" />
-</p>
-<p align="center">
-  Команда Motion Community
-</p>
+Учебная система для ведения групп, студентов, менторов, табеля, оценок, посещаемости и ежемесячных отчетов родителям.
 
-<p align="center">
-  Учебная система для табеля, оценок, посещаемости и ежемесячных отчётов студентов.
-</p>
+Проект состоит из:
 
-## О проекте
+- backend: Django + Django REST Framework;
+- frontend: React + Vite;
+- база данных в production: PostgreSQL;
+- авторизация: JWT;
+- отправка отчетов: Dify Workflow API;
+- production-запуск: Docker, Gunicorn, Nginx.
 
-`Tabel` — это веб-система для учебных центров и IT-школ, где:
+## Возможности
 
-- администратор управляет группами, менторами и студентами;
-- ментор ведёт табель группы и выставляет оценки по дням;
-- студент видит только свои оценки, средний балл и посещаемость;
-- отчёты за месяц можно отправлять через `Dify`.
+- Роли пользователей: администратор, ментор, студент.
+- Управление группами, менторами и студентами.
+- Месячный табель по группе.
+- Оценки `5`, `4`, `3`, `2` и отметка пропуска `Н`.
+- Расчет среднего балла и посещаемости.
+- Личный кабинет студента только со своими данными.
+- Ежемесячные отчеты родителям через Dify.
 
-Стек проекта:
+## Главное правило отчетов
 
-- `React + Vite` — frontend;
-- `Django + Django REST Framework` — backend и API;
-- `PostgreSQL` — production-база данных;
-- `JWT` — авторизация;
-- `Docker + Nginx + Gunicorn` — production-развёртывание.
+Отчет по студенту отправляется на номер родителя из поля `parent_phone`.
 
-## Что умеет система
+Отчет можно отправить только при выполнении всех условий:
 
-- роли `ADMIN`, `MENTOR`, `STUDENT`;
-- управление группами;
-- управление студентами;
-- управление менторами;
-- месячный табель с оценками по датам;
-- учёт посещаемости;
-- расчёт среднего балла;
-- личный кабинет студента;
-- ежемесячные отчёты по студентам через `Dify`;
-- mobile-friendly интерфейс.
+- наступил последний учебный день группы в выбранном месяце;
+- для студента на последнем уроке месяца уже стоит оценка или пропуск;
+- за этот месяц по этому студенту еще нет успешной отправки.
 
-## Роли и возможности
+Отчет не должен отправляться в начале следующего месяца. Повторная успешная отправка одного и того же отчета запрещена.
 
-### Администратор
+История отправок хранится в модели `MonthlyStudentReportDispatch`. Уникальность пары `(student, month)` защищает от дублей.
 
-Администратор может:
+## Важные файлы
 
-- создавать и редактировать группы;
-- назначать менторов;
-- добавлять студентов;
-- распределять студентов по группам;
-- смотреть сводку по группам, урокам и участникам;
-- открывать табель группы и проверять данные.
+- `tabel_project/tabel_app/models.py` - модели пользователей, групп, уроков, оценок и отправок отчетов.
+- `tabel_project/tabel_app/report.py` - сбор месячного отчета, проверка даты отправки, защита от дублей, отправка в Dify.
+- `tabel_project/tabel_app/views.py` - API, права доступа, сохранение табеля.
+- `tabel_project/tabel_app/scheduler.py` - автоматическая проверка отчетов.
+- `tabel_project/tabel_app/management/commands/send_monthly_reports.py` - ручной запуск отправки отчетов.
+- `frontend/src` - React-приложение.
 
-### Ментор
+## Локальный запуск backend
 
-Ментор может:
+```powershell
+powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\run-local.ps1 -SeedDemo
+```
 
-- видеть только свои группы;
-- открывать табель группы по месяцам;
-- выставлять оценки по датам;
-- отмечать пропуски;
-- видеть средний балл и посещаемость студентов;
-- отправлять ежемесячный отчёт студенту или родителю.
+Backend будет доступен по адресу:
 
-### Студент
+```text
+http://127.0.0.1:8000/
+```
 
-Студент может:
+API-информация:
 
-- входить только в свой кабинет;
-- смотреть только свои оценки;
-- видеть свой месячный табель;
-- видеть посещаемость;
-- видеть средний балл.
+```text
+http://127.0.0.1:8000/api-info/
+```
 
-## Как пользоваться системой
+## Локальный запуск frontend
 
-### 1. Вход
+Нужен установленный Node.js и npm.
 
-Пользователь открывает проект и входит по своему логину и паролю.
+```powershell
+powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\run-frontend-local.ps1
+```
 
-После входа система автоматически показывает интерфейс по роли:
+Frontend будет доступен по адресу:
 
-- администратору — панель управления;
-- ментору — группы и табель;
-- студенту — личный кабинет и оценки.
+```text
+http://127.0.0.1:5173/
+```
 
-### 2. Сценарий для администратора
+## Проверки
 
-1. Создать группу.
-2. Назначить ментора.
-3. Добавить студентов.
-4. Проверить состав группы.
-5. При необходимости открыть табель и проверить месяц.
+Backend:
 
-### 3. Сценарий для ментора
+```powershell
+$env:DB_ENGINE='sqlite'
+python tabel_project\manage.py test tabel_app
+```
 
-1. Открыть нужную группу.
-2. Выбрать месяц.
-3. Выставить оценки по дням.
-4. Отметить пропуски.
-5. Проверить средний балл и посещаемость.
+Frontend:
 
-### 4. Сценарий для студента
+```powershell
+cd frontend
+npm run lint
+npm run build
+```
 
-1. Войти в личный кабинет.
-2. Открыть страницу `Мои оценки`.
-3. Посмотреть табель за месяц.
-4. Проверить средний балл и посещаемость.
+## Ручная отправка отчетов
 
-## Ежемесячные отчёты и Dify
+Обычная проверка отчетов за текущий месяц:
 
-В проекте есть логика отправки ежемесячных отчётов по студентам через `Dify Workflow API`.
-
-Система:
-
-- собирает оценки за месяц;
-- считает посещаемость;
-- считает средний балл;
-- считает количество оценок `5`, `4`, `3`, `2` и пропусков `Н`;
-- формирует JSON payload;
-- отправляет этот payload в `Dify`.
-
-В Dify отправляются, например, такие поля:
-
-- `student_name`
-- `recipient_name`
-- `recipient_phone`
-- `group_name`
-- `mentor_name`
-- `month`
-- `average_grade`
-- `attendance_count`
-- `absence_count`
-- `total_five`
-- `total_four`
-- `total_three`
-- `total_two`
-- `attendance_rate`
-- `report`
-
-### Ручной запуск отчётов
-
-```bash
+```powershell
 python tabel_project\manage.py send_monthly_reports
 ```
 
 Полезные варианты:
 
-```bash
+```powershell
 python tabel_project\manage.py send_monthly_reports --dry-run
 python tabel_project\manage.py send_monthly_reports --date 2026-04-30
-python tabel_project\manage.py send_monthly_reports --group-id 1
+python tabel_project\manage.py send_monthly_reports --month 2026-04
 python tabel_project\manage.py send_monthly_reports --student-id 5
+python tabel_project\manage.py send_monthly_reports --group-id 1
 ```
 
-## Последние изменения
+Важно: ручной запуск тоже не должен отправлять отчет раньше или позже последнего учебного дня месяца.
 
-- улучшена mobile-адаптация для `admin`, `mentor` и `student`;
-- добавлен удобный горизонтальный скролл табеля на телефонах;
-- скрыты лишние логины в боковых карточках интерфейса;
-- доработан payload отчётов для `Dify`;
-- в JSON отчёта добавлены поля:
-  - `total_five`
-  - `total_four`
-  - `total_three`
-  - `total_two`
-- обновлены SEO-файлы:
-  - `index.html`
-  - `robots.txt`
-  - `sitemap.xml`
-  - `site.webmanifest`
+## Переменные окружения
 
-## Структура проекта
+Минимально важные переменные для production:
 
-```text
-.
-├── assets/                 # логотип и дополнительные изображения
-├── docker/                 # nginx и entrypoint
-├── frontend/               # React frontend
-├── scripts/                # локальные скрипты запуска
-├── tabel_project/
-│   ├── tabel_project/      # settings, urls, wsgi
-│   └── tabel_app/          # модели, API, отчёты, management commands
-├── docker-compose.yml
-├── Dockerfile
-├── requirements.txt
-└── README.md
-```
+- `SECRET_KEY`
+- `DEBUG=False`
+- `ALLOWED_HOSTS`
+- `CSRF_TRUSTED_ORIGINS`
+- `DB_ENGINE=postgresql`
+- `DB_USER`
+- `DB_POSTGRES`
+- `DB_PASSWORD`
+- `DB_HOST`
+- `DB_PORT`
+- `TIME_ZONE=Asia/Almaty`
+- `AUTO_MONTHLY_REPORTS=True`
+- `DIFY_API_KEY`
+- `DIFY_API_URL`
+- `DIFY_RESPONSE_MODE=blocking`
+- `DIFY_TIMEOUT_SECONDS=30`
 
-## Локальный запуск
+Секреты нельзя хранить в репозитории.
 
-### Backend
+## Production
 
-Рекомендуемый локальный запуск без Docker:
-
-```bash
-powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\run-local.ps1 -SeedDemo
-```
-
-### Frontend
-
-```bash
-powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\run-frontend-local.ps1
-```
-
-Открыть:
-
-- frontend dev: `http://127.0.0.1:5173/`
-- backend: `http://127.0.0.1:8000/`
-
-## Demo-аккаунты
-
-- `admin_demo / admin12345`
-- `mentor_demo / mentor12345`
-- `student_demo_1 / student12345`
-- `student_demo_2 / student12345`
-
-## Production запуск через Docker
-
-В проекте уже есть:
+Docker-файлы уже есть в проекте:
 
 - `Dockerfile`
 - `docker-compose.yml`
 - `docker/nginx/default.conf`
 - `docker/entrypoint.sh`
 
-### Что заполнить в `.env`
-
-Обязательно проверь:
-
-- `SECRET_KEY`
-- `DEBUG=False`
-- `ALLOWED_HOSTS`
-- `CSRF_TRUSTED_ORIGINS`
-- `DB_USER`
-- `DB_POSTGRES`
-- `DB_PASSWORD`
-- `DB_HOST=db`
-- `DB_PORT=5432`
-- `DIFY_API_KEY`
-
-### Запуск на сервере
+Запуск:
 
 ```bash
 docker compose up --build -d
 ```
 
-Проверка логов:
+Логи:
 
 ```bash
 docker compose logs -f web
 docker compose logs -f nginx
 ```
 
-Создать администратора:
+Создание администратора:
 
 ```bash
 docker compose exec web python manage.py createsuperuser
 ```
 
-Запустить demo-данные:
+## Demo-аккаунты
 
-```bash
-docker compose exec web python manage.py seed_demo
-```
+После запуска seed-команды:
 
-Открыть проект:
-
-```text
-http://<server-ip>/
-```
-
-## Важные замечания
-
-- `.env` не должен попадать в GitHub;
-- реальные ключи и пароли должны храниться только локально или на сервере;
-- перед production лучше использовать новый `SECRET_KEY` и актуальные ключи;
-- для домена и HTTPS потом нужно обновить `ALLOWED_HOSTS`, `CSRF_TRUSTED_ORIGINS` и SSL-настройки;
-- если сайт должен появляться в Google, лучше использовать публичную открытую главную страницу.
+- `admin_demo / admin12345`
+- `mentor_demo / mentor12345`
+- `student_demo_1 / student12345`
+- `student_demo_2 / student12345`
 
 ## Лицензия
 
-Проект распространяется по лицензии `MIT`.
-
-## Команда
-
-Этот проект создан вместе с командой **Motion Community**.
+MIT.

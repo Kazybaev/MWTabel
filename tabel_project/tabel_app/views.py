@@ -1,6 +1,7 @@
 from datetime import date, datetime, timedelta
 from mimetypes import guess_type
 from pathlib import Path
+import os
 
 from django.core.exceptions import PermissionDenied
 from django.db.models import Count
@@ -345,6 +346,27 @@ def save_gradebook_entries(group, students, month_days, lessons_by_date, entries
             lessons_by_date.pop(day, None)
 
 
+def dispatch_due_reports_after_gradebook_save(students, selected_month):
+    if (os.getenv("AUTO_MONTHLY_REPORTS", "false") or "").strip().lower() not in {"1", "true", "yes", "on"}:
+        return []
+
+    results = []
+    run_date = timezone.localdate()
+    for student in students:
+        result = send_student_month_report(
+            student,
+            run_date=run_date,
+            month_start=selected_month,
+            force=False,
+        )
+        if result["status"] != "skipped" or result.get("reason") in {
+            "already_sent",
+            "send_already_in_progress",
+        }:
+            results.append(result)
+    return results
+
+
 def build_dashboard_payload(user):
     if user.role == User.ROLE_ADMIN:
         groups = groups_for_user(user).annotate(students_count=Count("students"))
@@ -662,7 +684,10 @@ class GroupViewSet(viewsets.ModelViewSet):
 
         _, students, month_days, lessons_by_date = build_gradebook_payload(group, request.user, selected_month)
         save_gradebook_entries(group, students, month_days, lessons_by_date, entries)
+        report_results = dispatch_due_reports_after_gradebook_save(students, selected_month)
         payload, _, _, _ = build_gradebook_payload(group, request.user, selected_month)
+        if report_results:
+            payload["report_dispatch_results"] = report_results
         return Response(payload, status=status.HTTP_200_OK)
 
 

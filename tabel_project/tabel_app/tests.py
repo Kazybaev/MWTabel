@@ -1,5 +1,6 @@
 import os
 from datetime import date
+from pathlib import Path
 from unittest.mock import patch
 
 from django.test import override_settings
@@ -92,8 +93,12 @@ class TabelApiTests(APITestCase):
 
     def test_frontend_shell_is_served_from_root(self):
         response = self.client.get("/")
-        self.assertEqual(response.status_code, status.HTTP_200_OK)
-        self.assertIn("text/html", response["Content-Type"])
+        frontend_index = Path(__file__).resolve().parents[2] / "frontend" / "dist" / "index.html"
+        if frontend_index.exists():
+            self.assertEqual(response.status_code, status.HTTP_200_OK)
+            self.assertIn("text/html", response["Content-Type"])
+        else:
+            self.assertEqual(response.status_code, status.HTTP_503_SERVICE_UNAVAILABLE)
 
     def test_admin_dashboard_is_available(self):
         client = self.auth_client("admin", "admin-pass-123")
@@ -215,7 +220,7 @@ class TabelApiTests(APITestCase):
         self.assertEqual(mocked_send_student_month_report.call_args.kwargs["month_start"], date(2026, 4, 1))
         self.assertEqual(mocked_send_student_month_report.call_args.kwargs["run_date"], date(2026, 4, 30))
         self.assertFalse(mocked_send_student_month_report.call_args.kwargs["dry_run"])
-        self.assertTrue(mocked_send_student_month_report.call_args.kwargs["force"])
+        self.assertFalse(mocked_send_student_month_report.call_args.kwargs["force"])
         self.assertEqual(response.data["workflow_run_id"], "run-007")
 
     def test_student_cannot_trigger_report_dispatch_endpoint(self):
@@ -278,7 +283,7 @@ class MonthlyReportServiceTests(APITestCase):
         self.group = Group.objects.create(
             course_name="Motion Web",
             mentor=self.mentor,
-            study_days=Group.MON_WED_SAT,
+            study_days=Group.TUE_THU_SUN,
             description="Monthly report group",
         )
         self.student_user = User.objects.create_user(
@@ -414,6 +419,8 @@ class MonthlyReportServiceTests(APITestCase):
         ]
         LessonRecord.objects.create(student=self.student, lesson=self.first_lesson, grade="5")
         LessonRecord.objects.create(student=self.second_student, lesson=self.first_lesson, grade="4")
+        LessonRecord.objects.create(student=self.student, lesson=self.third_lesson, grade="5")
+        LessonRecord.objects.create(student=self.second_student, lesson=self.third_lesson, grade="4")
 
         early_results = send_due_monthly_reports(run_date=date(2026, 4, 29))
         due_results = send_due_monthly_reports(run_date=date(2026, 4, 30))
@@ -430,8 +437,60 @@ class MonthlyReportServiceTests(APITestCase):
         self.assertEqual(MonthlyStudentReportDispatch.objects.count(), 2)
 
     @patch("tabel_app.report.run_dify_workflow")
+    def test_report_waits_until_student_has_mark_on_last_lesson(self, mocked_run_dify_workflow):
+        LessonRecord.objects.create(student=self.student, lesson=self.first_lesson, grade="5")
+
+        results = send_due_monthly_reports(
+            run_date=date(2026, 4, 30),
+            student_id=self.student.pk,
+        )
+
+        self.assertEqual(results[0]["status"], "skipped")
+        self.assertEqual(results[0]["reason"], "trigger_lesson_not_marked")
+        mocked_run_dify_workflow.assert_not_called()
+        self.assertEqual(MonthlyStudentReportDispatch.objects.count(), 0)
+
+    @patch("tabel_app.report.run_dify_workflow")
+    def test_report_does_not_treat_earlier_created_lesson_as_month_end(self, mocked_run_dify_workflow):
+        self.third_lesson.delete()
+        LessonRecord.objects.create(student=self.student, lesson=self.first_lesson, grade="5")
+        LessonRecord.objects.create(student=self.student, lesson=self.second_lesson, grade="4")
+
+        results = send_due_monthly_reports(
+            run_date=date(2026, 4, 30),
+            student_id=self.student.pk,
+        )
+
+        self.assertEqual(results[0]["status"], "skipped")
+        self.assertEqual(results[0]["reason"], "trigger_lesson_not_created")
+        mocked_run_dify_workflow.assert_not_called()
+        self.assertEqual(MonthlyStudentReportDispatch.objects.count(), 0)
+
+    @patch("tabel_app.report.run_dify_workflow")
+    def test_successful_report_is_not_resent_even_with_force(self, mocked_run_dify_workflow):
+        mocked_run_dify_workflow.return_value = {"workflow_run_id": "run-1"}
+        LessonRecord.objects.create(student=self.student, lesson=self.third_lesson, grade="5")
+
+        first_results = send_due_monthly_reports(
+            run_date=date(2026, 4, 30),
+            student_id=self.student.pk,
+        )
+        second_results = send_due_monthly_reports(
+            run_date=date(2026, 5, 1),
+            month_start=self.month_start,
+            student_id=self.student.pk,
+            force=True,
+        )
+
+        self.assertEqual(first_results[0]["status"], "sent")
+        self.assertEqual(second_results[0]["status"], "skipped")
+        self.assertEqual(second_results[0]["reason"], "not_due_today")
+        self.assertEqual(mocked_run_dify_workflow.call_count, 1)
+
+    @patch("tabel_app.report.run_dify_workflow")
     def test_failed_report_is_logged_for_retry(self, mocked_run_dify_workflow):
         mocked_run_dify_workflow.side_effect = RuntimeError("Dify is unavailable")
+        LessonRecord.objects.create(student=self.student, lesson=self.third_lesson, grade="5")
 
         results = send_due_monthly_reports(
             run_date=date(2026, 4, 30),
