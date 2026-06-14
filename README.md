@@ -127,7 +127,7 @@ python tabel_project\manage.py send_monthly_reports --group-id 1
 - `DB_PASSWORD`
 - `DB_HOST`
 - `DB_PORT`
-- `TIME_ZONE=Asia/Almaty`
+- `TIME_ZONE=Asia/Bishkek`
 - `AUTO_MONTHLY_REPORTS=True`
 - `DIFY_API_KEY`
 - `DIFY_API_URL`
