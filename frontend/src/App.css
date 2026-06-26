@@ -5055,3 +5055,352 @@
     height: min(420px, 62vh);
   }
 }
+
+.metric-grid--student {
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 22px;
+}
+
+.metric-grid--student .metric-card {
+  min-height: 178px;
+  padding: 34px 30px 28px;
+  border-radius: 34px;
+  background: rgba(255, 252, 244, 0.92);
+  border: 1px solid rgba(19, 55, 47, 0.14);
+  box-shadow: 0 22px 46px rgba(39, 45, 32, 0.08);
+  display: grid;
+  align-content: start;
+  gap: 26px;
+}
+
+.metric-grid--student .metric-card__label {
+  margin: 0;
+  color: #61706c;
+  font-size: 1.36rem;
+  line-height: 1.2;
+  font-weight: 400;
+}
+
+.metric-grid--student .metric-card__value {
+  color: #073a3d;
+  font-family: var(--font-display);
+  font-size: 3.05rem;
+  line-height: 0.95;
+  font-weight: 800;
+  letter-spacing: -0.02em;
+}
+
+.metric-grid--student .metric-card--teal,
+.metric-grid--student .metric-card--sand,
+.metric-grid--student .metric-card--blue,
+.metric-grid--student .metric-card--orange {
+  border-color: rgba(19, 55, 47, 0.14);
+}
+
+@media (max-width: 1024px) {
+  .metric-grid--student {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+    gap: 14px;
+  }
+
+  .metric-grid--student .metric-card {
+    min-height: 148px;
+    padding: 26px 22px 22px;
+    border-radius: 26px;
+    gap: 22px;
+  }
+
+  .metric-grid--student .metric-card__label {
+    font-size: 1.06rem;
+  }
+
+  .metric-grid--student .metric-card__value {
+    font-size: 2.35rem;
+  }
+}
+
+@media (max-width: 720px) {
+  .metric-grid--student {
+    grid-template-columns: 1fr;
+  }
+
+  .metric-grid--student .metric-card {
+    min-height: 128px;
+  }
+}
+
+.student-summary-stats {
+  display: grid;
+  gap: 28px;
+  padding: 0;
+}
+
+.student-summary-stats__cards {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 26px;
+}
+
+.student-summary-card {
+  min-height: 140px;
+  padding: 24px 26px;
+  border-radius: 12px;
+  background: rgba(255, 255, 255, 0.94);
+  border: 1px solid rgba(226, 232, 240, 0.9);
+  box-shadow: 0 8px 22px rgba(15, 23, 42, 0.045);
+  display: flex;
+  align-items: center;
+  gap: 22px;
+}
+
+.student-summary-card__icon {
+  width: 76px;
+  height: 76px;
+  flex: 0 0 76px;
+  border-radius: 50%;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 2rem;
+  font-weight: 800;
+  line-height: 1;
+}
+
+.student-summary-card p,
+.student-summary-card strong,
+.student-summary-card span {
+  margin: 0;
+}
+
+.student-summary-card p {
+  color: #6b7280;
+  font-size: 1.08rem;
+  line-height: 1.2;
+  font-weight: 800;
+}
+
+.student-summary-card strong {
+  display: block;
+  margin-top: 8px;
+  color: #111827;
+  font-size: 2.15rem;
+  line-height: 1;
+  font-weight: 900;
+  letter-spacing: -0.02em;
+}
+
+.student-summary-card div > span {
+  display: block;
+  margin-top: 10px;
+  color: #6b7280;
+  font-size: 1rem;
+  line-height: 1.2;
+  font-weight: 700;
+}
+
+.student-summary-card--blue .student-summary-card__icon {
+  color: #4f46e5;
+  background: #eef2ff;
+}
+
+.student-summary-card--green .student-summary-card__icon {
+  color: #17a768;
+  background: #ecfdf3;
+}
+
+.student-summary-card--red .student-summary-card__icon {
+  color: #e04f5f;
+  background: #fff0f2;
+}
+
+.student-summary-card--indigo .student-summary-card__icon {
+  color: #2563eb;
+  background: #eef2ff;
+}
+
+.student-month-breakdown {
+  padding: 8px 6px 4px;
+}
+
+.student-month-breakdown h3 {
+  margin: 0 0 26px;
+  color: #111827;
+  font-size: 1.55rem;
+  line-height: 1.15;
+  font-weight: 900;
+}
+
+.student-month-breakdown__grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 26px;
+}
+
+.student-month-summary {
+  min-width: 0;
+}
+
+.student-month-summary h4 {
+  margin: 0 0 24px;
+  color: #111827;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  font-size: 1.34rem;
+  line-height: 1.2;
+  font-weight: 900;
+}
+
+.student-month-summary h4 i {
+  width: 22px;
+  height: 22px;
+  border-radius: 50%;
+  background: var(--month-color);
+  box-shadow: 0 0 0 4px color-mix(in srgb, var(--month-color) 10%, transparent);
+}
+
+.student-month-summary dl {
+  margin: 0;
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 20px;
+}
+
+.student-month-summary div {
+  min-width: 0;
+}
+
+.student-month-summary dt {
+  margin: 0 0 12px;
+  color: #6b7280;
+  font-size: 1rem;
+  line-height: 1.2;
+  font-weight: 800;
+  white-space: nowrap;
+}
+
+.student-month-summary dd {
+  margin: 0;
+  color: #111827;
+  font-size: 1.55rem;
+  line-height: 1;
+  font-weight: 900;
+  letter-spacing: -0.02em;
+}
+
+.student-month-summary dd span {
+  color: #6b7280;
+  font-weight: 800;
+}
+
+.student-month-summary__max {
+  color: #23a362 !important;
+}
+
+.student-month-summary__min {
+  color: #ef4b61 !important;
+}
+
+@media (max-width: 1280px) {
+  .student-summary-stats__cards {
+    gap: 16px;
+  }
+
+  .student-summary-card {
+    padding: 20px;
+    gap: 16px;
+  }
+
+  .student-summary-card__icon {
+    width: 62px;
+    height: 62px;
+    flex-basis: 62px;
+    font-size: 1.65rem;
+  }
+
+  .student-summary-card strong {
+    font-size: 1.8rem;
+  }
+
+  .student-month-breakdown__grid {
+    gap: 18px;
+  }
+
+  .student-month-summary dl {
+    gap: 14px;
+  }
+
+  .student-month-summary dt {
+    font-size: 0.86rem;
+  }
+
+  .student-month-summary dd {
+    font-size: 1.32rem;
+  }
+}
+
+@media (max-width: 1024px) {
+  .student-summary-stats__cards {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .student-month-breakdown__grid {
+    grid-template-columns: 1fr;
+  }
+}
+
+@media (max-width: 640px) {
+  .student-summary-stats {
+    gap: 22px;
+  }
+
+  .student-summary-stats__cards {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 10px;
+  }
+
+  .student-summary-card {
+    min-height: 0;
+    aspect-ratio: 1 / 1;
+    padding: 14px 12px;
+    border-radius: 12px;
+    flex-direction: column;
+    align-items: flex-start;
+    justify-content: space-between;
+    gap: 8px;
+  }
+
+  .student-summary-card__icon {
+    width: 42px;
+    height: 42px;
+    flex-basis: 42px;
+    font-size: 1.2rem;
+  }
+
+  .student-summary-card p {
+    font-size: clamp(0.78rem, 3.2vw, 0.94rem);
+    line-height: 1.12;
+  }
+
+  .student-summary-card strong {
+    margin-top: 5px;
+    font-size: clamp(1.35rem, 6vw, 1.78rem);
+    line-height: 0.95;
+    word-break: keep-all;
+    white-space: nowrap;
+  }
+
+  .student-summary-card div > span {
+    margin-top: 6px;
+    font-size: clamp(0.72rem, 3vw, 0.9rem);
+    line-height: 1.1;
+  }
+
+  .student-month-breakdown {
+    padding-inline: 0;
+  }
+
+  .student-month-summary dl {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}

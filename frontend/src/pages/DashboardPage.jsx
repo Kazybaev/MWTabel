@@ -295,6 +295,124 @@ function ChartJsMonthChart({ months = [] }) {
   );
 }
 
+function getRecentMonthsWithGrades(stats = []) {
+  return stats
+    .filter((month) => (month.daily_points || []).length || Number(month.grades_count) > 0)
+    .slice(-3);
+}
+
+function getMonthGrades(month) {
+  return (month?.daily_points || [])
+    .map((point) => Number(point.grade))
+    .filter((grade) => Number.isFinite(grade));
+}
+
+function formatGradeValue(value, digits = 1) {
+  if (!Number.isFinite(value)) {
+    return "0";
+  }
+
+  return Number(value).toFixed(digits).replace(".", ",");
+}
+
+function StudentSummaryStats({ stats = [] }) {
+  const months = getRecentMonthsWithGrades(stats);
+  const allGrades = months.flatMap(getMonthGrades);
+  const totalGrades = months.reduce((sum, month) => sum + Number(month.grades_count || 0), 0);
+  const averageGrade = allGrades.length
+    ? allGrades.reduce((sum, grade) => sum + grade, 0) / allGrades.length
+    : 0;
+  const bestGrade = allGrades.length ? Math.max(...allGrades) : 0;
+  const worstGrade = allGrades.length ? Math.min(...allGrades) : 0;
+
+  const cards = [
+    {
+      title: "Средняя оценка",
+      value: `${formatGradeValue(averageGrade, 2)} / 5`,
+      caption: "за 3 месяца",
+      tone: "blue",
+      icon: "↗",
+    },
+    {
+      title: "Лучший день",
+      value: formatGradeValue(bestGrade),
+      caption: "максимальная оценка",
+      tone: "green",
+      icon: "↗",
+    },
+    {
+      title: "Худший день",
+      value: formatGradeValue(worstGrade),
+      caption: "минимальная оценка",
+      tone: "red",
+      icon: "↘",
+    },
+    {
+      title: "Всего оценок",
+      value: totalGrades,
+      caption: "за 3 месяца",
+      tone: "indigo",
+      icon: "▣",
+    },
+  ];
+
+  return (
+    <section className="student-summary-stats" aria-label="Статистика студента за последние 3 месяца">
+      <div className="student-summary-stats__cards">
+        {cards.map((card) => (
+          <article key={card.title} className={`student-summary-card student-summary-card--${card.tone}`}>
+            <span className="student-summary-card__icon" aria-hidden="true">{card.icon}</span>
+            <div>
+              <p>{card.title}</p>
+              <strong>{card.value}</strong>
+              <span>{card.caption}</span>
+            </div>
+          </article>
+        ))}
+      </div>
+
+      <div className="student-month-breakdown">
+        <h3>По месяцам</h3>
+        <div className="student-month-breakdown__grid">
+          {months.map((month) => {
+            const grades = getMonthGrades(month);
+            const monthAverage = grades.length
+              ? grades.reduce((sum, grade) => sum + grade, 0) / grades.length
+              : 0;
+            const monthMax = grades.length ? Math.max(...grades) : 0;
+            const monthMin = grades.length ? Math.min(...grades) : 0;
+            const color = MONTH_LINE_COLORS[month.tone] || "#2563eb";
+
+            return (
+              <article key={month.value} className="student-month-summary" style={{ "--month-color": color }}>
+                <h4><i aria-hidden="true" />{month.name}</h4>
+                <dl>
+                  <div>
+                    <dt>Средняя оценка</dt>
+                    <dd>{formatGradeValue(monthAverage, 2)} <span>/ 5</span></dd>
+                  </div>
+                  <div>
+                    <dt>Максимум</dt>
+                    <dd className="student-month-summary__max">{formatGradeValue(monthMax)}</dd>
+                  </div>
+                  <div>
+                    <dt>Минимум</dt>
+                    <dd className="student-month-summary__min">{formatGradeValue(monthMin)}</dd>
+                  </div>
+                  <div>
+                    <dt>Оценок</dt>
+                    <dd>{Number(month.grades_count || grades.length || 0)}</dd>
+                  </div>
+                </dl>
+              </article>
+            );
+          })}
+        </div>
+      </div>
+    </section>
+  );
+}
+
 function CombinedMonthChart({ months = [] }) {
   const chart = useMemo(() => {
     const width = 1120;
@@ -643,11 +761,15 @@ export function DashboardPage({ api, sessionToken, user }) {
         </div>
       </section>
 
-      <div className="metric-grid">
-        {data.summary_cards.map((card) => (
-          <MetricCard key={card.label} label={card.label} value={card.value} tone={card.tone} />
-        ))}
-      </div>
+      {isStudentDashboard ? (
+        <StudentSummaryStats stats={data.student_monthly_stats} />
+      ) : (
+        <div className="metric-grid">
+          {data.summary_cards.map((card) => (
+            <MetricCard key={card.label} label={card.label} value={card.value} tone={card.tone} />
+          ))}
+        </div>
+      )}
 
       {isStudentDashboard ? (
         <>
