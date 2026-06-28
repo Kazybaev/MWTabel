@@ -1,4 +1,5 @@
 from django.contrib.auth import authenticate
+from django.db import transaction
 from rest_framework import serializers
 from rest_framework_simplejwt.tokens import RefreshToken
 
@@ -27,6 +28,42 @@ class LoginSerializer(serializers.Serializer):
             "access": str(refresh.access_token),
             "refresh": str(refresh),
         }
+
+
+def move_student_records_to_group(student, old_group, new_group):
+    if old_group == new_group:
+        return
+
+    records = list(
+        LessonRecord.objects.select_related("lesson")
+        .filter(student=student, lesson__group=old_group)
+        .order_by("lesson__lesson_date", "lesson_id")
+    )
+
+    for record in records:
+        source_lesson = record.lesson
+        target_lesson = (
+            Lesson.objects.filter(group=new_group, lesson_date=source_lesson.lesson_date)
+            .order_by("id")
+            .first()
+        )
+        if target_lesson is None:
+            target_lesson = Lesson.objects.create(
+                group=new_group,
+                lesson_date=source_lesson.lesson_date,
+                topic=source_lesson.topic,
+            )
+
+        target_record, _ = LessonRecord.objects.update_or_create(
+            student=student,
+            lesson=target_lesson,
+            defaults={
+                "grade": record.grade,
+                "comment": record.comment,
+            },
+        )
+        if target_record.pk != record.pk:
+            record.delete()
 
 
 class ReportDispatchRequestSerializer(serializers.Serializer):
@@ -174,21 +211,25 @@ class StudentProfileSerializer(serializers.ModelSerializer):
         return StudentProfile.objects.create(user=user, **validated_data)
 
     def update(self, instance, validated_data):
-        password = validated_data.pop("password", "")
-        user_data = validated_data.pop("user", {})
-        user = instance.user
-        user.full_name = user_data.get("full_name", user.full_name)
-        user.username = user_data.get("username", user.username)
-        user.email = user_data.get("email", user.email)
-        user.role = User.ROLE_STUDENT
-        if password:
-            user.set_password(password)
-        user.save()
+        with transaction.atomic():
+            password = validated_data.pop("password", "")
+            user_data = validated_data.pop("user", {})
+            old_group = instance.group
+            new_group = validated_data.get("group", instance.group)
+            user = instance.user
+            user.full_name = user_data.get("full_name", user.full_name)
+            user.username = user_data.get("username", user.username)
+            user.email = user_data.get("email", user.email)
+            user.role = User.ROLE_STUDENT
+            if password:
+                user.set_password(password)
+            user.save()
 
-        instance.parent_name = validated_data.get("parent_name", instance.parent_name)
-        instance.parent_phone = validated_data.get("parent_phone", instance.parent_phone)
-        instance.group = validated_data.get("group", instance.group)
-        instance.save()
+            instance.parent_name = validated_data.get("parent_name", instance.parent_name)
+            instance.parent_phone = validated_data.get("parent_phone", instance.parent_phone)
+            instance.group = new_group
+            instance.save()
+            move_student_records_to_group(instance, old_group, new_group)
         return instance
 
 

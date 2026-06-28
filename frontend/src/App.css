@@ -5142,26 +5142,26 @@
 }
 
 .student-summary-card {
-  min-height: 140px;
-  padding: 24px 26px;
+  min-height: 116px;
+  padding: 18px 22px;
   border-radius: 12px;
   background: rgba(255, 255, 255, 0.94);
   border: 1px solid rgba(226, 232, 240, 0.9);
   box-shadow: 0 8px 22px rgba(15, 23, 42, 0.045);
   display: flex;
   align-items: center;
-  gap: 22px;
+  gap: 18px;
 }
 
 .student-summary-card__icon {
-  width: 76px;
-  height: 76px;
-  flex: 0 0 76px;
+  width: 58px;
+  height: 58px;
+  flex: 0 0 58px;
   border-radius: 50%;
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  font-size: 2rem;
+  font-size: 1.55rem;
   font-weight: 800;
   line-height: 1;
 }
@@ -5174,26 +5174,26 @@
 
 .student-summary-card p {
   color: #6b7280;
-  font-size: 1.08rem;
+  font-size: 0.98rem;
   line-height: 1.2;
   font-weight: 800;
 }
 
 .student-summary-card strong {
   display: block;
-  margin-top: 8px;
+  margin-top: 7px;
   color: #111827;
-  font-size: 2.15rem;
+  font-size: 1.85rem;
   line-height: 1;
   font-weight: 900;
-  letter-spacing: -0.02em;
+  letter-spacing: 0;
 }
 
 .student-summary-card div > span {
   display: block;
-  margin-top: 10px;
+  margin-top: 8px;
   color: #6b7280;
-  font-size: 1rem;
+  font-size: 0.9rem;
   line-height: 1.2;
   font-weight: 700;
 }
@@ -5262,8 +5262,8 @@
 .student-month-summary dl {
   margin: 0;
   display: grid;
-  grid-template-columns: repeat(4, minmax(0, 1fr));
-  gap: 20px;
+  grid-template-columns: minmax(92px, 1.3fr) repeat(3, minmax(68px, 0.8fr));
+  gap: 14px;
 }
 
 .student-month-summary div {
@@ -5271,21 +5271,21 @@
 }
 
 .student-month-summary dt {
-  margin: 0 0 12px;
+  margin: 0 0 10px;
   color: #6b7280;
-  font-size: 1rem;
+  font-size: 0.82rem;
   line-height: 1.2;
   font-weight: 800;
-  white-space: nowrap;
+  white-space: normal;
 }
 
 .student-month-summary dd {
   margin: 0;
   color: #111827;
-  font-size: 1.55rem;
+  font-size: 1.32rem;
   line-height: 1;
   font-weight: 900;
-  letter-spacing: -0.02em;
+  letter-spacing: 0;
 }
 
 .student-month-summary dd span {
@@ -5307,19 +5307,19 @@
   }
 
   .student-summary-card {
-    padding: 20px;
-    gap: 16px;
+    padding: 16px 18px;
+    gap: 14px;
   }
 
   .student-summary-card__icon {
-    width: 62px;
-    height: 62px;
-    flex-basis: 62px;
-    font-size: 1.65rem;
+    width: 52px;
+    height: 52px;
+    flex-basis: 52px;
+    font-size: 1.42rem;
   }
 
   .student-summary-card strong {
-    font-size: 1.8rem;
+    font-size: 1.72rem;
   }
 
   .student-month-breakdown__grid {
@@ -5327,7 +5327,7 @@
   }
 
   .student-month-summary dl {
-    gap: 14px;
+    gap: 12px;
   }
 
   .student-month-summary dt {
