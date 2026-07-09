@@ -367,6 +367,58 @@ def dispatch_due_reports_after_gradebook_save(students, selected_month):
     return results
 
 
+def build_student_monthly_stats(student_profile):
+    if not student_profile:
+        return []
+
+    current_year = timezone.localdate().year
+    month_names = [
+        "Январь",
+        "Февраль",
+        "Март",
+        "Апрель",
+        "Май",
+        "Июнь",
+        "Июль",
+        "Август",
+        "Сентябрь",
+        "Октябрь",
+        "Ноябрь",
+        "Декабрь",
+    ]
+    month_tones = ["blue", "red", "green", "orange", "violet", "cyan", "teal", "amber", "indigo", "emerald", "rose", "slate"]
+    records = list(
+        LessonRecord.objects.select_related("lesson")
+        .filter(student=student_profile, lesson__lesson_date__year=current_year)
+        .order_by("lesson__lesson_date", "lesson_id")
+    )
+    monthly_stats = []
+
+    for month_number, month_name in enumerate(month_names, start=1):
+        month_records = [record for record in records if record.lesson.lesson_date.month == month_number]
+        numeric_grades = [int(record.grade) for record in month_records if record.grade.isdigit()]
+        attendance_count = len([record for record in month_records if record.grade and not is_absence_grade(record.grade)])
+        absence_count = len([record for record in month_records if is_absence_grade(record.grade)])
+        monthly_stats.append(
+            {
+                "value": f"{current_year}-{month_number:02d}",
+                "name": month_name,
+                "tone": month_tones[month_number - 1],
+                "grades_count": len(numeric_grades),
+                "attendance_count": attendance_count,
+                "absence_count": absence_count,
+                "average_grade": round(sum(numeric_grades) / len(numeric_grades), 1) if numeric_grades else None,
+                "daily_points": [
+                    {"day": record.lesson.lesson_date.day, "grade": int(record.grade)}
+                    for record in month_records
+                    if record.grade.isdigit()
+                ],
+            }
+        )
+
+    return monthly_stats
+
+
 def build_dashboard_payload(user):
     if user.role == User.ROLE_ADMIN:
         groups = groups_for_user(user).annotate(students_count=Count("students"))
@@ -433,6 +485,7 @@ def build_dashboard_payload(user):
             "attendance_count": attendance_count,
             "average_grade": average_grade,
         },
+        "student_monthly_stats": build_student_monthly_stats(student_profile),
     }
 
 

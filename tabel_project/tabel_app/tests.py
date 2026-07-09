@@ -173,6 +173,31 @@ class TabelApiTests(APITestCase):
         self.assertEqual(student_row["average_grade"], 5.0)
         self.assertEqual(student_row["attendance_count"], 1)
 
+    def test_student_transfer_moves_grades_to_new_group_lessons(self):
+        LessonRecord.objects.create(student=self.student, lesson=self.lesson, grade="5", comment="Great")
+        new_group = Group.objects.create(
+            course_name="Python Evening",
+            mentor=self.mentor,
+            study_days=Group.TUE_THU_SUN,
+            description="Evening stream",
+        )
+
+        client = self.auth_client("admin", "admin-pass-123")
+        response = client.patch(
+            f"/api/students/{self.student.pk}/",
+            {"group": new_group.pk},
+            format="json",
+        )
+
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.student.refresh_from_db()
+        self.assertEqual(self.student.group, new_group)
+        self.assertFalse(LessonRecord.objects.filter(student=self.student, lesson=self.lesson).exists())
+        moved_lesson = Lesson.objects.get(group=new_group, lesson_date=self.lesson.lesson_date)
+        moved_record = LessonRecord.objects.get(student=self.student, lesson=moved_lesson)
+        self.assertEqual(moved_record.grade, "5")
+        self.assertEqual(moved_record.comment, "Great")
+
     def test_api_me_returns_logged_user(self):
         client = self.auth_client("mentor", "mentor-pass-123")
         response = client.get("/api/me/")
