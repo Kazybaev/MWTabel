@@ -4,6 +4,7 @@ import "./App.css";
 import { AppShell } from "./components/AppShell";
 import { EmptyState, LoadingBlock } from "./components/Ui";
 import { apiRequest, clearStoredSession, getErrorMessage, readStoredSession, writeStoredSession } from "./lib/api";
+import { sortGroupsByName } from "./lib/groupSort";
 import { matchPath, navigateTo, parseHashLocation } from "./lib/router";
 import { DashboardPage } from "./pages/DashboardPage";
 import { GradebookPage } from "./pages/GradebookPage";
@@ -136,7 +137,7 @@ function App() {
         onSessionChange: updateSession,
         onUnauthorized: handleUnauthorized,
       });
-      setMentorGroups(payload);
+      setMentorGroups(sortGroupsByName(payload));
     } catch {
       setMentorGroups([]);
     }

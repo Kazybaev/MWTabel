@@ -1,5 +1,6 @@
 import { useDeferredValue, useState } from "react";
 
+import { sortGroupsByName } from "../lib/groupSort";
 import { useResource } from "../lib/useResource";
 import {
   Badge,
@@ -25,6 +26,10 @@ function createEmptyStudent() {
   };
 }
 
+function normalizePhoneSearch(value) {
+  return String(value || "").replace(/\D/g, "");
+}
+
 export function StudentsPage({ api, sessionToken, user, onNotice }) {
   const { data, error, loading, reload } = useResource(() => api("/api/students/"), [sessionToken]);
   const { data: groups } = useResource(
@@ -43,7 +48,7 @@ export function StudentsPage({ api, sessionToken, user, onNotice }) {
     return <EmptyState title="Раздел закрыт" description="У вас нет доступа к списку студентов." />;
   }
 
-  const groupOptions = (groups || []).map((group) => ({
+  const groupOptions = sortGroupsByName(groups).map((group) => ({
     value: `${group.id}`,
     label: `${group.course_name} · ${group.mentor_name}`,
   }));
@@ -124,8 +129,13 @@ export function StudentsPage({ api, sessionToken, user, onNotice }) {
   }
 
   const students = (data || []).filter((student) => {
-    const haystack = `${student.full_name} ${student.username} ${student.group_name} ${student.parent_name}`.toLowerCase();
-    return haystack.includes(deferredSearch.trim().toLowerCase());
+    const query = deferredSearch.trim().toLowerCase();
+    const phoneQuery = normalizePhoneSearch(query);
+    const haystack =
+      `${student.full_name} ${student.username} ${student.group_name} ${student.parent_name} ${student.parent_phone}`.toLowerCase();
+    const phoneHaystack = normalizePhoneSearch(student.parent_phone);
+
+    return haystack.includes(query) || (phoneQuery && phoneHaystack.includes(phoneQuery));
   });
 
   if (loading) {
@@ -148,7 +158,7 @@ export function StudentsPage({ api, sessionToken, user, onNotice }) {
               className="search-input"
               value={search}
               onChange={(event) => setSearch(event.target.value)}
-              placeholder="Поиск по имени, группе или родителю"
+              placeholder="Поиск по имени, группе, родителю или телефону"
             />
             {user.role === "ADMIN" ? <Button onClick={openCreate}>Добавить студента</Button> : null}
           </div>

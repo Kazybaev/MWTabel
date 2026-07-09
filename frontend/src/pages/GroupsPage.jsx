@@ -1,5 +1,6 @@
 import { useDeferredValue, useState } from "react";
 
+import { sortGroupsByName } from "../lib/groupSort";
 import { useResource } from "../lib/useResource";
 import {
   Badge,
@@ -119,7 +120,7 @@ export function GroupsPage({ api, meta, sessionToken, user, onNotice }) {
     }
   }
 
-  const groups = (data || []).filter((group) => {
+  const groups = sortGroupsByName(data).filter((group) => {
     const haystack = `${group.course_name} ${group.mentor_name} ${group.study_days_label}`.toLowerCase();
     return haystack.includes(deferredSearch.trim().toLowerCase());
   });

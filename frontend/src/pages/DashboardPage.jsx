@@ -1,5 +1,6 @@
 import { useResource } from "../lib/useResource";
 import { formatDate } from "../lib/format";
+import { sortGroupsByName } from "../lib/groupSort";
 import { Badge, Button, EmptyState, ErrorBlock, LoadingBlock, MetricCard, Panel } from "../components/Ui";
 
 function StudentOverviewPanel({ overview }) {
@@ -71,6 +72,7 @@ export function DashboardPage({ api, sessionToken, user }) {
 
   const isStudentDashboard = Boolean(data.student_overview);
   const isAdminDashboard = user.role === "ADMIN" && !isStudentDashboard;
+  const dashboardGroups = sortGroupsByName(data.groups);
 
   return (
     <div className={`page-stack ${isAdminDashboard ? "dashboard-page dashboard-page--admin" : ""}`.trim()}>
@@ -102,9 +104,9 @@ export function DashboardPage({ api, sessionToken, user }) {
               title="Активные потоки"
               description="Быстрый переход к группе и месячному табелю."
             >
-              {data.groups.length ? (
+              {dashboardGroups.length ? (
                 <div className="list-stack dashboard-list">
-                  {data.groups.map((group) => (
+                  {dashboardGroups.map((group) => (
                     <a key={group.id} className="list-card" href={`#/groups/${group.id}`}>
                       <div>
                         <strong>{group.course_name}</strong>
