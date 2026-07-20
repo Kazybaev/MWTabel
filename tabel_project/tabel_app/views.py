@@ -4,7 +4,8 @@ from pathlib import Path
 import os
 
 from django.core.exceptions import PermissionDenied
-from django.db.models import Count
+from django.db import transaction
+from django.db.models import Count, Q
 from django.http import FileResponse, Http404, HttpResponse
 from django.shortcuts import get_object_or_404
 from django.utils import timezone
@@ -29,6 +30,7 @@ from .serializers import (
     ReportDispatchRequestSerializer,
     StudentProfileSerializer,
     UserSerializer,
+    move_student_records_to_group,
 )
 
 
@@ -49,11 +51,11 @@ def groups_for_user(user):
 def students_for_user(user):
     queryset = StudentProfile.objects.select_related("user", "group", "group__mentor__user")
     if user.role == User.ROLE_ADMIN:
-        return queryset
+        return queryset.filter(archived_at__isnull=True)
     if user.role == User.ROLE_MENTOR and hasattr(user, "mentor_profile"):
-        return queryset.filter(group__mentor=user.mentor_profile)
+        return queryset.filter(group__mentor=user.mentor_profile, archived_at__isnull=True)
     if user.role == User.ROLE_STUDENT and hasattr(user, "student_profile"):
-        return queryset.filter(pk=user.student_profile.pk)
+        return queryset.filter(pk=user.student_profile.pk, archived_at__isnull=True)
     return queryset.none()
 
 
@@ -202,7 +204,7 @@ def build_gradebook_payload(group, user, selected_month):
     study_weekdays = get_group_study_weekdays(group)
 
     if can_edit:
-        students = list(group.students.select_related("user"))
+        students = list(group.students.filter(archived_at__isnull=True).select_related("user"))
     elif hasattr(user, "student_profile") and user.student_profile.group_id == group.pk:
         students = [user.student_profile]
     else:
@@ -421,7 +423,9 @@ def build_student_monthly_stats(student_profile):
 
 def build_dashboard_payload(user):
     if user.role == User.ROLE_ADMIN:
-        groups = groups_for_user(user).annotate(students_count=Count("students"))
+        groups = groups_for_user(user).annotate(
+            students_count=Count("students", filter=Q(students__archived_at__isnull=True))
+        )
         mentors = MentorProfile.objects.select_related("user").annotate(groups_count=Count("groups"))
         students = students_for_user(user)
         lessons = lessons_for_user(user)
@@ -441,7 +445,9 @@ def build_dashboard_payload(user):
         }
 
     if user.role == User.ROLE_MENTOR and hasattr(user, "mentor_profile"):
-        groups = groups_for_user(user).annotate(students_count=Count("students"))
+        groups = groups_for_user(user).annotate(
+            students_count=Count("students", filter=Q(students__archived_at__isnull=True))
+        )
         students = students_for_user(user)
         lessons = lessons_for_user(user)
         return {
@@ -659,6 +665,11 @@ class StudentProfileViewSet(viewsets.ModelViewSet):
     serializer_class = StudentProfileSerializer
 
     def get_queryset(self):
+        queryset = StudentProfile.objects.select_related("user", "group", "group__mentor__user")
+        if self.request.user.role == User.ROLE_ADMIN:
+            if self.action in {"archived", "restore", "destroy"}:
+                return queryset.filter(archived_at__isnull=False)
+            return queryset.filter(archived_at__isnull=True)
         return students_for_user(self.request.user)
 
     def create(self, request, *args, **kwargs):
@@ -683,10 +694,49 @@ class StudentProfileViewSet(viewsets.ModelViewSet):
         instance.user.delete()
         return Response(status=status.HTTP_204_NO_CONTENT)
 
+    @action(detail=True, methods=["post"])
+    def archive(self, request, pk=None):
+        if request.user.role != User.ROLE_ADMIN:
+            raise PermissionDenied
+        instance = self.get_object()
+        with transaction.atomic():
+            instance.archived_at = timezone.now()
+            instance.save(update_fields=["archived_at"])
+            instance.user.is_active = False
+            instance.user.save(update_fields=["is_active"])
+        return Response(self.get_serializer(instance).data)
+
+    @action(detail=False, methods=["get"])
+    def archived(self, request):
+        if request.user.role != User.ROLE_ADMIN:
+            raise PermissionDenied
+        return Response(self.get_serializer(self.get_queryset(), many=True).data)
+
+    @action(detail=True, methods=["post"])
+    def restore(self, request, pk=None):
+        if request.user.role != User.ROLE_ADMIN:
+            raise PermissionDenied
+        instance = self.get_object()
+        group_id = request.data.get("group")
+        if not group_id:
+            raise ValidationError({"group": "Выберите группу для восстановления студента."})
+        group = get_object_or_404(Group, pk=group_id)
+        old_group = instance.group
+        with transaction.atomic():
+            instance.group = group
+            instance.archived_at = None
+            instance.save(update_fields=["group", "archived_at"])
+            move_student_records_to_group(instance, old_group, group)
+            instance.user.is_active = True
+            instance.user.save(update_fields=["is_active"])
+        return Response(self.get_serializer(instance).data)
+
 
 class GroupViewSet(viewsets.ModelViewSet):
     def get_queryset(self):
-        return groups_for_user(self.request.user).annotate(students_count=Count("students"))
+        return groups_for_user(self.request.user).annotate(
+            students_count=Count("students", filter=Q(students__archived_at__isnull=True))
+        )
 
     def get_serializer_class(self):
         if self.action in {"create", "update", "partial_update"}:

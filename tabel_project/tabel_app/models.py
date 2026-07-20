@@ -77,6 +77,7 @@ class StudentProfile(models.Model):
     parent_name = models.CharField(max_length=100)
     parent_phone = PhoneNumberField()
     group = models.ForeignKey(Group, on_delete=models.CASCADE, related_name="students")
+    archived_at = models.DateTimeField(null=True, blank=True)
 
     class Meta:
         ordering = ("user__full_name",)

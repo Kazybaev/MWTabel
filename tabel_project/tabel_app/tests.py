@@ -198,6 +198,57 @@ class TabelApiTests(APITestCase):
         self.assertEqual(moved_record.grade, "5")
         self.assertEqual(moved_record.comment, "Great")
 
+    def test_admin_can_archive_and_restore_student_with_grades(self):
+        LessonRecord.objects.create(student=self.student, lesson=self.lesson, grade="5", comment="Great")
+        new_group = Group.objects.create(
+            course_name="Archive Restore Group",
+            mentor=self.mentor,
+            study_days=Group.TUE_THU_SUN,
+        )
+        client = self.auth_client("admin", "admin-pass-123")
+
+        archive_response = client.post(f"/api/students/{self.student.pk}/archive/")
+        self.assertEqual(archive_response.status_code, status.HTTP_200_OK)
+        self.student.refresh_from_db()
+        self.student.user.refresh_from_db()
+        self.assertIsNotNone(self.student.archived_at)
+        self.assertFalse(self.student.user.is_active)
+        self.assertNotContains(client.get("/api/students/"), "Student User")
+        self.assertContains(client.get("/api/students/archived/"), "Student User")
+
+        failed_login = self.client.post(
+            "/api/auth/login/",
+            {"username": "student", "password": "student-pass-123"},
+            format="json",
+        )
+        self.assertEqual(failed_login.status_code, status.HTTP_400_BAD_REQUEST)
+
+        restore_response = client.post(
+            f"/api/students/{self.student.pk}/restore/",
+            {"group": new_group.pk},
+            format="json",
+        )
+        self.assertEqual(restore_response.status_code, status.HTTP_200_OK)
+        self.student.refresh_from_db()
+        self.student.user.refresh_from_db()
+        self.assertIsNone(self.student.archived_at)
+        self.assertTrue(self.student.user.is_active)
+        self.assertEqual(self.student.group, new_group)
+        moved_lesson = Lesson.objects.get(group=new_group, lesson_date=self.lesson.lesson_date)
+        self.assertTrue(
+            LessonRecord.objects.filter(student=self.student, lesson=moved_lesson, grade="5").exists()
+        )
+
+    def test_only_archived_students_can_be_deleted_permanently(self):
+        client = self.auth_client("admin", "admin-pass-123")
+        active_delete = client.delete(f"/api/students/{self.student.pk}/")
+        self.assertEqual(active_delete.status_code, status.HTTP_404_NOT_FOUND)
+
+        client.post(f"/api/students/{self.student.pk}/archive/")
+        archived_delete = client.delete(f"/api/students/{self.student.pk}/")
+        self.assertEqual(archived_delete.status_code, status.HTTP_204_NO_CONTENT)
+        self.assertFalse(StudentProfile.objects.filter(pk=self.student.pk).exists())
+
     def test_api_me_returns_logged_user(self):
         client = self.auth_client("mentor", "mentor-pass-123")
         response = client.get("/api/me/")

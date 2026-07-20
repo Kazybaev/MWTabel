@@ -7,6 +7,7 @@ import { apiRequest, clearStoredSession, getErrorMessage, readStoredSession, wri
 import { sortGroupsByName } from "./lib/groupSort";
 import { matchPath, navigateTo, parseHashLocation } from "./lib/router";
 import { DashboardPage } from "./pages/DashboardPage";
+import { ArchivedStudentsPage } from "./pages/ArchivedStudentsPage";
 import { GradebookPage } from "./pages/GradebookPage";
 import { GroupDetailPage } from "./pages/GroupDetailPage";
 import { GroupsPage } from "./pages/GroupsPage";
@@ -280,6 +281,10 @@ function App() {
 
     if (route.path === "/students") {
       return <StudentsPage api={callApi} sessionToken={session.access} user={session.user} onNotice={setNotice} />;
+    }
+
+    if (route.path === "/archive") {
+      return <ArchivedStudentsPage api={callApi} sessionToken={session.access} user={session.user} onNotice={setNotice} />;
     }
 
     if (route.path === "/mentors") {

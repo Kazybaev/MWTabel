@@ -1476,6 +1476,11 @@
   align-items: center;
 }
 
+.list-card--archived {
+  background: color-mix(in srgb, var(--surface, #fff) 88%, #eef2f1);
+  border-style: dashed;
+}
+
 .list-card__actions,
 .toolbar,
 .month-actions,

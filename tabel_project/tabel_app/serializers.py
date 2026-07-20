@@ -169,6 +169,7 @@ class StudentProfileSerializer(serializers.ModelSerializer):
     email = serializers.EmailField(source="user.email", allow_blank=True, required=False)
     password = serializers.CharField(write_only=True, required=False, allow_blank=True, style={"input_type": "password"})
     group_name = serializers.CharField(source="group.course_name", read_only=True)
+    is_archived = serializers.SerializerMethodField()
 
     class Meta:
         model = StudentProfile
@@ -183,7 +184,13 @@ class StudentProfileSerializer(serializers.ModelSerializer):
             "parent_phone",
             "group",
             "group_name",
+            "archived_at",
+            "is_archived",
         ]
+        read_only_fields = ["archived_at"]
+
+    def get_is_archived(self, obj):
+        return obj.archived_at is not None
 
     def validate_username(self, value):
         queryset = User.objects.filter(username=value)
@@ -221,6 +228,8 @@ class StudentProfileSerializer(serializers.ModelSerializer):
             user.username = user_data.get("username", user.username)
             user.email = user_data.get("email", user.email)
             user.role = User.ROLE_STUDENT
+            if instance.archived_at is None:
+                user.is_active = True
             if password:
                 user.set_password(password)
             user.save()
@@ -279,7 +288,7 @@ class GroupListSerializer(serializers.ModelSerializer):
         annotated_count = getattr(obj, "students_count", None)
         if annotated_count is not None:
             return annotated_count
-        return obj.students.count()
+        return obj.students.filter(archived_at__isnull=True).count()
 
 
 class GroupWriteSerializer(serializers.ModelSerializer):
@@ -315,13 +324,13 @@ class GroupDetailSerializer(serializers.ModelSerializer):
         annotated_count = getattr(obj, "students_count", None)
         if annotated_count is not None:
             return annotated_count
-        return obj.students.count()
+        return obj.students.filter(archived_at__isnull=True).count()
 
     def get_students(self, obj):
         request = self.context.get("request")
         if request and request.user.role == User.ROLE_STUDENT:
             return []
-        queryset = obj.students.select_related("user")
+        queryset = obj.students.filter(archived_at__isnull=True).select_related("user")
         return StudentProfileSerializer(queryset, many=True).data
 
     def get_lessons(self, obj):

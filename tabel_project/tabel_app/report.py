@@ -589,6 +589,7 @@ def send_due_monthly_reports(
         "group",
         "group__mentor__user",
     ).filter(
+        archived_at__isnull=True,
         group__lessons__lesson_date__gte=month_start,
         group__lessons__lesson_date__lte=month_end,
     ).distinct()

@@ -9,6 +9,7 @@ function buildNavigation(role) {
   if (role === "ADMIN") {
     items.push({ label: "Группы", href: "/groups" });
     items.push({ label: "Студенты", href: "/students" });
+    items.push({ label: "Архив", href: "/archive" });
     items.push({ label: "Менторы", href: "/mentors" });
   }
 
@@ -79,6 +80,14 @@ function buildSidebarIntro(role, currentPath) {
       eyebrow: "Админ",
       title: "Студенты",
       description: "Добавляйте студентов, редактируйте профили и распределяйте их по нужным группам.",
+    };
+  }
+
+  if (currentPath === "/archive") {
+    return {
+      eyebrow: "Админ",
+      title: "Архив",
+      description: "Восстанавливайте студентов в группы или окончательно удаляйте ненужные учетные записи.",
     };
   }
 

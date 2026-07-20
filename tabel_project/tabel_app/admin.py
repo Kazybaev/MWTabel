@@ -32,9 +32,9 @@ class MentorProfileAdmin(admin.ModelAdmin):
 
 @admin.register(StudentProfile)
 class StudentProfileAdmin(admin.ModelAdmin):
-    list_display = ("id", "user", "group", "parent_name")
+    list_display = ("id", "user", "group", "parent_name", "archived_at")
     search_fields = ("user__full_name", "user__username", "parent_name")
-    list_filter = ("group",)
+    list_filter = ("group", "archived_at")
 
 
 @admin.register(Group)

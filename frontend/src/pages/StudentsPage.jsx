@@ -41,7 +41,7 @@ export function StudentsPage({ api, sessionToken, user, onNotice }) {
   const [draft, setDraft] = useState(createEmptyStudent());
   const [editingId, setEditingId] = useState(null);
   const [saving, setSaving] = useState(false);
-  const [deleteTarget, setDeleteTarget] = useState(null);
+  const [archiveTarget, setArchiveTarget] = useState(null);
   const deferredSearch = useDeferredValue(search);
 
   if (!["ADMIN", "MENTOR"].includes(user.role)) {
@@ -101,22 +101,22 @@ export function StudentsPage({ api, sessionToken, user, onNotice }) {
     }
   }
 
-  async function handleDelete() {
-    if (!deleteTarget) {
+  async function handleArchive() {
+    if (!archiveTarget) {
       return;
     }
 
     setSaving(true);
 
     try {
-      await api(`/api/students/${deleteTarget.id}/`, {
-        method: "DELETE",
+      await api(`/api/students/${archiveTarget.id}/archive/`, {
+        method: "POST",
       });
-      setDeleteTarget(null);
+      setArchiveTarget(null);
       await reload();
       onNotice({
         tone: "success",
-        message: "Студент удален.",
+        message: "Студент перенесен в архив. Его аккаунт отключен.",
       });
     } catch (deleteError) {
       onNotice({
@@ -184,8 +184,8 @@ export function StudentsPage({ api, sessionToken, user, onNotice }) {
                       <Button variant="ghost" onClick={() => openEdit(student)}>
                         Изменить
                       </Button>
-                      <Button variant="danger" onClick={() => setDeleteTarget(student)}>
-                        Удалить
+                      <Button variant="ghost" onClick={() => setArchiveTarget(student)}>
+                        В архив
                       </Button>
                     </>
                   ) : null}
@@ -284,21 +284,22 @@ export function StudentsPage({ api, sessionToken, user, onNotice }) {
       </Modal>
 
       <Modal
-        open={Boolean(deleteTarget)}
-        title="Удалить студента"
-        description={deleteTarget ? `Аккаунт ${deleteTarget.full_name} будет удален вместе с оценками.` : ""}
-        onClose={() => setDeleteTarget(null)}
+        open={Boolean(archiveTarget)}
+        title="Перенести студента в архив"
+        description={archiveTarget ? `${archiveTarget.full_name} исчезнет из группы и не сможет войти в систему. Все оценки сохранятся.` : ""}
+        onClose={() => setArchiveTarget(null)}
         footer={
           <>
-            <Button variant="ghost" onClick={() => setDeleteTarget(null)}>
+            <Button variant="ghost" onClick={() => setArchiveTarget(null)}>
               Отмена
             </Button>
-            <Button variant="danger" onClick={handleDelete} disabled={saving}>
-              {saving ? "Удаляем..." : "Удалить"}
+            <Button onClick={handleArchive} disabled={saving}>
+              {saving ? "Переносим..." : "Перенести в архив"}
             </Button>
           </>
         }
       />
+
     </div>
   );
 }
