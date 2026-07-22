@@ -17,6 +17,7 @@ from .models import (
     User,
 )
 from .report import build_dify_inputs, build_student_month_report, run_dify_workflow, send_due_monthly_reports
+from .report_delivery import record_meta_delivery_callback
 
 
 SQLITE_TEST_DATABASES = {
@@ -578,3 +579,153 @@ class MonthlyReportServiceTests(APITestCase):
         dispatch = MonthlyStudentReportDispatch.objects.get(student=self.student, month=self.month_start)
         self.assertEqual(dispatch.status, MonthlyStudentReportDispatch.STATUS_FAILED)
         self.assertEqual(dispatch.attempts, 1)
+
+    def build_callback_payload(self, meta_status_code=200, meta_response=None):
+        report = build_student_month_report(self.student, month_start=self.month_start)
+        return {
+            "delivery": {
+                "event": "student_monthly_report_sent",
+                "channel": "meta_whatsapp",
+                "student_name": self.student.user.full_name,
+                "recipient_phone": str(self.student.parent_phone),
+                "month": "2026-04",
+                "report": report,
+                "meta_request": {"messaging_product": "whatsapp"},
+            },
+            "meta_status_code": meta_status_code,
+            "meta_response": meta_response if meta_response is not None else {"messages": [{"id": "wamid.local-1"}]},
+        }
+
+    def create_pending_dispatch(self):
+        return MonthlyStudentReportDispatch.objects.create(
+            student=self.student,
+            month=self.month_start,
+            trigger_date=date(2026, 4, 30),
+            status=MonthlyStudentReportDispatch.STATUS_PENDING,
+            attempts=1,
+            payload=build_student_month_report(self.student, month_start=self.month_start),
+        )
+
+    @patch.dict(os.environ, {"BACKEND_REPORT_CALLBACK_TOKEN": "local-callback-token-at-least-32-chars"}, clear=False)
+    def test_meta_callback_requires_valid_token(self):
+        self.create_pending_dispatch()
+        response = self.client.post("/api/report-logs/", self.build_callback_payload(), format="json")
+        self.assertEqual(response.status_code, status.HTTP_401_UNAUTHORIZED)
+
+    @patch.dict(os.environ, {"BACKEND_REPORT_CALLBACK_TOKEN": "local-callback-token-at-least-32-chars"}, clear=False)
+    def test_meta_callback_stores_success_idempotently(self):
+        dispatch = self.create_pending_dispatch()
+        headers = {"HTTP_AUTHORIZATION": "Bearer local-callback-token-at-least-32-chars"}
+
+        first = self.client.post("/api/report-logs/", self.build_callback_payload(), format="json", **headers)
+        second = self.client.post("/api/report-logs/", self.build_callback_payload(), format="json", **headers)
+
+        self.assertEqual(first.status_code, status.HTTP_200_OK)
+        self.assertFalse(first.data["duplicate"])
+        self.assertTrue(second.data["duplicate"])
+        dispatch.refresh_from_db()
+        self.assertEqual(dispatch.status, MonthlyStudentReportDispatch.STATUS_SUCCEEDED)
+        self.assertEqual(dispatch.response_payload["meta"]["status_code"], 200)
+        self.assertIn("Motion Web IT академиясынан", dispatch.response_payload["meta"]["rendered_text"])
+        self.assertIn("Report Student", dispatch.response_payload["meta"]["rendered_text"])
+        self.assertIsNotNone(dispatch.sent_at)
+        self.assertEqual(MonthlyStudentReportDispatch.objects.count(), 1)
+
+    @patch.dict(os.environ, {"BACKEND_REPORT_CALLBACK_TOKEN": "local-callback-token-at-least-32-chars"}, clear=False)
+    def test_meta_callback_stores_failure(self):
+        dispatch = self.create_pending_dispatch()
+        response = self.client.post(
+            "/api/report-logs/",
+            self.build_callback_payload(400, {"error": {"message": "Invalid recipient"}}),
+            format="json",
+            HTTP_AUTHORIZATION="Bearer local-callback-token-at-least-32-chars",
+        )
+
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        dispatch.refresh_from_db()
+        self.assertEqual(dispatch.status, MonthlyStudentReportDispatch.STATUS_FAILED)
+        self.assertIn("400", dispatch.error_message)
+
+    @patch("tabel_app.report.run_dify_workflow")
+    def test_meta_failure_is_not_overwritten_by_late_dify_success(self, mocked_run_dify_workflow):
+        LessonRecord.objects.create(student=self.student, lesson=self.third_lesson, grade="5")
+
+        def complete_workflow_after_callback(inputs, user_key):
+            record_meta_delivery_callback(
+                delivery={"report": inputs["report"], "meta_request": {"messaging_product": "whatsapp"}},
+                meta_status_code=400,
+                meta_response={"error": {"message": "Invalid recipient"}},
+            )
+            return {"workflow_run_id": "run-after-failed-meta"}
+
+        mocked_run_dify_workflow.side_effect = complete_workflow_after_callback
+        results = send_due_monthly_reports(
+            run_date=date(2026, 4, 30),
+            student_id=self.student.pk,
+        )
+
+        dispatch = MonthlyStudentReportDispatch.objects.get(student=self.student, month=self.month_start)
+        self.assertEqual(results[0]["status"], "failed")
+        self.assertEqual(dispatch.status, MonthlyStudentReportDispatch.STATUS_FAILED)
+        self.assertEqual(dispatch.response_payload["meta"]["status_code"], 400)
+        self.assertEqual(dispatch.response_payload["dify"]["workflow_run_id"], "run-after-failed-meta")
+
+    @patch("tabel_app.report.run_dify_workflow")
+    def test_partial_dify_result_without_callback_is_failed(self, mocked_run_dify_workflow):
+        mocked_run_dify_workflow.return_value = {
+            "workflow_run_id": "run-partial",
+            "data": {"status": "partial-succeeded", "error": None},
+        }
+        LessonRecord.objects.create(student=self.student, lesson=self.third_lesson, grade="5")
+
+        results = send_due_monthly_reports(run_date=date(2026, 4, 30), student_id=self.student.pk)
+
+        dispatch = MonthlyStudentReportDispatch.objects.get(student=self.student, month=self.month_start)
+        self.assertEqual(results[0]["status"], "failed")
+        self.assertEqual(dispatch.status, MonthlyStudentReportDispatch.STATUS_FAILED)
+        self.assertIsNone(dispatch.sent_at)
+        self.assertIn("partial-succeeded", dispatch.error_message)
+
+    @patch("tabel_app.report.run_dify_workflow")
+    def test_successful_meta_callback_wins_over_partial_dify_result(self, mocked_run_dify_workflow):
+        LessonRecord.objects.create(student=self.student, lesson=self.third_lesson, grade="5")
+
+        def complete_workflow_after_callback(inputs, user_key):
+            record_meta_delivery_callback(
+                delivery={"report": inputs["report"], "rendered_text": "Exact message"},
+                meta_status_code=200,
+                meta_response={"messages": [{"id": "wamid.success"}]},
+            )
+            return {"workflow_run_id": "run-partial-after-meta", "data": {"status": "partial-succeeded"}}
+
+        mocked_run_dify_workflow.side_effect = complete_workflow_after_callback
+        results = send_due_monthly_reports(run_date=date(2026, 4, 30), student_id=self.student.pk)
+
+        dispatch = MonthlyStudentReportDispatch.objects.get(student=self.student, month=self.month_start)
+        self.assertEqual(results[0]["status"], "sent")
+        self.assertEqual(dispatch.status, MonthlyStudentReportDispatch.STATUS_SUCCEEDED)
+        self.assertEqual(dispatch.response_payload["meta"]["rendered_text"], "Exact message")
+
+    def test_only_admin_can_read_report_conversations(self):
+        self.create_pending_dispatch()
+        admin = User.objects.create_user(
+            username="report-admin",
+            password="admin-pass-123",
+            full_name="Report Admin",
+            role=User.ROLE_ADMIN,
+        )
+        admin_client = APIClient()
+        admin_client.force_authenticate(admin)
+        mentor_client = APIClient()
+        mentor_client.force_authenticate(self.mentor.user)
+
+        admin_list = admin_client.get("/api/reports/conversations/")
+        admin_detail = admin_client.get(f"/api/reports/conversations/{self.student.pk}/")
+        mentor_list = mentor_client.get("/api/reports/conversations/")
+
+        self.assertEqual(admin_list.status_code, status.HTTP_200_OK)
+        self.assertEqual(admin_list.data[0]["student_name"], "Report Student")
+        self.assertEqual(admin_detail.status_code, status.HTTP_200_OK)
+        self.assertEqual(len(admin_detail.data["messages"]), 1)
+        self.assertIn("Motion Web IT академиясынан", admin_detail.data["messages"][0]["rendered_text"])
+        self.assertEqual(mentor_list.status_code, status.HTTP_403_FORBIDDEN)

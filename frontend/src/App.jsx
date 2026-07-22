@@ -13,6 +13,7 @@ import { GroupDetailPage } from "./pages/GroupDetailPage";
 import { GroupsPage } from "./pages/GroupsPage";
 import { LoginPage } from "./pages/LoginPage";
 import { MentorsPage } from "./pages/MentorsPage";
+import { ReportConversationsPage } from "./pages/ReportConversationsPage";
 import { StudentsPage } from "./pages/StudentsPage";
 
 const emptyMeta = {
@@ -289,6 +290,10 @@ function App() {
 
     if (route.path === "/mentors") {
       return <MentorsPage api={callApi} sessionToken={session.access} user={session.user} onNotice={setNotice} />;
+    }
+
+    if (route.path === "/reports") {
+      return <ReportConversationsPage api={callApi} sessionToken={session.access} user={session.user} />;
     }
 
     if (route.path === "/my-grades") {

@@ -74,6 +74,25 @@ class ReportDispatchRequestSerializer(serializers.Serializer):
     force = serializers.BooleanField(required=False, default=False)
 
 
+class ReportDeliveryCallbackSerializer(serializers.Serializer):
+    delivery = serializers.JSONField()
+    meta_status_code = serializers.IntegerField(min_value=100, max_value=599)
+    meta_response = serializers.JSONField()
+
+    def validate_delivery(self, value):
+        if not isinstance(value, dict):
+            raise serializers.ValidationError("delivery must be a JSON object.")
+
+        report = value.get("report")
+        student = report.get("student") if isinstance(report, dict) else None
+        period = report.get("period") if isinstance(report, dict) else None
+        if not isinstance(student, dict) or not student.get("id"):
+            raise serializers.ValidationError("delivery.report.student.id is required.")
+        if not isinstance(period, dict) or not period.get("month"):
+            raise serializers.ValidationError("delivery.report.period.month is required.")
+        return value
+
+
 class UserSerializer(serializers.ModelSerializer):
     mentor_profile_id = serializers.SerializerMethodField()
     student_profile_id = serializers.SerializerMethodField()

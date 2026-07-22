@@ -11,6 +11,7 @@ function buildNavigation(role) {
     items.push({ label: "Студенты", href: "/students" });
     items.push({ label: "Архив", href: "/archive" });
     items.push({ label: "Менторы", href: "/mentors" });
+    items.push({ label: "Отчёты", href: "/reports" });
   }
 
   if (role === "STUDENT") {
@@ -96,6 +97,14 @@ function buildSidebarIntro(role, currentPath) {
       eyebrow: "Админ",
       title: "Менторы",
       description: "Назначайте менторов, следите за их группами и держите систему в порядке.",
+    };
+  }
+
+  if (currentPath === "/reports") {
+    return {
+      eyebrow: "Админ",
+      title: "Чат отчётов",
+      description: "Контролируйте отправки родителям и ответы Meta без повторной отправки сообщений.",
     };
   }
 

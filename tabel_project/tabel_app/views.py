@@ -1,4 +1,5 @@
 from datetime import date, datetime, timedelta
+import hmac
 from mimetypes import guess_type
 from pathlib import Path
 import os
@@ -18,7 +19,8 @@ from rest_framework.views import APIView
 from rest_framework_simplejwt.tokens import RefreshToken
 from rest_framework_simplejwt.views import TokenObtainPairView
 
-from .models import Group, Lesson, LessonRecord, MentorProfile, StudentProfile, User
+from .models import Group, Lesson, LessonRecord, MentorProfile, MonthlyStudentReportDispatch, StudentProfile, User
+from .report_delivery import build_report_conversations, record_meta_delivery_callback, serialize_report_message
 from .report import is_absence_grade, send_student_month_report
 from .serializers import (
     GroupDetailSerializer,
@@ -28,6 +30,7 @@ from .serializers import (
     LoginSerializer,
     MentorProfileSerializer,
     ReportDispatchRequestSerializer,
+    ReportDeliveryCallbackSerializer,
     StudentProfileSerializer,
     UserSerializer,
     move_student_records_to_group,
@@ -535,6 +538,8 @@ class ApiRootAPIView(APIView):
                 },
                 "reports": {
                     "dispatch": "/api/reports/send/",
+                    "delivery_callback": "/api/report-logs/",
+                    "admin_conversations": "/api/reports/conversations/",
                 },
             }
         )
@@ -625,6 +630,76 @@ class ReportDispatchAPIView(APIView):
         )
         response_status = status.HTTP_502_BAD_GATEWAY if result.get("status") == "failed" else status.HTTP_200_OK
         return Response(result, status=response_status)
+
+
+class ReportDeliveryCallbackAPIView(APIView):
+    permission_classes = [permissions.AllowAny]
+    authentication_classes = []
+
+    def post(self, request, *args, **kwargs):
+        expected_token = os.getenv("BACKEND_REPORT_CALLBACK_TOKEN", "").strip()
+        if len(expected_token) < 32:
+            return Response(
+                {"detail": "Report callback is not configured."},
+                status=status.HTTP_503_SERVICE_UNAVAILABLE,
+            )
+
+        authorization = request.headers.get("Authorization", "")
+        scheme, separator, credential = authorization.partition(" ")
+        supplied_token = credential.strip() if separator and scheme.casefold() == "bearer" else ""
+        if not supplied_token or not hmac.compare_digest(supplied_token, expected_token):
+            return Response({"detail": "Invalid callback token."}, status=status.HTTP_401_UNAUTHORIZED)
+
+        serializer = ReportDeliveryCallbackSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        try:
+            dispatch, duplicate = record_meta_delivery_callback(**serializer.validated_data)
+        except (MonthlyStudentReportDispatch.DoesNotExist, ValueError, TypeError):
+            return Response(
+                {"detail": "Matching monthly report dispatch was not found."},
+                status=status.HTTP_404_NOT_FOUND,
+            )
+
+        return Response(
+            {
+                "status": "stored",
+                "duplicate": duplicate,
+                "dispatch_id": dispatch.pk,
+                "delivery_status": dispatch.status,
+            }
+        )
+
+
+class ReportConversationListAPIView(APIView):
+    permission_classes = [permissions.IsAuthenticated]
+
+    def get(self, request, *args, **kwargs):
+        if request.user.role != User.ROLE_ADMIN:
+            raise PermissionDenied
+        return Response(build_report_conversations())
+
+
+class ReportConversationDetailAPIView(APIView):
+    permission_classes = [permissions.IsAuthenticated]
+
+    def get(self, request, student_id, *args, **kwargs):
+        if request.user.role != User.ROLE_ADMIN:
+            raise PermissionDenied
+
+        student = get_object_or_404(StudentProfile.objects.select_related("user", "group"), pk=student_id)
+        dispatches = MonthlyStudentReportDispatch.objects.filter(student=student).order_by("month", "created_at")
+        return Response(
+            {
+                "student": {
+                    "id": student.pk,
+                    "full_name": student.user.full_name,
+                    "parent_name": student.parent_name,
+                    "parent_phone": str(student.parent_phone),
+                    "group_name": student.group.course_name,
+                },
+                "messages": [serialize_report_message(dispatch) for dispatch in dispatches],
+            }
+        )
 
 
 class MentorProfileViewSet(viewsets.ModelViewSet):

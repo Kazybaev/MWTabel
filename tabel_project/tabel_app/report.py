@@ -37,6 +37,18 @@ class ReportDeliveryError(Exception):
     pass
 
 
+def mask_phone(value: Any) -> str:
+    normalized = "".join(character for character in str(value or "") if character.isdigit())
+    return f"***{normalized[-4:]}" if normalized else ""
+
+
+def get_dify_workflow_status(response_payload: dict[str, Any]) -> str:
+    data = response_payload.get("data")
+    if isinstance(data, dict) and data.get("status"):
+        return str(data["status"]).strip().lower()
+    return str(response_payload.get("status", "")).strip().lower()
+
+
 def normalize_month_start(value: date | datetime | None) -> date:
     if value is None:
         return timezone.localdate().replace(day=1)
@@ -306,7 +318,7 @@ def run_dify_workflow(inputs: dict[str, Any], user_key: str) -> dict[str, Any]:
         "Sending report to Dify for student='%s', month='%s', recipient='%s', url='%s'",
         inputs.get("student_name", ""),
         inputs.get("month", ""),
-        inputs.get("recipient_phone", ""),
+        mask_phone(inputs.get("recipient_phone", "")),
         url,
     )
     encoded_payload = json.dumps(payload).encode("utf-8")
@@ -357,10 +369,11 @@ def run_dify_workflow(inputs: dict[str, Any], user_key: str) -> dict[str, Any]:
         response_payload = {"raw_response": raw_body}
 
     logger.info(
-        "Dify response for student='%s', month='%s': %s",
+        "Dify response received for student='%s', month='%s', workflow_run_id='%s', status='%s'",
         inputs.get("student_name", ""),
         inputs.get("month", ""),
-        response_payload,
+        response_payload.get("workflow_run_id") or response_payload.get("data", {}).get("id", ""),
+        get_dify_workflow_status(response_payload),
     )
     return response_payload
 
@@ -536,13 +549,31 @@ def send_student_month_report(
             "dispatch_id": dispatch.pk,
         }
 
-    dispatch.status = MonthlyStudentReportDispatch.STATUS_SUCCEEDED
-    dispatch.response_payload = response_payload
+    dispatch.refresh_from_db()
+    stored_response = dict(dispatch.response_payload) if isinstance(dispatch.response_payload, dict) else {}
+    meta_result = stored_response.get("meta")
+    if isinstance(meta_result, dict) and meta_result.get("callback_received"):
+        stored_response["dify"] = response_payload
+        dispatch.response_payload = stored_response
+    else:
+        workflow_status = get_dify_workflow_status(response_payload)
+        workflow_failed = workflow_status in {"failed", "stopped", "partial-succeeded"}
+        dispatch.status = (
+            MonthlyStudentReportDispatch.STATUS_FAILED
+            if workflow_failed
+            else MonthlyStudentReportDispatch.STATUS_SUCCEEDED
+        )
+        dispatch.response_payload = response_payload
+        dispatch.error_message = (
+            f"Dify workflow finished with status '{workflow_status}'."
+            if workflow_failed
+            else ""
+        )
+        dispatch.sent_at = None if workflow_failed else timezone.now()
     dispatch.workflow_run_id = (
         str(response_payload.get("workflow_run_id", ""))
         or str(response_payload.get("data", {}).get("id", ""))
     )
-    dispatch.sent_at = timezone.now()
     dispatch.save(
         update_fields=[
             "trigger_date",
@@ -552,9 +583,25 @@ def send_student_month_report(
             "workflow_run_id",
             "attempts",
             "sent_at",
+            "error_message",
             "updated_at",
         ]
     )
+    if dispatch.status == MonthlyStudentReportDispatch.STATUS_FAILED:
+        logger.error(
+            "Dify finished but Meta delivery failed for student='%s', month='%s', dispatch_id=%s",
+            student.user.full_name,
+            month_start.strftime("%Y-%m"),
+            dispatch.pk,
+        )
+        return {
+            "student_id": student.pk,
+            "student_name": student.user.full_name,
+            "status": "failed",
+            "reason": dispatch.error_message,
+            "dispatch_id": dispatch.pk,
+            "workflow_run_id": dispatch.workflow_run_id,
+        }
     logger.info(
         "Report sent successfully for student='%s', month='%s', dispatch_id=%s, workflow_run_id='%s'",
         student.user.full_name,
