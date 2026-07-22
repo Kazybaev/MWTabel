@@ -159,3 +159,36 @@ class MonthlyStudentReportDispatch(models.Model):
 
     def __str__(self):
         return f"{self.student.user.full_name} - {self.month:%Y-%m}"
+
+
+class MonthlyStudentReportAttempt(models.Model):
+    dispatch = models.ForeignKey(
+        MonthlyStudentReportDispatch,
+        on_delete=models.CASCADE,
+        related_name="delivery_attempts",
+    )
+    attempt_number = models.PositiveIntegerField()
+    status = models.CharField(
+        max_length=16,
+        choices=MonthlyStudentReportDispatch.STATUS_CHOICES,
+        default=MonthlyStudentReportDispatch.STATUS_PENDING,
+    )
+    payload = models.JSONField(default=dict, blank=True)
+    response_payload = models.JSONField(default=dict, blank=True)
+    workflow_run_id = models.CharField(max_length=255, blank=True)
+    error_message = models.TextField(blank=True)
+    sent_at = models.DateTimeField(null=True, blank=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        ordering = ("created_at", "id")
+        constraints = [
+            models.UniqueConstraint(
+                fields=("dispatch", "attempt_number"),
+                name="unique_monthly_report_delivery_attempt",
+            )
+        ]
+
+    def __str__(self):
+        return f"{self.dispatch} / attempt {self.attempt_number}"

@@ -12,11 +12,18 @@ from .models import (
     Lesson,
     LessonRecord,
     MentorProfile,
+    MonthlyStudentReportAttempt,
     MonthlyStudentReportDispatch,
     StudentProfile,
     User,
 )
-from .report import build_dify_inputs, build_student_month_report, run_dify_workflow, send_due_monthly_reports
+from .report import (
+    build_dify_inputs,
+    build_student_month_report,
+    force_send_all_monthly_reports,
+    run_dify_workflow,
+    send_due_monthly_reports,
+)
 from .report_delivery import record_meta_delivery_callback
 
 
@@ -310,6 +317,31 @@ class TabelApiTests(APITestCase):
 
         self.assertEqual(response.status_code, status.HTTP_403_FORBIDDEN)
 
+    @patch("tabel_app.views.force_send_all_monthly_reports")
+    def test_only_admin_can_force_send_reports_to_all_students(self, mocked_send_all):
+        mocked_send_all.return_value = [
+            {"student_id": self.student.pk, "status": "sent"},
+            {"student_id": 999, "status": "failed"},
+        ]
+
+        admin_response = self.auth_client("admin", "admin-pass-123").post(
+            "/api/reports/send-all/",
+            {},
+            format="json",
+        )
+        mentor_response = self.auth_client("mentor", "mentor-pass-123").post(
+            "/api/reports/send-all/",
+            {},
+            format="json",
+        )
+
+        self.assertEqual(admin_response.status_code, status.HTTP_200_OK)
+        self.assertEqual(admin_response.data["total"], 2)
+        self.assertEqual(admin_response.data["sent"], 1)
+        self.assertEqual(admin_response.data["failed"], 1)
+        self.assertEqual(mentor_response.status_code, status.HTTP_403_FORBIDDEN)
+        mocked_send_all.assert_called_once()
+
     def test_mentor_cannot_trigger_report_dispatch_for_foreign_student(self):
         foreign_mentor_user = User.objects.create_user(
             username="mentor-foreign",
@@ -565,6 +597,33 @@ class MonthlyReportServiceTests(APITestCase):
         self.assertEqual(mocked_run_dify_workflow.call_count, 1)
 
     @patch("tabel_app.report.run_dify_workflow")
+    def test_admin_bulk_service_bypasses_schedule_marks_and_previous_success(
+        self,
+        mocked_run_dify_workflow,
+    ):
+        mocked_run_dify_workflow.return_value = {"workflow_run_id": "run-forced"}
+        existing = MonthlyStudentReportDispatch.objects.create(
+            student=self.student,
+            month=self.month_start,
+            trigger_date=date(2026, 4, 30),
+            status=MonthlyStudentReportDispatch.STATUS_SUCCEEDED,
+            attempts=1,
+        )
+
+        results = force_send_all_monthly_reports(
+            run_date=date(2026, 4, 10),
+            month_start=self.month_start,
+        )
+
+        self.assertEqual([result["status"] for result in results], ["sent", "sent"])
+        self.assertEqual(mocked_run_dify_workflow.call_count, 2)
+        existing.refresh_from_db()
+        self.assertEqual(existing.attempts, 2)
+        self.assertEqual(existing.workflow_run_id, "run-forced")
+        self.assertEqual(existing.delivery_attempts.count(), 1)
+        self.assertEqual(existing.delivery_attempts.get().attempt_number, 2)
+
+    @patch("tabel_app.report.run_dify_workflow")
     def test_failed_report_is_logged_for_retry(self, mocked_run_dify_workflow):
         mocked_run_dify_workflow.side_effect = RuntimeError("Dify is unavailable")
         LessonRecord.objects.create(student=self.student, lesson=self.third_lesson, grade="5")
@@ -597,7 +656,7 @@ class MonthlyReportServiceTests(APITestCase):
         }
 
     def create_pending_dispatch(self):
-        return MonthlyStudentReportDispatch.objects.create(
+        dispatch = MonthlyStudentReportDispatch.objects.create(
             student=self.student,
             month=self.month_start,
             trigger_date=date(2026, 4, 30),
@@ -605,6 +664,13 @@ class MonthlyReportServiceTests(APITestCase):
             attempts=1,
             payload=build_student_month_report(self.student, month_start=self.month_start),
         )
+        MonthlyStudentReportAttempt.objects.create(
+            dispatch=dispatch,
+            attempt_number=1,
+            status=dispatch.status,
+            payload=dispatch.payload,
+        )
+        return dispatch
 
     @patch.dict(os.environ, {"BACKEND_REPORT_CALLBACK_TOKEN": "local-callback-token-at-least-32-chars"}, clear=False)
     def test_meta_callback_requires_valid_token(self):
@@ -670,6 +736,7 @@ class MonthlyReportServiceTests(APITestCase):
         self.assertEqual(dispatch.response_payload["meta"]["status_code"], 400)
         self.assertEqual(dispatch.response_payload["dify"]["workflow_run_id"], "run-after-failed-meta")
 
+    @patch.dict(os.environ, {"DIFY_ACCEPT_PARTIAL_SUCCESS": "False"}, clear=False)
     @patch("tabel_app.report.run_dify_workflow")
     def test_partial_dify_result_without_callback_is_failed(self, mocked_run_dify_workflow):
         mocked_run_dify_workflow.return_value = {
@@ -685,6 +752,32 @@ class MonthlyReportServiceTests(APITestCase):
         self.assertEqual(dispatch.status, MonthlyStudentReportDispatch.STATUS_FAILED)
         self.assertIsNone(dispatch.sent_at)
         self.assertIn("partial-succeeded", dispatch.error_message)
+
+    @patch.dict(os.environ, {"DIFY_ACCEPT_PARTIAL_SUCCESS": "True"}, clear=False)
+    @patch("tabel_app.report.run_dify_workflow")
+    def test_local_mode_accepts_partial_dify_result_without_public_callback(
+        self,
+        mocked_run_dify_workflow,
+    ):
+        mocked_run_dify_workflow.return_value = {
+            "workflow_run_id": "run-local-partial",
+            "data": {
+                "status": "partial-succeeded",
+                "outputs": {"clean_phone": "996700123456"},
+            },
+        }
+        LessonRecord.objects.create(student=self.student, lesson=self.third_lesson, grade="5")
+
+        results = send_due_monthly_reports(
+            run_date=date(2026, 4, 30),
+            student_id=self.student.pk,
+        )
+
+        dispatch = MonthlyStudentReportDispatch.objects.get(student=self.student, month=self.month_start)
+        self.assertEqual(results[0]["status"], "sent")
+        self.assertEqual(dispatch.status, MonthlyStudentReportDispatch.STATUS_SUCCEEDED)
+        self.assertEqual(dispatch.error_message, "")
+        self.assertIsNotNone(dispatch.sent_at)
 
     @patch("tabel_app.report.run_dify_workflow")
     def test_successful_meta_callback_wins_over_partial_dify_result(self, mocked_run_dify_workflow):

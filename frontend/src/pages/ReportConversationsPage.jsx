@@ -1,6 +1,6 @@
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 
-import { Badge, Button, EmptyState, ErrorBlock, LoadingBlock } from "../components/Ui";
+import { Badge, Button, EmptyState, ErrorBlock, LoadingBlock, Modal } from "../components/Ui";
 import { formatMonthLabel } from "../lib/format";
 import { useResource } from "../lib/useResource";
 import "./ReportConversationsPage.css";
@@ -56,7 +56,6 @@ function ReportMessage({ message }) {
 
       <footer className="report-chat__delivery">
         <span>Meta HTTP: <strong>{message.meta?.status_code ?? "—"}</strong></span>
-        <span>Попытка: <strong>{message.attempts}</strong></span>
         {metaMessageId ? <span>ID Meta: <code>{metaMessageId}</code></span> : null}
       </footer>
 
@@ -74,6 +73,11 @@ export function ReportConversationsPage({ api, sessionToken, user }) {
   const [query, setQuery] = useState("");
   const [statusFilter, setStatusFilter] = useState("");
   const [selectedStudentId, setSelectedStudentId] = useState(null);
+  const [confirmSendAll, setConfirmSendAll] = useState(false);
+  const [sendingAll, setSendingAll] = useState(false);
+  const [sendAllResult, setSendAllResult] = useState(null);
+  const [sendAllError, setSendAllError] = useState("");
+  const messagesRef = useRef(null);
   const conversations = useResource(() => api("/api/reports/conversations/"), [sessionToken]);
   const activeStudentId = selectedStudentId || conversations.data?.[0]?.student_id || null;
   const detail = useResource(
@@ -92,6 +96,30 @@ export function ReportConversationsPage({ api, sessionToken, user }) {
     });
   }, [conversations.data, query, statusFilter]);
 
+  useEffect(() => {
+    if (!detail.data?.messages?.length) return;
+    messagesRef.current?.scrollTo({
+      top: messagesRef.current.scrollHeight,
+      behavior: "smooth",
+    });
+  }, [detail.data?.messages]);
+
+  async function handleSendAll() {
+    setSendingAll(true);
+    setSendAllError("");
+    try {
+      const result = await api("/api/reports/send-all/", { method: "POST" });
+      setSendAllResult(result);
+      setConfirmSendAll(false);
+      conversations.reload();
+      if (activeStudentId) detail.reload();
+    } catch (error) {
+      setSendAllError(error.message || "Не удалось отправить отчёты. Попробуйте ещё раз.");
+    } finally {
+      setSendingAll(false);
+    }
+  }
+
   if (user.role !== "ADMIN") {
     return <EmptyState title="Нет доступа" description="Чат отчётов доступен только администратору." />;
   }
@@ -108,10 +136,22 @@ export function ReportConversationsPage({ api, sessionToken, user }) {
           <h2 id="report-chat-title">Чат отчётов</h2>
           <span>Результаты отправок родителям через Dify и Meta</span>
         </div>
-        <Button variant="secondary" onClick={conversations.reload} disabled={conversations.refreshing}>
-          {conversations.refreshing ? "Обновляем…" : "Обновить"}
-        </Button>
+        <div className="report-chat-page__actions">
+          <Button variant="danger" onClick={() => { setSendAllError(""); setConfirmSendAll(true); }}>
+            Отправить отчёт всем
+          </Button>
+          <Button variant="secondary" onClick={conversations.reload} disabled={conversations.refreshing}>
+            {conversations.refreshing ? "Обновляем…" : "Обновить"}
+          </Button>
+        </div>
       </header>
+
+      {sendAllResult ? (
+        <div className="report-chat__bulk-result" role="status">
+          Отправка завершена: отправлено — <strong>{sendAllResult.sent}</strong>, ошибок — <strong>{sendAllResult.failed}</strong>, всего — <strong>{sendAllResult.total}</strong>.
+          <button type="button" onClick={() => setSendAllResult(null)}>Закрыть</button>
+        </div>
+      ) : null}
 
       <div className="report-chat">
         <aside className="report-chat__sidebar" aria-label="Диалоги отчётов">
@@ -162,7 +202,7 @@ export function ReportConversationsPage({ api, sessionToken, user }) {
                 <div><strong>{detail.data.student.full_name}</strong><span>{detail.data.student.group_name}</span></div>
                 <div><span>{detail.data.student.parent_name}</span><strong>{detail.data.student.parent_phone}</strong></div>
               </header>
-              <div className="report-chat__messages">
+              <div className="report-chat__messages" ref={messagesRef}>
                 {detail.data.messages.map((message) => <ReportMessage key={message.id} message={message} />)}
               </div>
             </>
@@ -170,6 +210,28 @@ export function ReportConversationsPage({ api, sessionToken, user }) {
           {!activeStudentId ? <EmptyState title="Выберите диалог" description="Здесь появится история отправок." /> : null}
         </div>
       </div>
+
+      <Modal
+        open={confirmSendAll}
+        title="Отправить отчёт всем студентам?"
+        description="Это принудительная массовая отправка за текущий месяц."
+        onClose={() => { if (!sendingAll) setConfirmSendAll(false); }}
+        footer={(
+          <>
+            <Button variant="ghost" onClick={() => setConfirmSendAll(false)} disabled={sendingAll}>Отмена</Button>
+            <Button variant="danger" onClick={handleSendAll} disabled={sendingAll}>
+              {sendingAll ? "Отправляем…" : "Да, отправить всем"}
+            </Button>
+          </>
+        )}
+      >
+        <div className="report-chat__bulk-warning">
+          <strong>Вы точно хотите продолжить?</strong>
+          <p>Отчёт уйдёт родителям всех активных студентов, даже если сегодня не последний урок, оценка ещё не выставлена или отчёт за этот месяц уже отправлялся.</p>
+          <p>Повторное нажатие может повторно отправить сообщение каждому родителю.</p>
+          {sendAllError ? <p className="report-chat__bulk-error" role="alert">{sendAllError}</p> : null}
+        </div>
+      </Modal>
     </section>
   );
 }

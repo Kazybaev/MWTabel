@@ -8,7 +8,7 @@ from typing import Any
 from django.db import transaction
 from django.utils import timezone
 
-from .models import MonthlyStudentReportDispatch
+from .models import MonthlyStudentReportAttempt, MonthlyStudentReportDispatch
 
 
 logger = logging.getLogger("tabel_app.reports")
@@ -104,6 +104,15 @@ def record_meta_delivery_callback(
         if succeeded and dispatch.sent_at is None:
             dispatch.sent_at = received_at
         dispatch.save(update_fields=["status", "response_payload", "error_message", "sent_at", "updated_at"])
+        attempt = dispatch.delivery_attempts.order_by("-attempt_number", "-id").first()
+        if attempt is not None:
+            attempt.response_payload = response_payload
+            attempt.status = dispatch.status
+            attempt.error_message = dispatch.error_message
+            attempt.sent_at = dispatch.sent_at
+            attempt.save(
+                update_fields=["status", "response_payload", "error_message", "sent_at", "updated_at"]
+            )
 
     logger.info(
         "Meta callback stored: dispatch_id=%s student_id=%s month=%s status=%s duplicate=%s",
@@ -137,15 +146,39 @@ def serialize_report_message(dispatch: MonthlyStudentReportDispatch) -> dict[str
     }
 
 
+def serialize_report_attempt(attempt: MonthlyStudentReportAttempt) -> dict[str, Any]:
+    payload = attempt.payload if isinstance(attempt.payload, dict) else {}
+    response_payload = attempt.response_payload if isinstance(attempt.response_payload, dict) else {}
+    meta = response_payload.get("meta", {}) if isinstance(response_payload.get("meta"), dict) else {}
+    return {
+        "id": f"attempt-{attempt.pk}",
+        "month": attempt.dispatch.month.strftime("%Y-%m"),
+        "status": attempt.status,
+        "attempts": attempt.attempt_number,
+        "sent_at": attempt.sent_at,
+        "created_at": attempt.created_at,
+        "updated_at": attempt.updated_at,
+        "error_message": attempt.error_message,
+        "summary": payload.get("summary", {}),
+        "lessons": payload.get("lessons", []),
+        "rendered_text": meta.get("rendered_text") or build_report_message_text(payload),
+        "meta": meta,
+        "workflow_run_id": attempt.workflow_run_id,
+    }
+
+
 def build_report_conversations() -> list[dict[str, Any]]:
-    dispatches = list(
-        MonthlyStudentReportDispatch.objects.select_related("student__user", "student__group")
-        .order_by("student_id", "-updated_at")
+    attempts = list(
+        MonthlyStudentReportAttempt.objects.select_related(
+            "dispatch__student__user",
+            "dispatch__student__group",
+        ).order_by("dispatch__student_id", "-created_at", "-id")
     )
-    message_counts = Counter(dispatch.student_id for dispatch in dispatches)
+    message_counts = Counter(attempt.dispatch.student_id for attempt in attempts)
     conversations = []
     seen_students = set()
-    for dispatch in dispatches:
+    for attempt in attempts:
+        dispatch = attempt.dispatch
         if dispatch.student_id in seen_students:
             continue
         seen_students.add(dispatch.student_id)
@@ -156,9 +189,9 @@ def build_report_conversations() -> list[dict[str, Any]]:
                 "parent_name": dispatch.student.parent_name,
                 "parent_phone": str(dispatch.student.parent_phone),
                 "group_name": dispatch.student.group.course_name,
-                "latest_status": dispatch.status,
+                "latest_status": attempt.status,
                 "latest_month": dispatch.month.strftime("%Y-%m"),
-                "latest_at": dispatch.updated_at,
+                "latest_at": attempt.updated_at,
                 "messages_count": message_counts[dispatch.student_id],
             }
         )

@@ -19,9 +19,18 @@ from rest_framework.views import APIView
 from rest_framework_simplejwt.tokens import RefreshToken
 from rest_framework_simplejwt.views import TokenObtainPairView
 
-from .models import Group, Lesson, LessonRecord, MentorProfile, MonthlyStudentReportDispatch, StudentProfile, User
-from .report_delivery import build_report_conversations, record_meta_delivery_callback, serialize_report_message
-from .report import is_absence_grade, send_student_month_report
+from .models import (
+    Group,
+    Lesson,
+    LessonRecord,
+    MentorProfile,
+    MonthlyStudentReportAttempt,
+    MonthlyStudentReportDispatch,
+    StudentProfile,
+    User,
+)
+from .report_delivery import build_report_conversations, record_meta_delivery_callback, serialize_report_attempt
+from .report import force_send_all_monthly_reports, is_absence_grade, send_student_month_report
 from .serializers import (
     GroupDetailSerializer,
     GroupListSerializer,
@@ -538,6 +547,7 @@ class ApiRootAPIView(APIView):
                 },
                 "reports": {
                     "dispatch": "/api/reports/send/",
+                    "force_send_all": "/api/reports/send-all/",
                     "delivery_callback": "/api/report-logs/",
                     "admin_conversations": "/api/reports/conversations/",
                 },
@@ -679,6 +689,34 @@ class ReportConversationListAPIView(APIView):
         return Response(build_report_conversations())
 
 
+class ForceSendAllReportsAPIView(APIView):
+    permission_classes = [permissions.IsAuthenticated]
+
+    def post(self, request, *args, **kwargs):
+        if request.user.role != User.ROLE_ADMIN:
+            raise PermissionDenied
+
+        month_start = timezone.localdate().replace(day=1)
+        results = force_send_all_monthly_reports(
+            run_date=timezone.localdate(),
+            month_start=month_start,
+        )
+        sent_count = sum(result.get("status") == "sent" for result in results)
+        failed_count = sum(result.get("status") == "failed" for result in results)
+        skipped_count = len(results) - sent_count - failed_count
+        return Response(
+            {
+                "month": month_start.strftime("%Y-%m"),
+                "total": len(results),
+                "sent": sent_count,
+                "failed": failed_count,
+                "skipped": skipped_count,
+                "results": results,
+            },
+            status=status.HTTP_200_OK,
+        )
+
+
 class ReportConversationDetailAPIView(APIView):
     permission_classes = [permissions.IsAuthenticated]
 
@@ -687,7 +725,9 @@ class ReportConversationDetailAPIView(APIView):
             raise PermissionDenied
 
         student = get_object_or_404(StudentProfile.objects.select_related("user", "group"), pk=student_id)
-        dispatches = MonthlyStudentReportDispatch.objects.filter(student=student).order_by("month", "created_at")
+        attempts = MonthlyStudentReportAttempt.objects.filter(
+            dispatch__student=student,
+        ).select_related("dispatch").order_by("created_at", "id")
         return Response(
             {
                 "student": {
@@ -697,7 +737,7 @@ class ReportConversationDetailAPIView(APIView):
                     "parent_phone": str(student.parent_phone),
                     "group_name": student.group.course_name,
                 },
-                "messages": [serialize_report_message(dispatch) for dispatch in dispatches],
+                "messages": [serialize_report_attempt(attempt) for attempt in attempts],
             }
         )
 
