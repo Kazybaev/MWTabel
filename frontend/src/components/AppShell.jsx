@@ -187,6 +187,7 @@ export function AppShell({
   lockedContent = false,
 }) {
   const isMentor = user.role === "MENTOR";
+  const isReportsPage = currentPath === "/reports";
   const navigation = buildNavigation(user.role);
   const intro = buildSidebarIntro(user.role, currentPath);
   const topbarTitle = isMentor ? "Ментор" : formatRole(user.role);
@@ -249,7 +250,7 @@ export function AppShell({
       </aside>
 
       <div
-        className={`workspace ${isMentor ? "workspace--mentor" : ""} ${lockedContent ? "workspace--locked" : ""}`.trim()}
+        className={`workspace ${isMentor ? "workspace--mentor" : ""} ${lockedContent ? "workspace--locked" : ""} ${isReportsPage ? "workspace--reports" : ""}`.trim()}
       >
         <div className="workspace__stage">
           <div className="workspace__stage-inner">

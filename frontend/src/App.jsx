@@ -363,6 +363,7 @@ function App() {
   const adminDashboardLocked = route.path === "/dashboard" && session.user.role === "ADMIN";
   const lockedContent =
     adminDashboardLocked ||
+    route.path === "/reports" ||
     route.path === "/my-grades" ||
     Boolean(gradebookRoute) ||
     (session.user.role === "MENTOR" && Boolean(groupRoute));
