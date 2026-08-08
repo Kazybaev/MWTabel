@@ -1222,6 +1222,14 @@
   font-size: 0.95rem;
 }
 
+.student-chart-card__filters {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  flex-wrap: wrap;
+  gap: 10px;
+}
+
 .student-chart-card__header select {
   min-height: 42px;
   padding: 0 36px 0 12px;
@@ -1242,6 +1250,19 @@
 .student-chart-card__canvas canvas {
   width: 100% !important;
   height: 100% !important;
+}
+
+.student-chart-card__empty {
+  position: absolute;
+  inset: 0;
+  display: grid;
+  place-items: center;
+  margin: 0;
+  border-radius: 12px;
+  background: rgba(255, 255, 255, 0.86);
+  color: #64748b;
+  font-weight: 700;
+  text-align: center;
 }
 
 .student-combined-chart {
@@ -4869,6 +4890,12 @@
 
   .student-chart-card__header select {
     width: 100%;
+  }
+
+  .student-chart-card__filters {
+    width: 100%;
+    align-items: stretch;
+    flex-direction: column;
   }
 
   .student-chart-card__canvas {

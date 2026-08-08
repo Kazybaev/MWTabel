@@ -1,8 +1,11 @@
 from rest_framework import status
 from rest_framework.test import APITestCase
+from django.utils import timezone
 
 from .models import (
     Group,
+    Lesson,
+    LessonRecord,
     MentorProfile,
     ORGANIZATION_ACADEMY,
     ORGANIZATION_COLLEGE,
@@ -51,6 +54,50 @@ class OrganizationScopeApiTests(APITestCase):
         student = StudentProfile.objects.get(user__username="college-student")
         self.assertEqual(student.organization_type, ORGANIZATION_COLLEGE)
         self.assertSetEqual(set(student.college_groups.values_list("pk", flat=True)), {self.college_group.pk, second_group.pk})
+
+    def test_college_student_dashboard_can_show_all_or_one_group(self):
+        second_group = Group.objects.create(
+            course_name="English",
+            mentor=self.college_mentor,
+            study_days=Group.MON_FRI,
+            organization_type=ORGANIZATION_COLLEGE,
+        )
+        student_user = User.objects.create_user(
+            username="college-dashboard-student",
+            password="pass-12345",
+            full_name="College Dashboard Student",
+            role=User.ROLE_STUDENT,
+        )
+        UserOrganizationAccess.objects.create(user=student_user, organization_type=ORGANIZATION_COLLEGE)
+        student = StudentProfile.objects.create(
+            user=student_user,
+            parent_name="Parent",
+            parent_phone="+996700000004",
+            group=self.college_group,
+            organization_type=ORGANIZATION_COLLEGE,
+            college_course="1",
+        )
+        student.college_groups.set([self.college_group, second_group])
+        today = timezone.localdate()
+        math_lesson = Lesson.objects.create(group=self.college_group, lesson_date=today.replace(day=1), topic="Math lesson")
+        english_lesson = Lesson.objects.create(group=second_group, lesson_date=today.replace(day=2), topic="English lesson")
+        LessonRecord.objects.create(student=student, lesson=math_lesson, grade="5")
+        LessonRecord.objects.create(student=student, lesson=english_lesson, grade="3")
+
+        self.client.force_authenticate(student_user)
+        response = self.client.get("/api/dashboard/", **self.headers(ORGANIZATION_COLLEGE))
+
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        scopes = {scope["label"]: scope for scope in response.data["student_stat_scopes"]}
+        self.assertSetEqual(set(scopes), {"Все группы", "Math", "English"})
+        month_value = today.strftime("%Y-%m")
+        all_month = next(month for month in scopes["Все группы"]["monthly_stats"] if month["value"] == month_value)
+        math_month = next(month for month in scopes["Math"]["monthly_stats"] if month["value"] == month_value)
+        english_month = next(month for month in scopes["English"]["monthly_stats"] if month["value"] == month_value)
+        self.assertEqual(all_month["grades_count"], 2)
+        self.assertEqual(all_month["average_grade"], 4.0)
+        self.assertEqual(math_month["grades_count"], 1)
+        self.assertEqual(english_month["grades_count"], 1)
 
     def test_user_without_college_access_receives_403(self):
         student_user = User.objects.create_user(username="academy-student", password="pass-12345", full_name="Academy Student", role=User.ROLE_STUDENT)

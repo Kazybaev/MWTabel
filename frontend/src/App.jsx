@@ -34,6 +34,20 @@ function defaultPathForUser(user) {
   return "/dashboard";
 }
 
+function organizationForUser(user) {
+  const organizations = user?.organizations || [];
+  if (organizations.length === 1) {
+    return organizations[0];
+  }
+
+  const storedOrganization = window.localStorage.getItem("tabel.organization");
+  if (storedOrganization && organizations.includes(storedOrganization)) {
+    return storedOrganization;
+  }
+
+  return organizations[0] || "academy";
+}
+
 function NotFoundPage() {
   return (
     <EmptyState
@@ -61,7 +75,6 @@ function App() {
   const [notice, setNotice] = useState(null);
   const [authLoading, setAuthLoading] = useState(false);
   const [authError, setAuthError] = useState("");
-  const [pendingSession, setPendingSession] = useState(null);
   const [bootstrapping, setBootstrapping] = useState(Boolean(readStoredSession()?.access));
 
   function updateSession(nextSession) {
@@ -111,6 +124,9 @@ function App() {
         onSessionChange: updateSession,
         onUnauthorized: handleUnauthorized,
       });
+      const userOrganization = organizationForUser(user);
+      window.localStorage.setItem("tabel.organization", userOrganization);
+      setOrganization(userOrganization);
       updateSession({ ...session, user });
     } catch {
       // handled by apiRequest
@@ -229,13 +245,9 @@ function App() {
         session: nextSession,
       });
       const finalSession = { ...nextSession, user };
-      if ((user.organizations || []).length > 1) {
-        setPendingSession(finalSession);
-        return;
-      }
-      const onlyOrganization = user.organizations?.[0] || "academy";
-      window.localStorage.setItem("tabel.organization", onlyOrganization);
-      setOrganization(onlyOrganization);
+      const userOrganization = organizationForUser(user);
+      window.localStorage.setItem("tabel.organization", userOrganization);
+      setOrganization(userOrganization);
       updateSession(finalSession);
       setNotice(buildNotice("Вы вошли в систему.", "success"));
       startTransition(() => navigateTo(defaultPathForUser(user)));
@@ -244,15 +256,6 @@ function App() {
     } finally {
       setAuthLoading(false);
     }
-  }
-
-  function handlePortalSelect(value) {
-    if (!pendingSession?.user?.organizations?.includes(value)) return;
-    window.localStorage.setItem("tabel.organization", value);
-    setOrganization(value);
-    updateSession(pendingSession);
-    setPendingSession(null);
-    startTransition(() => navigateTo(defaultPathForUser(pendingSession.user)));
   }
 
   async function handleLogout() {
@@ -380,7 +383,7 @@ function App() {
   }
 
   if (!session?.access) {
-    return <LoginPage onLogin={handleLogin} loading={authLoading} error={authError} portals={pendingSession?.user?.organizations} onPortalSelect={handlePortalSelect} />;
+    return <LoginPage onLogin={handleLogin} loading={authLoading} error={authError} />;
   }
 
   if (bootstrapping || !session.user) {

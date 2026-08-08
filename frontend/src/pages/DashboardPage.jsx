@@ -85,25 +85,23 @@ const MONTH_LINE_COLORS = {
   slate: "#64748b",
 };
 
-const FALLBACK_MONTH_SERIES = [
-  [3.5, 3.8, 4.0, 3.9, 4.2, 4.5, 4.3, 4.6, 4.8, 4.5, 4.3, 4.1, 4.0, 3.8, 3.9, 4.1, 4.2, 4.5, 4.8, 5.0, 4.7, 4.5, 4.2, 4.1, 4.3, 4.5, 4.6, 4.8, 4.9, 5.0, null],
-  [4.0, 4.1, 3.9, 3.8, 4.0, 4.2, 4.5, 4.6, 4.4, 4.2, 4.0, 4.3, 4.5, 4.7, 4.8, 4.6, 4.5, 4.7, 4.9, 4.8, 4.7, null, null, null, null, null, null, null, null, null, null],
-  [3.8, 4.0, 4.2, 4.1, 4.4, 4.6, 4.2, 4.4, 4.7, 4.6, 4.5, 4.3, 4.2, 4.4, 4.6, 4.7, 4.8, 4.6, 4.7, 4.9, 4.8, 4.7, 4.5, 4.6, 4.8, 4.9, 4.7, 4.8, 4.9, 5.0, null],
+const GROUP_LINE_COLORS = [
+  "#2563eb",
+  "#f97316",
+  "#16a34a",
+  "#7c3aed",
+  "#dc2626",
+  "#0891b2",
+  "#d97706",
+  "#e11d48",
 ];
 
-function normalizeMonthPoints(month, fallbackIndex) {
-  if ((month.daily_points || []).length >= 2) {
-    const valuesByDay = new Map(month.daily_points.map((point) => [point.day, point.grade]));
-    return Array.from({ length: 31 }, (_, index) => {
-      const day = index + 1;
-      return { day, grade: valuesByDay.get(day) ?? null };
-    });
-  }
-
-  return FALLBACK_MONTH_SERIES[fallbackIndex % FALLBACK_MONTH_SERIES.length].map((grade, index) => ({
-    day: index + 1,
-    grade,
-  }));
+function normalizeMonthPoints(month) {
+  const valuesByDay = new Map((month.daily_points || []).map((point) => [point.day, point.grade]));
+  return Array.from({ length: 31 }, (_, index) => {
+    const day = index + 1;
+    return { day, grade: valuesByDay.get(day) ?? null };
+  });
 }
 
 function buildSmoothPath(points) {
@@ -125,15 +123,15 @@ function buildSmoothPath(points) {
     .join(" ");
 }
 
-function buildChartDataset(month, index, context) {
-  const color = MONTH_LINE_COLORS[month.tone] || "#4F46E5";
+function buildChartDataset(month, context) {
+  const color = month.seriesColor || MONTH_LINE_COLORS[month.tone] || "#4F46E5";
   const gradient = context.createLinearGradient(0, 0, 0, 420);
   gradient.addColorStop(0, `${color}33`);
   gradient.addColorStop(1, `${color}00`);
 
   return {
-    label: month.name,
-    data: normalizeMonthPoints(month, index).map((point) => point.grade),
+    label: month.seriesLabel || month.name,
+    data: normalizeMonthPoints(month).map((point) => point.grade),
     borderColor: color,
     backgroundColor: gradient,
     borderWidth: 4,
@@ -143,17 +141,41 @@ function buildChartDataset(month, index, context) {
     pointRadius: 2,
     pointHoverRadius: 7,
     pointHitRadius: 14,
-    fill: true,
+    fill: month.fill ?? true,
+    borderDash: month.borderDash || [],
     tension: 0.4,
     spanGaps: true,
   };
 }
 
-function ChartJsMonthChart({ months = [] }) {
+function ChartJsMonthChart({ months = [], scopes = [], selectedScope = "all", onScopeChange }) {
   const canvasRef = useRef(null);
   const chartRef = useRef(null);
   const [rangeMode, setRangeMode] = useState("last-1");
   const visibleMonths = useMemo(() => (rangeMode === "last-3" ? months : months.slice(-1)), [months, rangeMode]);
+  const chartSeries = useMemo(() => {
+    const hasGrades = (month) => (month.daily_points || []).length > 0 || Number(month.grades_count) > 0;
+    if (selectedScope !== "all") {
+      return visibleMonths.filter(hasGrades);
+    }
+
+    const visibleMonthValues = new Set(visibleMonths.map((month) => month.value));
+    return scopes
+      .filter((scope) => scope.value !== "all")
+      .flatMap((scope, groupIndex) => {
+        const groupMonths = (scope.monthly_stats || []).filter(
+          (month) => visibleMonthValues.has(month.value) && hasGrades(month),
+        );
+        return groupMonths.map((month, monthIndex) => ({
+          ...month,
+          seriesLabel: visibleMonths.length > 1 ? `${scope.label} · ${month.name}` : scope.label,
+          seriesColor: GROUP_LINE_COLORS[groupIndex % GROUP_LINE_COLORS.length],
+          borderDash: visibleMonths.length > 1 && monthIndex > 0 ? [8 - Math.min(monthIndex, 2) * 2, 4] : [],
+          fill: false,
+        }));
+      });
+  }, [scopes, selectedScope, visibleMonths]);
+  const hasVisibleGrades = chartSeries.length > 0;
 
   useEffect(() => {
     const canvas = canvasRef.current;
@@ -172,7 +194,7 @@ function ChartJsMonthChart({ months = [] }) {
       type: "line",
       data: {
         labels,
-        datasets: visibleMonths.map((month, index) => buildChartDataset(month, index, context)),
+        datasets: chartSeries.map((month) => buildChartDataset(month, context)),
       },
       options: {
         responsive: true,
@@ -275,7 +297,7 @@ function ChartJsMonthChart({ months = [] }) {
       chartRef.current?.destroy();
       chartRef.current = null;
     };
-  }, [visibleMonths]);
+  }, [chartSeries]);
 
   return (
     <div className="student-chart-card">
@@ -284,13 +306,23 @@ function ChartJsMonthChart({ months = [] }) {
           <h3>Динамика оценок</h3>
           <p>Сравнение по месяцам</p>
         </div>
-        <select value={rangeMode} onChange={(event) => setRangeMode(event.target.value)} aria-label="Период статистики">
-          <option value="last-1">Последний месяц</option>
-          <option value="last-3">Последние 3 месяца</option>
-        </select>
+        <div className="student-chart-card__filters">
+          {scopes.length ? (
+            <select value={selectedScope} onChange={(event) => onScopeChange?.(event.target.value)} aria-label="Группы в статистике">
+              {scopes.map((scope) => (
+                <option key={scope.value} value={scope.value}>{scope.label}</option>
+              ))}
+            </select>
+          ) : null}
+          <select value={rangeMode} onChange={(event) => setRangeMode(event.target.value)} aria-label="Период статистики">
+            <option value="last-1">Последний месяц</option>
+            <option value="last-3">Последние 3 месяца</option>
+          </select>
+        </div>
       </div>
       <div className="student-chart-card__canvas">
         <canvas ref={canvasRef} />
+        {!hasVisibleGrades ? <p className="student-chart-card__empty">За выбранный период оценок пока нет.</p> : null}
       </div>
     </div>
   );
@@ -325,6 +357,14 @@ function StudentSummaryStats({ stats = [] }) {
     : 0;
   const bestGrade = allGrades.length ? Math.max(...allGrades) : 0;
   const worstGrade = allGrades.length ? Math.min(...allGrades) : 0;
+
+  if (!allGrades.length) {
+    return (
+      <section className="student-summary-stats" aria-label="Статистика студента">
+        <EmptyState title="Оценок пока нет" description="Статистика появится после выставления первой оценки." />
+      </section>
+    );
+  }
 
   const cards = [
     {
@@ -423,8 +463,8 @@ function CombinedMonthChart({ months = [] }) {
     const plotHeight = height - padding.top - padding.bottom;
     const toX = (day) => padding.left + ((day - 1) / 30) * plotWidth;
     const toY = (grade) => padding.top + ((5 - grade) / 3) * plotHeight;
-    const series = months.map((month, index) => {
-      const coordinates = normalizeMonthPoints(month, index).map((point) => ({
+    const series = months.map((month) => {
+      const coordinates = normalizeMonthPoints(month).map((point) => ({
         ...point,
         x: toX(point.day),
         y: point.grade === null || point.grade === undefined ? null : toY(point.grade),
@@ -560,7 +600,7 @@ function CombinedMonthChart({ months = [] }) {
   );
 }
 
-function StudentStatsPanel({ stats = [] }) {
+function StudentStatsPanel({ stats = [], scopes = [], selectedScope = "all", onScopeChange }) {
   const currentMonthValue = new Date().toISOString().slice(0, 7);
   const defaultIndex = Math.max(
     stats.findIndex((month) => month.value === currentMonthValue),
@@ -672,7 +712,12 @@ function StudentStatsPanel({ stats = [] }) {
         </div>
       </div>
       <div className="student-stats__chart-grid">
-        <ChartJsMonthChart months={visibleStats} />
+        <ChartJsMonthChart
+          months={visibleStats}
+          scopes={scopes}
+          selectedScope={selectedScope}
+          onScopeChange={onScopeChange}
+        />
       </div>
     </Panel>
   );
@@ -736,6 +781,7 @@ function DashboardListPanel({ eyebrow, title, description, children }) {
 
 export function DashboardPage({ api, sessionToken, user }) {
   const { data, error, loading, reload } = useResource(() => api("/api/dashboard/"), [sessionToken]);
+  const [selectedStudentScope, setSelectedStudentScope] = useState("all");
 
   if (loading) {
     return <LoadingBlock label="Загружаем дашборд..." />;
@@ -748,6 +794,10 @@ export function DashboardPage({ api, sessionToken, user }) {
   const isStudentDashboard = Boolean(data.student_overview);
   const isAdminDashboard = user.role === "ADMIN" && !isStudentDashboard;
   const dashboardGroups = sortGroupsByName(data.groups);
+  const studentStatScopes = data.student_stat_scopes || [];
+  const activeStudentScope = studentStatScopes.find((scope) => scope.value === selectedStudentScope)
+    || studentStatScopes[0];
+  const studentMonthlyStats = activeStudentScope?.monthly_stats || data.student_monthly_stats || [];
 
   return (
     <div className={`page-stack ${isAdminDashboard ? "dashboard-page dashboard-page--admin" : ""}`.trim()}>
@@ -764,7 +814,7 @@ export function DashboardPage({ api, sessionToken, user }) {
       </section>
 
       {isStudentDashboard ? (
-        <StudentSummaryStats stats={data.student_monthly_stats} />
+        <StudentSummaryStats stats={studentMonthlyStats} />
       ) : (
         <div className="metric-grid">
           {data.summary_cards.map((card) => (
@@ -775,7 +825,12 @@ export function DashboardPage({ api, sessionToken, user }) {
 
       {isStudentDashboard ? (
         <>
-          <StudentStatsPanel stats={data.student_monthly_stats} />
+          <StudentStatsPanel
+            stats={studentMonthlyStats}
+            scopes={studentStatScopes}
+            selectedScope={activeStudentScope?.value || "all"}
+            onScopeChange={setSelectedStudentScope}
+          />
           <StudentOverviewPanel overview={data.student_overview} />
         </>
       ) : (

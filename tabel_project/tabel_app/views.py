@@ -382,7 +382,7 @@ def dispatch_due_reports_after_gradebook_save(students, selected_month):
     return results
 
 
-def build_student_monthly_stats(student_profile):
+def build_student_monthly_stats(student_profile, *, organization_type=None, group_id=None):
     if not student_profile:
         return []
 
@@ -402,11 +402,15 @@ def build_student_monthly_stats(student_profile):
         "Декабрь",
     ]
     month_tones = ["blue", "red", "green", "orange", "violet", "cyan", "teal", "amber", "indigo", "emerald", "rose", "slate"]
-    records = list(
-        LessonRecord.objects.select_related("lesson")
-        .filter(student=student_profile, lesson__lesson_date__year=current_year)
-        .order_by("lesson__lesson_date", "lesson_id")
+    records_queryset = LessonRecord.objects.select_related("lesson").filter(
+        student=student_profile,
+        lesson__lesson_date__year=current_year,
     )
+    if organization_type:
+        records_queryset = records_queryset.filter(lesson__group__organization_type=organization_type)
+    if group_id is not None:
+        records_queryset = records_queryset.filter(lesson__group_id=group_id)
+    records = list(records_queryset.order_by("lesson__lesson_date", "lesson_id"))
     monthly_stats = []
 
     for month_number, month_name in enumerate(month_names, start=1):
@@ -414,6 +418,10 @@ def build_student_monthly_stats(student_profile):
         numeric_grades = [int(record.grade) for record in month_records if record.grade.isdigit()]
         attendance_count = len([record for record in month_records if record.grade and not is_absence_grade(record.grade)])
         absence_count = len([record for record in month_records if is_absence_grade(record.grade)])
+        grades_by_day = {}
+        for record in month_records:
+            if record.grade.isdigit():
+                grades_by_day.setdefault(record.lesson.lesson_date.day, []).append(int(record.grade))
         monthly_stats.append(
             {
                 "value": f"{current_year}-{month_number:02d}",
@@ -424,9 +432,8 @@ def build_student_monthly_stats(student_profile):
                 "absence_count": absence_count,
                 "average_grade": round(sum(numeric_grades) / len(numeric_grades), 1) if numeric_grades else None,
                 "daily_points": [
-                    {"day": record.lesson.lesson_date.day, "grade": int(record.grade)}
-                    for record in month_records
-                    if record.grade.isdigit()
+                    {"day": day, "grade": round(sum(day_grades) / len(day_grades), 2)}
+                    for day, day_grades in sorted(grades_by_day.items())
                 ],
             }
         )
@@ -477,9 +484,20 @@ def build_dashboard_payload(user, organization_type=None):
         }
 
     student_profile = getattr(user, "student_profile", None)
+    student_groups = (
+        Group.objects.filter(
+            Q(pk=getattr(student_profile, "group_id", None)) | Q(college_students=student_profile),
+            organization_type=organization_type,
+        )
+        .select_related("mentor__user")
+        .distinct()
+        .order_by("course_name", "pk")
+        if student_profile
+        else Group.objects.none()
+    )
     records = (
         LessonRecord.objects.select_related("lesson", "lesson__group")
-        .filter(student=student_profile)
+        .filter(student=student_profile, lesson__group__organization_type=organization_type)
         .order_by("-lesson__lesson_date")
         if student_profile
         else LessonRecord.objects.none()
@@ -487,8 +505,33 @@ def build_dashboard_payload(user, organization_type=None):
     grades_count = records.count()
     attendance_count = records.exclude(grade="Н").exclude(grade="н").count()
     average_grade = build_student_average(records) or "—"
-    group_name = student_profile.group.course_name if student_profile else "Не назначена"
-    mentor_name = student_profile.group.mentor.user.full_name if student_profile else "Не назначен"
+    group_names = list(student_groups.values_list("course_name", flat=True))
+    mentor_names = list(dict.fromkeys(student_groups.values_list("mentor__user__full_name", flat=True)))
+    group_name = ", ".join(group_names) if group_names else "Не назначена"
+    mentor_name = ", ".join(mentor_names) if mentor_names else "Не назначен"
+    all_monthly_stats = build_student_monthly_stats(
+        student_profile,
+        organization_type=organization_type,
+    )
+    student_stat_scopes = [
+        {
+            "value": "all",
+            "label": "Все группы",
+            "monthly_stats": all_monthly_stats,
+        },
+        *[
+            {
+                "value": str(group.pk),
+                "label": group.course_name,
+                "monthly_stats": build_student_monthly_stats(
+                    student_profile,
+                    organization_type=organization_type,
+                    group_id=group.pk,
+                ),
+            }
+            for group in student_groups
+        ],
+    ]
     return {
         "dashboard_title": "Кабинет студента",
         "dashboard_copy": "Здесь собрана короткая сводка по вашей группе, ментору и текущей успеваемости.",
@@ -504,7 +547,8 @@ def build_dashboard_payload(user, organization_type=None):
             "attendance_count": attendance_count,
             "average_grade": average_grade,
         },
-        "student_monthly_stats": build_student_monthly_stats(student_profile),
+        "student_monthly_stats": all_monthly_stats,
+        "student_stat_scopes": student_stat_scopes,
     }
 
 
