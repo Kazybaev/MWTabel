@@ -9,6 +9,7 @@ import { matchPath, navigateTo, parseHashLocation } from "./lib/router";
 import { DashboardPage } from "./pages/DashboardPage";
 import { ArchivedStudentsPage } from "./pages/ArchivedStudentsPage";
 import { GradebookPage } from "./pages/GradebookPage";
+import { CollegeGradebookPage } from "./pages/CollegeGradebookPage";
 import { GroupDetailPage } from "./pages/GroupDetailPage";
 import { GroupsPage } from "./pages/GroupsPage";
 import { LoginPage } from "./pages/LoginPage";
@@ -53,12 +54,14 @@ function buildNotice(message, tone = "info") {
 
 function App() {
   const [session, setSession] = useState(() => readStoredSession());
+  const [organization, setOrganization] = useState(() => window.localStorage.getItem("tabel.organization") || "academy");
   const [route, setRoute] = useState(() => parseHashLocation());
   const [meta, setMeta] = useState(emptyMeta);
   const [mentorGroups, setMentorGroups] = useState([]);
   const [notice, setNotice] = useState(null);
   const [authLoading, setAuthLoading] = useState(false);
   const [authError, setAuthError] = useState("");
+  const [pendingSession, setPendingSession] = useState(null);
   const [bootstrapping, setBootstrapping] = useState(Boolean(readStoredSession()?.access));
 
   function updateSession(nextSession) {
@@ -84,9 +87,16 @@ function App() {
     return apiRequest(path, {
       ...options,
       session,
+      organization,
       onSessionChange: updateSession,
       onUnauthorized: handleUnauthorized,
     });
+  }
+
+  function changeOrganization(value) {
+    window.localStorage.setItem("tabel.organization", value);
+    setOrganization(value);
+    window.location.reload();
   }
 
   const syncUserProfile = useEffectEvent(async () => {
@@ -219,6 +229,13 @@ function App() {
         session: nextSession,
       });
       const finalSession = { ...nextSession, user };
+      if ((user.organizations || []).length > 1) {
+        setPendingSession(finalSession);
+        return;
+      }
+      const onlyOrganization = user.organizations?.[0] || "academy";
+      window.localStorage.setItem("tabel.organization", onlyOrganization);
+      setOrganization(onlyOrganization);
       updateSession(finalSession);
       setNotice(buildNotice("Вы вошли в систему.", "success"));
       startTransition(() => navigateTo(defaultPathForUser(user)));
@@ -227,6 +244,15 @@ function App() {
     } finally {
       setAuthLoading(false);
     }
+  }
+
+  function handlePortalSelect(value) {
+    if (!pendingSession?.user?.organizations?.includes(value)) return;
+    window.localStorage.setItem("tabel.organization", value);
+    setOrganization(value);
+    updateSession(pendingSession);
+    setPendingSession(null);
+    startTransition(() => navigateTo(defaultPathForUser(pendingSession.user)));
   }
 
   async function handleLogout() {
@@ -281,7 +307,7 @@ function App() {
     }
 
     if (route.path === "/students") {
-      return <StudentsPage api={callApi} sessionToken={session.access} user={session.user} onNotice={setNotice} />;
+      return <StudentsPage api={callApi} sessionToken={session.access} user={session.user} onNotice={setNotice} organization={organization} />;
     }
 
     if (route.path === "/archive") {
@@ -297,6 +323,9 @@ function App() {
     }
 
     if (route.path === "/my-grades") {
+      if (organization === "college") {
+        return <CollegeGradebookPage api={callApi} sessionToken={session.access} routeMonth={route.query.month} />;
+      }
       return (
         <GradebookPage
           api={callApi}
@@ -351,7 +380,7 @@ function App() {
   }
 
   if (!session?.access) {
-    return <LoginPage onLogin={handleLogin} loading={authLoading} error={authError} />;
+    return <LoginPage onLogin={handleLogin} loading={authLoading} error={authError} portals={pendingSession?.user?.organizations} onPortalSelect={handlePortalSelect} />;
   }
 
   if (bootstrapping || !session.user) {
@@ -377,6 +406,8 @@ function App() {
       onLogout={handleLogout}
       mentorGroups={mentorGroups}
       lockedContent={lockedContent}
+      organization={organization}
+      onOrganizationChange={changeOrganization}
     >
       {renderAuthenticatedPage()}
     </AppShell>

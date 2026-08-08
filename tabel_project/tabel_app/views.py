@@ -31,6 +31,7 @@ from .models import (
 )
 from .report_delivery import build_report_conversations, record_meta_delivery_callback, serialize_report_attempt
 from .report import force_send_all_monthly_reports, is_absence_grade, send_student_month_report
+from .organization import organization_for_request
 from .serializers import (
     GroupDetailSerializer,
     GroupListSerializer,
@@ -433,14 +434,14 @@ def build_student_monthly_stats(student_profile):
     return monthly_stats
 
 
-def build_dashboard_payload(user):
+def build_dashboard_payload(user, organization_type=None):
     if user.role == User.ROLE_ADMIN:
-        groups = groups_for_user(user).annotate(
+        groups = groups_for_user(user).filter(organization_type=organization_type).annotate(
             students_count=Count("students", filter=Q(students__archived_at__isnull=True))
         )
-        mentors = MentorProfile.objects.select_related("user").annotate(groups_count=Count("groups"))
-        students = students_for_user(user)
-        lessons = lessons_for_user(user)
+        mentors = MentorProfile.objects.filter(organization_type=organization_type).select_related("user").annotate(groups_count=Count("groups"))
+        students = students_for_user(user).filter(organization_type=organization_type)
+        lessons = lessons_for_user(user).filter(group__organization_type=organization_type)
         return {
             "dashboard_title": "Панель администратора",
             "dashboard_copy": "Управляйте группами, менторами, студентами и следите за учебным потоком.",
@@ -457,11 +458,11 @@ def build_dashboard_payload(user):
         }
 
     if user.role == User.ROLE_MENTOR and hasattr(user, "mentor_profile"):
-        groups = groups_for_user(user).annotate(
+        groups = groups_for_user(user).filter(organization_type=organization_type).annotate(
             students_count=Count("students", filter=Q(students__archived_at__isnull=True))
         )
-        students = students_for_user(user)
-        lessons = lessons_for_user(user)
+        students = students_for_user(user).filter(organization_type=organization_type)
+        lessons = lessons_for_user(user).filter(group__organization_type=organization_type)
         return {
             "dashboard_title": "Кабинет ментора",
             "dashboard_copy": "Следите за своими группами и сразу переходите к месячному табелю.",
@@ -584,11 +585,48 @@ class CurrentUserAPIView(generics.RetrieveAPIView):
         return self.request.user
 
 
+class CollegeGradebookAPIView(APIView):
+    permission_classes = [permissions.IsAuthenticated]
+
+    def get(self, request, *args, **kwargs):
+        organization = organization_for_request(request)
+        if organization != "college" or request.user.role != User.ROLE_STUDENT or not hasattr(request.user, "student_profile"):
+            raise PermissionDenied
+        student = request.user.student_profile
+        if student.organization_type != organization:
+            raise PermissionDenied
+        month_start = parse_month_value(request.query_params.get("month")) or timezone.localdate().replace(day=1)
+        month_start, month_end = month_bounds(month_start)
+        groups = student.college_groups.filter(organization_type=organization).select_related("mentor__user")
+        if not groups.exists() and student.group.organization_type == organization:
+            groups = Group.objects.filter(pk=student.group_id)
+        days = [month_start + timedelta(days=index) for index in range((month_end - month_start).days + 1)]
+        records = LessonRecord.objects.filter(
+            student=student,
+            lesson__group__in=groups,
+            lesson__lesson_date__range=(month_start, month_end),
+        ).select_related("lesson", "lesson__group")
+        values = {(record.lesson.group_id, record.lesson.lesson_date.isoformat()): record.grade for record in records}
+        return Response({
+            "month": month_start.strftime("%Y-%m"),
+            "days": [{"date": day.isoformat(), "day": day.day} for day in days],
+            "rows": [
+                {
+                    "group_id": group.pk,
+                    "subject": group.course_name,
+                    "grades": {day.isoformat(): values.get((group.pk, day.isoformat()), "") for day in days},
+                }
+                for group in groups.order_by("course_name")
+            ],
+        })
+
+
 class DashboardAPIView(APIView):
     permission_classes = [permissions.IsAuthenticated]
 
     def get(self, request, *args, **kwargs):
-        return Response(build_dashboard_payload(request.user))
+        organization = organization_for_request(request)
+        return Response(build_dashboard_payload(request.user, organization))
 
 
 class AppMetaAPIView(APIView):
@@ -622,7 +660,7 @@ class ReportDispatchAPIView(APIView):
         serializer.is_valid(raise_exception=True)
 
         student = get_object_or_404(
-            students_for_user(request.user).select_related("user", "group", "group__mentor__user"),
+            students_for_user(request.user).filter(organization_type=organization_for_request(request)).select_related("user", "group", "group__mentor__user"),
             pk=serializer.validated_data["student_id"],
         )
 
@@ -686,7 +724,7 @@ class ReportConversationListAPIView(APIView):
     def get(self, request, *args, **kwargs):
         if request.user.role != User.ROLE_ADMIN:
             raise PermissionDenied
-        return Response(build_report_conversations())
+        return Response(build_report_conversations(organization_for_request(request)))
 
 
 class ForceSendAllReportsAPIView(APIView):
@@ -700,6 +738,7 @@ class ForceSendAllReportsAPIView(APIView):
         results = force_send_all_monthly_reports(
             run_date=timezone.localdate(),
             month_start=month_start,
+            organization_type=organization_for_request(request),
         )
         sent_count = sum(result.get("status") == "sent" for result in results)
         failed_count = sum(result.get("status") == "failed" for result in results)
@@ -724,7 +763,11 @@ class ReportConversationDetailAPIView(APIView):
         if request.user.role != User.ROLE_ADMIN:
             raise PermissionDenied
 
-        student = get_object_or_404(StudentProfile.objects.select_related("user", "group"), pk=student_id)
+        student = get_object_or_404(
+            StudentProfile.objects.select_related("user", "group"),
+            pk=student_id,
+            organization_type=organization_for_request(request),
+        )
         attempts = MonthlyStudentReportAttempt.objects.filter(
             dispatch__student=student,
         ).select_related("dispatch").order_by("created_at", "id")
@@ -746,7 +789,8 @@ class MentorProfileViewSet(viewsets.ModelViewSet):
     serializer_class = MentorProfileSerializer
 
     def get_queryset(self):
-        queryset = MentorProfile.objects.select_related("user").annotate(groups_count=Count("groups"))
+        organization = organization_for_request(self.request)
+        queryset = MentorProfile.objects.filter(organization_type=organization).select_related("user").annotate(groups_count=Count("groups"))
         if self.request.user.role == User.ROLE_ADMIN:
             return queryset
         if self.request.user.role == User.ROLE_MENTOR and hasattr(self.request.user, "mentor_profile"):
@@ -757,6 +801,9 @@ class MentorProfileViewSet(viewsets.ModelViewSet):
         if request.user.role != User.ROLE_ADMIN:
             raise PermissionDenied
         return super().create(request, *args, **kwargs)
+
+    def perform_create(self, serializer):
+        serializer.save(organization_type=organization_for_request(self.request))
 
     def update(self, request, *args, **kwargs):
         if request.user.role != User.ROLE_ADMIN:
@@ -780,7 +827,8 @@ class StudentProfileViewSet(viewsets.ModelViewSet):
     serializer_class = StudentProfileSerializer
 
     def get_queryset(self):
-        queryset = StudentProfile.objects.select_related("user", "group", "group__mentor__user")
+        organization = organization_for_request(self.request)
+        queryset = StudentProfile.objects.filter(organization_type=organization).select_related("user", "group", "group__mentor__user")
         if self.request.user.role == User.ROLE_ADMIN:
             if self.action in {"archived", "restore", "destroy"}:
                 return queryset.filter(archived_at__isnull=False)
@@ -791,6 +839,9 @@ class StudentProfileViewSet(viewsets.ModelViewSet):
         if request.user.role != User.ROLE_ADMIN:
             raise PermissionDenied
         return super().create(request, *args, **kwargs)
+
+    def perform_create(self, serializer):
+        serializer.save(organization_type=organization_for_request(self.request))
 
     def update(self, request, *args, **kwargs):
         if request.user.role != User.ROLE_ADMIN:
@@ -835,7 +886,7 @@ class StudentProfileViewSet(viewsets.ModelViewSet):
         group_id = request.data.get("group")
         if not group_id:
             raise ValidationError({"group": "Выберите группу для восстановления студента."})
-        group = get_object_or_404(Group, pk=group_id)
+        group = get_object_or_404(Group, pk=group_id, organization_type=organization_for_request(request))
         old_group = instance.group
         with transaction.atomic():
             instance.group = group
@@ -849,7 +900,8 @@ class StudentProfileViewSet(viewsets.ModelViewSet):
 
 class GroupViewSet(viewsets.ModelViewSet):
     def get_queryset(self):
-        return groups_for_user(self.request.user).annotate(
+        organization = organization_for_request(self.request)
+        return groups_for_user(self.request.user).filter(organization_type=organization).annotate(
             students_count=Count("students", filter=Q(students__archived_at__isnull=True))
         )
 
@@ -864,6 +916,13 @@ class GroupViewSet(viewsets.ModelViewSet):
         if request.user.role != User.ROLE_ADMIN:
             raise PermissionDenied
         return super().create(request, *args, **kwargs)
+
+    def perform_create(self, serializer):
+        organization = organization_for_request(self.request)
+        defaults = {"organization_type": organization}
+        if organization == "college" and not serializer.validated_data.get("study_days"):
+            defaults["study_days"] = Group.MON_FRI
+        serializer.save(**defaults)
 
     def update(self, request, *args, **kwargs):
         if request.user.role != User.ROLE_ADMIN:
@@ -913,7 +972,7 @@ class LessonViewSet(viewsets.ModelViewSet):
     serializer_class = LessonSerializer
 
     def get_queryset(self):
-        return lessons_for_user(self.request.user)
+        return lessons_for_user(self.request.user).filter(group__organization_type=organization_for_request(self.request))
 
     def create(self, request, *args, **kwargs):
         if request.user.role not in {User.ROLE_ADMIN, User.ROLE_MENTOR}:
@@ -921,7 +980,7 @@ class LessonViewSet(viewsets.ModelViewSet):
         serializer = self.get_serializer(data=request.data)
         serializer.is_valid(raise_exception=True)
         group = serializer.validated_data["group"]
-        get_manageable_group(request.user, group.pk)
+        get_object_or_404(manageable_groups_for_user(request.user), pk=group.pk, organization_type=organization_for_request(request))
         self.perform_create(serializer)
         headers = self.get_success_headers(serializer.data)
         return Response(serializer.data, status=status.HTTP_201_CREATED, headers=headers)
@@ -940,15 +999,15 @@ class LessonViewSet(viewsets.ModelViewSet):
         if request.user.role not in {User.ROLE_ADMIN, User.ROLE_MENTOR}:
             raise PermissionDenied
         lesson = self.get_object()
-        get_manageable_group(request.user, lesson.group_id)
+        get_object_or_404(manageable_groups_for_user(request.user), pk=lesson.group_id, organization_type=organization_for_request(request))
         return super().destroy(request, *args, **kwargs)
 
     def _update_lesson(self, request, partial):
         lesson = self.get_object()
-        get_manageable_group(request.user, lesson.group_id)
+        get_object_or_404(manageable_groups_for_user(request.user), pk=lesson.group_id, organization_type=organization_for_request(request))
         serializer = self.get_serializer(lesson, data=request.data, partial=partial)
         serializer.is_valid(raise_exception=True)
         group = serializer.validated_data.get("group", lesson.group)
-        get_manageable_group(request.user, group.pk)
+        get_object_or_404(manageable_groups_for_user(request.user), pk=group.pk, organization_type=organization_for_request(request))
         self.perform_update(serializer)
         return Response(serializer.data)

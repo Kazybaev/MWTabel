@@ -167,13 +167,14 @@ def serialize_report_attempt(attempt: MonthlyStudentReportAttempt) -> dict[str, 
     }
 
 
-def build_report_conversations() -> list[dict[str, Any]]:
-    attempts = list(
-        MonthlyStudentReportAttempt.objects.select_related(
+def build_report_conversations(organization_type: str | None = None) -> list[dict[str, Any]]:
+    attempts_queryset = MonthlyStudentReportAttempt.objects.select_related(
             "dispatch__student__user",
             "dispatch__student__group",
-        ).order_by("dispatch__student_id", "-created_at", "-id")
-    )
+        )
+    if organization_type:
+        attempts_queryset = attempts_queryset.filter(dispatch__student__organization_type=organization_type)
+    attempts = list(attempts_queryset.order_by("dispatch__student_id", "-created_at", "-id"))
     message_counts = Counter(attempt.dispatch.student_id for attempt in attempts)
     conversations = []
     seen_students = set()

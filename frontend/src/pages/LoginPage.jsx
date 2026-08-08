@@ -2,7 +2,7 @@ import { useState } from "react";
 
 import { Button, TextField } from "../components/Ui";
 
-export function LoginPage({ onLogin, loading, error }) {
+export function LoginPage({ onLogin, loading, error, portals, onPortalSelect }) {
   const [form, setForm] = useState({
     username: "",
     password: "",
@@ -33,7 +33,13 @@ export function LoginPage({ onLogin, loading, error }) {
               <h2>Войдите в систему</h2>
             </div>
 
-            <form className="form-grid login-form" onSubmit={handleSubmit}>
+            {portals?.length ? (
+              <div className="login-portal-picker">
+                <p>Выберите направление</p>
+                {portals.includes("academy") && <Button onClick={() => onPortalSelect("academy")}>Академия</Button>}
+                {portals.includes("college") && <Button onClick={() => onPortalSelect("college")}>Колледж</Button>}
+              </div>
+            ) : <form className="form-grid login-form" onSubmit={handleSubmit}>
               <TextField
                 label="Логин"
                 value={form.username}
@@ -54,7 +60,7 @@ export function LoginPage({ onLogin, loading, error }) {
               <Button type="submit" disabled={loading} className="login-submit">
                 {loading ? "Входим..." : "Войти"}
               </Button>
-            </form>
+            </form>}
           </div>
         </section>
       </div>

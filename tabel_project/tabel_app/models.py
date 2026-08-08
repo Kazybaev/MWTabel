@@ -4,6 +4,11 @@ from django.db import models
 from django.utils import timezone
 from phonenumber_field.modelfields import PhoneNumberField
 
+ORGANIZATION_ACADEMY = "academy"
+ORGANIZATION_COLLEGE = "college"
+ORGANIZATION_CHOICES = ((ORGANIZATION_ACADEMY, "Академия"), (ORGANIZATION_COLLEGE, "Колледж"))
+COLLEGE_COURSE_CHOICES = (("1", "1 курс"), ("2", "2 курс"), ("3", "3 курс"), ("4", "4 курс"))
+
 
 class User(AbstractUser):
     ROLE_ADMIN = "ADMIN"
@@ -40,6 +45,7 @@ class MentorProfile(models.Model):
         on_delete=models.CASCADE,
         related_name="mentor_profile",
     )
+    organization_type = models.CharField(max_length=16, choices=ORGANIZATION_CHOICES, default=ORGANIZATION_ACADEMY, db_index=True)
 
     class Meta:
         ordering = ("user__full_name",)
@@ -51,15 +57,20 @@ class MentorProfile(models.Model):
 class Group(models.Model):
     MON_WED_SAT = "MON_WED_SAT"
     TUE_THU_SUN = "TUE_THU_SUN"
+    MON_FRI = "MON_FRI"
     STUDY_DAYS_CHOICES = (
         (MON_WED_SAT, "Пн • Ср • Сб"),
         (TUE_THU_SUN, "Вт • Чт • Вс"),
     )
 
+    STUDY_DAYS_CHOICES += ((MON_FRI, "Пн • Вт • Ср • Чт • Пт"),)
+
     course_name = models.CharField(max_length=100)
     mentor = models.ForeignKey(MentorProfile, on_delete=models.CASCADE, related_name="groups")
     study_days = models.CharField(max_length=32, choices=STUDY_DAYS_CHOICES)
     description = models.TextField(blank=True)
+    organization_type = models.CharField(max_length=16, choices=ORGANIZATION_CHOICES, default=ORGANIZATION_ACADEMY, db_index=True)
+    college_course = models.CharField(max_length=1, choices=COLLEGE_COURSE_CHOICES, blank=True)
 
     class Meta:
         ordering = ("course_name",)
@@ -78,12 +89,23 @@ class StudentProfile(models.Model):
     parent_phone = PhoneNumberField()
     group = models.ForeignKey(Group, on_delete=models.CASCADE, related_name="students")
     archived_at = models.DateTimeField(null=True, blank=True)
+    organization_type = models.CharField(max_length=16, choices=ORGANIZATION_CHOICES, default=ORGANIZATION_ACADEMY, db_index=True)
+    college_groups = models.ManyToManyField(Group, blank=True, related_name="college_students")
+    college_course = models.CharField(max_length=1, choices=COLLEGE_COURSE_CHOICES, blank=True)
 
     class Meta:
         ordering = ("user__full_name",)
 
     def __str__(self):
         return self.user.full_name
+
+
+class UserOrganizationAccess(models.Model):
+    user = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.CASCADE, related_name="organization_accesses")
+    organization_type = models.CharField(max_length=16, choices=ORGANIZATION_CHOICES, default=ORGANIZATION_ACADEMY)
+
+    class Meta:
+        constraints = [models.UniqueConstraint(fields=("user", "organization_type"), name="unique_user_organization_access")]
 
 
 class Lesson(models.Model):

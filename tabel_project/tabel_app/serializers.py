@@ -4,6 +4,7 @@ from rest_framework import serializers
 from rest_framework_simplejwt.tokens import RefreshToken
 
 from .models import Group, Lesson, LessonRecord, MentorProfile, StudentProfile, User
+from .organization import allowed_organizations_for_user, organization_for_request
 
 
 class LoginSerializer(serializers.Serializer):
@@ -97,6 +98,7 @@ class UserSerializer(serializers.ModelSerializer):
     mentor_profile_id = serializers.SerializerMethodField()
     student_profile_id = serializers.SerializerMethodField()
     group_id = serializers.SerializerMethodField()
+    organizations = serializers.SerializerMethodField()
 
     class Meta:
         model = User
@@ -109,6 +111,7 @@ class UserSerializer(serializers.ModelSerializer):
             "mentor_profile_id",
             "student_profile_id",
             "group_id",
+            "organizations",
         ]
 
     def get_mentor_profile_id(self, obj):
@@ -123,6 +126,9 @@ class UserSerializer(serializers.ModelSerializer):
         student_profile = getattr(obj, "student_profile", None)
         return student_profile.group_id if student_profile else None
 
+    def get_organizations(self, obj):
+        return allowed_organizations_for_user(obj)
+
 
 class MentorProfileSerializer(serializers.ModelSerializer):
     user_id = serializers.IntegerField(source="user.id", read_only=True)
@@ -134,7 +140,8 @@ class MentorProfileSerializer(serializers.ModelSerializer):
 
     class Meta:
         model = MentorProfile
-        fields = ["id", "user_id", "full_name", "username", "email", "password", "groups_count"]
+        fields = ["id", "user_id", "full_name", "username", "email", "password", "groups_count", "organization_type"]
+        read_only_fields = ["organization_type"]
 
     def get_groups_count(self, obj):
         annotated_count = getattr(obj, "groups_count", None)
@@ -165,7 +172,7 @@ class MentorProfileSerializer(serializers.ModelSerializer):
             email=user_data.get("email", ""),
             role=User.ROLE_MENTOR,
         )
-        return MentorProfile.objects.create(user=user)
+        return MentorProfile.objects.create(user=user, **validated_data)
 
     def update(self, instance, validated_data):
         password = validated_data.pop("password", "")
@@ -205,8 +212,11 @@ class StudentProfileSerializer(serializers.ModelSerializer):
             "group_name",
             "archived_at",
             "is_archived",
+            "organization_type",
+            "college_course",
+            "college_groups",
         ]
-        read_only_fields = ["archived_at"]
+        read_only_fields = ["archived_at", "organization_type"]
 
     def get_is_archived(self, obj):
         return obj.archived_at is not None
@@ -222,11 +232,23 @@ class StudentProfileSerializer(serializers.ModelSerializer):
     def validate(self, attrs):
         if not self.instance and not attrs.get("password"):
             raise serializers.ValidationError({"password": "Пароль обязателен для нового студента."})
+        request = self.context.get("request")
+        organization = organization_for_request(request) if request else "academy"
+        group = attrs.get("group", self.instance.group if self.instance else None)
+        if group and group.organization_type != organization:
+            raise serializers.ValidationError({"group": "Группа относится к другой организации."})
+        college_groups = attrs.get("college_groups", [])
+        if organization == "college" and not college_groups and not self.instance:
+            raise serializers.ValidationError({"college_groups": "Выберите хотя бы одну группу."})
+        if any(item.organization_type != organization for item in college_groups):
+            raise serializers.ValidationError({"college_groups": "Все предметы должны относиться к текущей организации."})
         return attrs
 
+    @transaction.atomic
     def create(self, validated_data):
         password = validated_data.pop("password")
         user_data = validated_data.pop("user")
+        college_groups = validated_data.pop("college_groups", [])
         user = User.objects.create_user(
             username=user_data["username"],
             password=password,
@@ -234,7 +256,10 @@ class StudentProfileSerializer(serializers.ModelSerializer):
             email=user_data.get("email", ""),
             role=User.ROLE_STUDENT,
         )
-        return StudentProfile.objects.create(user=user, **validated_data)
+        student = StudentProfile.objects.create(user=user, **validated_data)
+        if student.organization_type == "college":
+            student.college_groups.set(college_groups or [student.group])
+        return student
 
     def update(self, instance, validated_data):
         with transaction.atomic():
@@ -257,6 +282,8 @@ class StudentProfileSerializer(serializers.ModelSerializer):
             instance.parent_phone = validated_data.get("parent_phone", instance.parent_phone)
             instance.group = new_group
             instance.save()
+            if "college_groups" in validated_data:
+                instance.college_groups.set(validated_data["college_groups"])
             move_student_records_to_group(instance, old_group, new_group)
         return instance
 
@@ -284,6 +311,12 @@ class LessonSerializer(serializers.ModelSerializer):
             queryset = queryset.filter(student=request.user.student_profile)
         return LessonRecordSerializer(queryset, many=True).data
 
+    def validate_group(self, group):
+        request = self.context.get("request")
+        if request and group.organization_type != organization_for_request(request):
+            raise serializers.ValidationError("Группа относится к другой организации.")
+        return group
+
 
 class GroupListSerializer(serializers.ModelSerializer):
     mentor_name = serializers.CharField(source="mentor.user.full_name", read_only=True)
@@ -301,6 +334,8 @@ class GroupListSerializer(serializers.ModelSerializer):
             "mentor",
             "mentor_name",
             "students_count",
+            "organization_type",
+            "college_course",
         ]
 
     def get_students_count(self, obj):
@@ -313,7 +348,14 @@ class GroupListSerializer(serializers.ModelSerializer):
 class GroupWriteSerializer(serializers.ModelSerializer):
     class Meta:
         model = Group
-        fields = ["id", "course_name", "mentor", "study_days", "description"]
+        fields = ["id", "course_name", "mentor", "study_days", "description", "organization_type", "college_course"]
+        read_only_fields = ["organization_type"]
+
+    def validate_mentor(self, mentor):
+        request = self.context.get("request")
+        if request and mentor.organization_type != organization_for_request(request):
+            raise serializers.ValidationError("Ментор относится к другой организации.")
+        return mentor
 
 
 class GroupDetailSerializer(serializers.ModelSerializer):
@@ -337,6 +379,8 @@ class GroupDetailSerializer(serializers.ModelSerializer):
             "students_count",
             "students",
             "lessons",
+            "organization_type",
+            "college_course",
         ]
 
     def get_students_count(self, obj):

@@ -167,6 +167,57 @@
   font-size: 0.86rem;
 }
 
+.organization-switcher {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 4px;
+  padding: 4px;
+  border: 1px solid rgba(255, 255, 255, 0.16);
+  border-radius: 14px;
+  background: rgba(255, 255, 255, 0.08);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.08);
+}
+
+.organization-switcher__button {
+  min-width: 0;
+  padding: 9px 10px;
+  border: 0;
+  border-radius: 10px;
+  background: transparent;
+  color: rgba(245, 242, 230, 0.72);
+  font: inherit;
+  font-size: 0.78rem;
+  font-weight: 700;
+  cursor: pointer;
+  transition: background 160ms ease, color 160ms ease, box-shadow 160ms ease;
+}
+
+.organization-switcher__button:hover {
+  color: #fff;
+  background: rgba(255, 255, 255, 0.08);
+}
+
+.organization-switcher__button--active {
+  color: #173c37;
+  background: #f6f0df;
+  box-shadow: 0 4px 12px rgba(5, 20, 18, 0.24);
+}
+
+.organization-switcher__button:focus-visible {
+  outline: 2px solid #f6c86b;
+  outline-offset: 2px;
+}
+
+.college-gradebook__month { display: inline-grid; gap: 6px; margin-bottom: 18px; font-weight: 700; }
+.college-gradebook__month input { padding: 9px 12px; border: 1px solid var(--line); border-radius: 10px; background: #fff; }
+.college-gradebook__scroll { overflow-x: auto; border: 1px solid var(--line); border-radius: 14px; }
+.college-gradebook { width: max-content; min-width: 100%; border-collapse: collapse; background: #fff; }
+.college-gradebook th, .college-gradebook td { min-width: 44px; padding: 10px 8px; border-right: 1px solid var(--line); border-bottom: 1px solid var(--line); text-align: center; }
+.college-gradebook th:first-child { position: sticky; left: 0; z-index: 2; min-width: 190px; text-align: left; background: #f7f5ee; box-shadow: 4px 0 10px rgba(25, 50, 45, 0.06); }
+.college-gradebook thead th { background: #f7f5ee; font-size: 0.78rem; }
+.login-portal-picker { display: grid; gap: 12px; }
+.login-portal-picker p { margin: 0 0 4px; font-weight: 700; color: var(--ink-strong); }
+
 .topbar h2,
 .hero-band h2,
 .panel__title,
@@ -2298,6 +2349,19 @@
 .form-field small {
   color: var(--ink-soft);
 }
+
+.multi-select-field { position: relative; }
+.multi-select-field summary { display: flex; align-items: center; justify-content: space-between; gap: 12px; min-height: 48px; padding: 0 14px; border: 1px solid rgba(15, 54, 47, 0.14); border-radius: 16px; background: #fff; color: var(--ink-strong); cursor: pointer; list-style: none; box-sizing: border-box; }
+.multi-select-field summary::-webkit-details-marker { display: none; }
+.multi-select-field summary::after { content: "⌄"; color: var(--ink-soft); font-size: 1.1rem; }
+.multi-select-field summary small { margin-left: auto; white-space: nowrap; }
+.multi-select-field[open] summary { border-color: rgba(17, 77, 67, 0.42); box-shadow: 0 0 0 3px rgba(17, 77, 67, 0.08); }
+.multi-select-field__menu { display: grid; gap: 4px; max-height: 240px; margin-top: 6px; padding: 8px; overflow-y: auto; border: 1px solid rgba(15, 54, 47, 0.14); border-radius: 14px; background: #fff; box-shadow: 0 14px 30px rgba(15, 54, 47, 0.14); }
+.multi-select-field__option { display: flex; align-items: center; gap: 10px; padding: 9px 10px; border-radius: 10px; cursor: pointer; }
+.multi-select-field__option:hover { background: rgba(17, 77, 67, 0.07); }
+.multi-select-field__option input { width: 18px; min-height: 18px; margin: 0; accent-color: #175f53; }
+.multi-select-field__option span { font-weight: 600; }
+.multi-select-field__option--disabled { opacity: 0.45; cursor: not-allowed; }
 
 .form-grid {
   display: grid;

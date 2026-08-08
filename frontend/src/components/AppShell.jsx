@@ -115,12 +115,12 @@ function buildSidebarIntro(role, currentPath) {
   };
 }
 
-function SidebarIntro({ eyebrow, title, description, compact = false }) {
+function SidebarIntro({ eyebrow, title, description, compact = false, children }) {
   return (
     <div className={`sidebar__brand ${compact ? "sidebar__brand--mentor" : ""}`.trim()}>
       <p className="sidebar__eyebrow">{eyebrow}</p>
       <h1>{title}</h1>
-      <p>{description}</p>
+      {children || <p>{description}</p>}
     </div>
   );
 }
@@ -185,6 +185,8 @@ export function AppShell({
   children,
   mentorGroups = [],
   lockedContent = false,
+  organization = "academy",
+  onOrganizationChange,
 }) {
   const isMentor = user.role === "MENTOR";
   const isReportsPage = currentPath === "/reports";
@@ -224,7 +226,28 @@ export function AppShell({
           <MentorSidebar currentPath={currentPath} mentorGroups={mentorGroups} user={user} onLogout={onLogout} />
         ) : (
           <>
-            <SidebarIntro eyebrow={intro.eyebrow} title={intro.title} description={intro.description} />
+            <SidebarIntro eyebrow={intro.eyebrow} title={intro.title} description={intro.description}>
+              {user.role === "ADMIN" && user.organizations?.length > 1 ? (
+                <div className="organization-switcher" role="group" aria-label="Выбор организации">
+                  <button
+                    type="button"
+                    className={organization === "academy" ? "organization-switcher__button organization-switcher__button--active" : "organization-switcher__button"}
+                    aria-pressed={organization === "academy"}
+                    onClick={() => onOrganizationChange?.("academy")}
+                  >
+                    Академия
+                  </button>
+                  <button
+                    type="button"
+                    className={organization === "college" ? "organization-switcher__button organization-switcher__button--active" : "organization-switcher__button"}
+                    aria-pressed={organization === "college"}
+                    onClick={() => onOrganizationChange?.("college")}
+                  >
+                    Колледж
+                  </button>
+                </div>
+              ) : null}
+            </SidebarIntro>
 
             <nav className="sidebar__nav">
               {navigation.map((item) => (

@@ -680,13 +680,16 @@ def send_student_month_report(
 def force_send_all_monthly_reports(
     run_date: date | datetime | None = None,
     month_start: date | datetime | None = None,
+    organization_type: str | None = None,
 ) -> list[dict[str, Any]]:
     """Explicit admin action: send the selected month to every active student."""
     run_date = normalize_run_date(run_date)
     month_start = normalize_month_start(month_start or run_date)
+    student_queryset = StudentProfile.objects.select_related("user", "group", "group__mentor__user").filter(archived_at__isnull=True)
+    if organization_type:
+        student_queryset = student_queryset.filter(organization_type=organization_type)
     students = list(
-        StudentProfile.objects.select_related("user", "group", "group__mentor__user")
-        .filter(archived_at__isnull=True)
+        student_queryset
         .order_by("group__course_name", "user__full_name")
     )
 
@@ -711,6 +714,7 @@ def send_due_monthly_reports(
     group_id: int | None = None,
     dry_run: bool = False,
     force: bool = False,
+    organization_type: str | None = None,
 ) -> list[dict[str, Any]]:
     run_date = normalize_run_date(run_date)
     month_start = normalize_month_start(month_start or run_date)
@@ -725,6 +729,8 @@ def send_due_monthly_reports(
         group__lessons__lesson_date__gte=month_start,
         group__lessons__lesson_date__lte=month_end,
     ).distinct()
+    if organization_type:
+        students = students.filter(organization_type=organization_type)
 
     if student_id is not None:
         students = students.filter(pk=student_id)
