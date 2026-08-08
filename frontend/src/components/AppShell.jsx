@@ -127,12 +127,9 @@ function SidebarIntro({ eyebrow, title, description, compact = false, children }
 
 function MentorSidebar({ currentPath, mentorGroups, user, onLogout }) {
   const currentGroupId = extractCurrentGroupId(currentPath);
-  const intro = buildSidebarIntro("MENTOR", currentPath);
 
   return (
     <>
-      <SidebarIntro eyebrow={intro.eyebrow} title={intro.title} description={intro.description} compact />
-
       <div className="mentor-sidebar__section">
         <a className="mentor-sidebar__back" href="#/groups" title="Вернуться к списку групп">
           <span className="mentor-sidebar__back-icon">←</span>

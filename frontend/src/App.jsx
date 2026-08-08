@@ -16,6 +16,7 @@ import { LoginPage } from "./pages/LoginPage";
 import { MentorsPage } from "./pages/MentorsPage";
 import { ReportConversationsPage } from "./pages/ReportConversationsPage";
 import { StudentsPage } from "./pages/StudentsPage";
+import { StudentGradebookPage } from "./pages/StudentGradebookPage";
 
 const emptyMeta = {
   study_day_choices: [],
@@ -34,18 +35,18 @@ function defaultPathForUser(user) {
   return "/dashboard";
 }
 
-function organizationForUser(user) {
+function organizationForUser(user, { useStored = true } = {}) {
   const organizations = user?.organizations || [];
   if (organizations.length === 1) {
     return organizations[0];
   }
 
   const storedOrganization = window.localStorage.getItem("tabel.organization");
-  if (storedOrganization && organizations.includes(storedOrganization)) {
+  if (useStored && storedOrganization && organizations.includes(storedOrganization)) {
     return storedOrganization;
   }
 
-  return organizations[0] || "academy";
+  return organizations.includes("academy") ? "academy" : organizations[0] || "academy";
 }
 
 function NotFoundPage() {
@@ -245,7 +246,7 @@ function App() {
         session: nextSession,
       });
       const finalSession = { ...nextSession, user };
-      const userOrganization = organizationForUser(user);
+      const userOrganization = organizationForUser(user, { useStored: false });
       window.localStorage.setItem("tabel.organization", userOrganization);
       setOrganization(userOrganization);
       updateSession(finalSession);
@@ -280,6 +281,7 @@ function App() {
   function renderAuthenticatedPage() {
     const gradebookRoute = matchPath("/groups/:id/gradebook", route.path);
     const groupRoute = matchPath("/groups/:id", route.path);
+    const studentGradebookRoute = matchPath("/students/:id/gradebook", route.path);
 
     if (route.path === "/dashboard") {
       if (session.user.role === "MENTOR") {
@@ -311,6 +313,18 @@ function App() {
 
     if (route.path === "/students") {
       return <StudentsPage api={callApi} sessionToken={session.access} user={session.user} onNotice={setNotice} organization={organization} />;
+    }
+
+    if (studentGradebookRoute) {
+      return (
+        <StudentGradebookPage
+          api={callApi}
+          sessionToken={session.access}
+          studentId={Number(studentGradebookRoute.id)}
+          routeMonth={route.query.month}
+          onNotice={setNotice}
+        />
+      );
     }
 
     if (route.path === "/archive") {

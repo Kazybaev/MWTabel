@@ -1,7 +1,8 @@
 .git
 .gitignore
-.env
-.env.example
+.env*
+.codex-run-*.cmd
+*.pid
 .venv
 venv
 __pycache__
@@ -19,3 +20,4 @@ build
 docs
 staticfiles
 media
+AGENTS.md

@@ -193,6 +193,9 @@ export function StudentsPage({ api, sessionToken, user, onNotice, organization =
                   </a>
                   {user.role === "ADMIN" ? (
                     <>
+                      <a className="button button--primary" href={`#/students/${student.id}/gradebook`}>
+                        Табель студента
+                      </a>
                       <Button variant="ghost" onClick={() => openEdit(student)}>
                         Изменить
                       </Button>

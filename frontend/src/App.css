@@ -32,11 +32,11 @@
 
 .sidebar--mentor {
   height: 100vh;
-  padding: 12px 10px;
+  padding: 8px 10px;
   background:
     radial-gradient(circle at top left, rgba(56, 160, 134, 0.24), transparent 34%),
     linear-gradient(180deg, #113f37 0%, #102c27 100%);
-  gap: 12px;
+  gap: 8px;
   overflow: hidden;
 }
 
@@ -49,7 +49,7 @@
 
 .mentor-sidebar__section {
   display: grid;
-  gap: 10px;
+  gap: 7px;
 }
 
 .mentor-sidebar__section--grow {
@@ -69,9 +69,9 @@
   display: flex;
   align-items: center;
   gap: 10px;
-  min-height: 46px;
-  padding: 0 14px;
-  border-radius: 16px;
+  min-height: 40px;
+  padding: 0 12px;
+  border-radius: 13px;
   color: #fff6e7;
   text-decoration: none;
   background: rgba(255, 255, 255, 0.07);
@@ -85,7 +85,7 @@
 
 .mentor-sidebar__group-list {
   display: grid;
-  gap: 10px;
+  gap: 6px;
   min-height: 0;
   overflow-y: auto;
   padding-right: 4px;
@@ -93,9 +93,9 @@
 
 .mentor-sidebar__group-link {
   display: grid;
-  gap: 6px;
-  padding: 14px;
-  border-radius: 18px;
+  gap: 4px;
+  padding: 9px 10px;
+  border-radius: 14px;
   text-decoration: none;
   color: rgba(248, 240, 223, 0.94);
   background: rgba(255, 255, 255, 0.05);
@@ -111,24 +111,25 @@
 }
 
 .mentor-sidebar__group-link strong {
-  font-size: 0.98rem;
+  font-size: 0.9rem;
   color: #fff8ea;
 }
 
 .mentor-sidebar__group-link small {
+  font-size: 0.76rem;
   color: rgba(245, 242, 230, 0.72);
 }
 
 .mentor-sidebar__group-pill {
   justify-self: start;
-  min-height: 30px;
-  padding: 0 10px;
+  min-height: 24px;
+  padding: 0 8px;
   border-radius: 999px;
   display: inline-flex;
   align-items: center;
   background: rgba(236, 231, 216, 0.16);
   color: #f7e7bd;
-  font-size: 0.82rem;
+  font-size: 0.74rem;
   font-weight: 700;
 }
 
@@ -215,6 +216,52 @@
 .college-gradebook th, .college-gradebook td { min-width: 44px; padding: 10px 8px; border-right: 1px solid var(--line); border-bottom: 1px solid var(--line); text-align: center; }
 .college-gradebook th:first-child { position: sticky; left: 0; z-index: 2; min-width: 190px; text-align: left; background: #f7f5ee; box-shadow: 4px 0 10px rgba(25, 50, 45, 0.06); }
 .college-gradebook thead th { background: #f7f5ee; font-size: 0.78rem; }
+.student-admin-gradebook,
+.student-admin-gradebook .panel,
+.student-admin-gradebook .panel__header,
+.student-admin-gradebook .panel__body {
+  width: 100%;
+  min-width: 0;
+  max-width: 100%;
+}
+.student-admin-gradebook .panel { overflow: hidden; }
+.student-gradebook__table th:first-child { min-width: 220px; }
+.student-gradebook__table th:first-child strong,
+.student-gradebook__table th:first-child small { display: block; }
+.student-gradebook__table th:first-child small { margin-top: 4px; color: var(--muted); font-weight: 600; }
+.student-gradebook__table thead th span,
+.student-gradebook__table thead th small { display: block; }
+.student-gradebook__table thead th small { margin-top: 3px; color: var(--muted); }
+.student-gradebook__table td { padding: 5px; }
+.student-gradebook__table .grade-select { min-width: 44px; width: 100%; }
+.student-gradebook__table thead th { position: sticky; top: 0; z-index: 3; }
+.student-gradebook__table thead th:first-child { z-index: 5; }
+.student-gradebook__table th:not(:first-child),
+.student-gradebook__table td { min-width: 54px; }
+.college-gradebook__scroll--admin {
+  width: 100%;
+  max-width: 100%;
+  padding-bottom: 10px;
+  overflow-x: scroll;
+  overflow-y: auto;
+  scrollbar-gutter: stable;
+  scrollbar-width: auto;
+  scrollbar-color: #64748b #e2e8f0;
+  overscroll-behavior-inline: contain;
+  scroll-behavior: smooth;
+}
+.college-gradebook__scroll--admin::-webkit-scrollbar { height: 14px; }
+.college-gradebook__scroll--admin::-webkit-scrollbar-track { border-radius: 999px; background: #e2e8f0; }
+.college-gradebook__scroll--admin::-webkit-scrollbar-thumb { border: 3px solid #e2e8f0; border-radius: 999px; background: #64748b; }
+.student-gradebook__hint { display: flex; align-items: center; justify-content: space-between; gap: 14px; margin-bottom: 10px; color: var(--muted); font-size: 0.88rem; }
+.student-gradebook__hint strong { color: #475569; }
+.student-gradebook__savebar { display: flex; align-items: center; justify-content: flex-end; gap: 16px; margin-top: 18px; }
+.student-gradebook__savebar span { color: var(--muted); font-weight: 700; }
+
+@media (max-width: 720px) {
+  .student-gradebook__hint { align-items: flex-start; flex-direction: column; gap: 4px; }
+  .student-gradebook__savebar { align-items: stretch; flex-direction: column; }
+}
 .login-portal-picker { display: grid; gap: 12px; }
 .login-portal-picker p { margin: 0 0 4px; font-weight: 700; color: var(--ink-strong); }
 
@@ -285,6 +332,25 @@
 
 .mentor-sidebar__profile {
   margin-top: 0;
+}
+
+.sidebar--mentor .mentor-sidebar__profile {
+  gap: 4px;
+  padding: 8px;
+  border-radius: 13px;
+}
+
+.sidebar--mentor .mentor-sidebar__profile .badge {
+  min-height: 26px;
+  font-size: 0.74rem;
+}
+
+.sidebar--mentor .mentor-sidebar__profile strong {
+  font-size: 0.84rem;
+}
+
+.sidebar--mentor .mentor-sidebar__profile .button {
+  min-height: 32px;
 }
 
 .workspace {

@@ -101,12 +101,19 @@ export function GroupDetailPage({ api, sessionToken, groupId, user, onNotice }) 
           ) : data.students.length ? (
             <div className="list-stack">
               {data.students.map((student) => (
-                <div key={student.id} className="list-card">
+                <div key={student.id} className="list-card list-card--actions">
                   <div>
                     <strong>{student.full_name}</strong>
                     <p>{student.parent_name}</p>
                   </div>
-                  <Badge tone="blue">{student.parent_phone}</Badge>
+                  <div className="list-card__actions">
+                    <Badge tone="blue">{student.parent_phone}</Badge>
+                    {user.role === "ADMIN" ? (
+                      <a className="button button--ghost" href={`#/students/${student.id}/gradebook`}>
+                        Табель студента
+                      </a>
+                    ) : null}
+                  </div>
                 </div>
               ))}
             </div>

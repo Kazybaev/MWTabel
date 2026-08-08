@@ -1,5 +1,8 @@
 .env
-.env.example
+.env.*
+!.env.example
+*.pid
+.codex-run-*.cmd
 .venv/
 venv/
 .local/

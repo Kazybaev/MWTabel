@@ -342,6 +342,8 @@ class GroupListSerializer(serializers.ModelSerializer):
         annotated_count = getattr(obj, "students_count", None)
         if annotated_count is not None:
             return annotated_count
+        if obj.organization_type == "college":
+            return obj.college_students.filter(archived_at__isnull=True).count()
         return obj.students.filter(archived_at__isnull=True).count()
 
 
@@ -387,13 +389,16 @@ class GroupDetailSerializer(serializers.ModelSerializer):
         annotated_count = getattr(obj, "students_count", None)
         if annotated_count is not None:
             return annotated_count
+        if obj.organization_type == "college":
+            return obj.college_students.filter(archived_at__isnull=True).count()
         return obj.students.filter(archived_at__isnull=True).count()
 
     def get_students(self, obj):
         request = self.context.get("request")
         if request and request.user.role == User.ROLE_STUDENT:
             return []
-        queryset = obj.students.filter(archived_at__isnull=True).select_related("user")
+        relation = obj.college_students if obj.organization_type == "college" else obj.students
+        queryset = relation.filter(archived_at__isnull=True).select_related("user")
         return StudentProfileSerializer(queryset, many=True).data
 
     def get_lessons(self, obj):

@@ -217,8 +217,12 @@ def build_gradebook_payload(group, user, selected_month):
     study_weekdays = get_group_study_weekdays(group)
 
     if can_edit:
-        students = list(group.students.filter(archived_at__isnull=True).select_related("user"))
-    elif hasattr(user, "student_profile") and user.student_profile.group_id == group.pk:
+        relation = group.college_students if group.organization_type == "college" else group.students
+        students = list(relation.filter(archived_at__isnull=True).select_related("user"))
+    elif hasattr(user, "student_profile") and (
+        user.student_profile.group_id == group.pk
+        or user.student_profile.college_groups.filter(pk=group.pk).exists()
+    ):
         students = [user.student_profile]
     else:
         raise PermissionDenied
@@ -441,10 +445,132 @@ def build_student_monthly_stats(student_profile, *, organization_type=None, grou
     return monthly_stats
 
 
+def groups_for_student_gradebook(student, organization_type):
+    return (
+        Group.objects.filter(
+            Q(pk=student.group_id) | Q(college_students=student),
+            organization_type=organization_type,
+        )
+        .select_related("mentor__user")
+        .distinct()
+        .order_by("course_name", "pk")
+    )
+
+
+def annotate_group_students_count(queryset, organization_type):
+    relation = "college_students" if organization_type == "college" else "students"
+    return queryset.annotate(
+        students_count=Count(
+            relation,
+            filter=Q(**{f"{relation}__archived_at__isnull": True}),
+            distinct=True,
+        )
+    )
+
+
+def build_admin_student_gradebook_payload(student, organization_type, selected_month):
+    month_start, month_end = month_bounds(selected_month)
+    previous_month, next_month = month_navigation(selected_month)
+    days = build_month_days(selected_month)
+    groups = list(groups_for_student_gradebook(student, organization_type))
+    rows = []
+
+    for group in groups:
+        lessons_by_date = {}
+        for lesson in group.lessons.filter(
+            lesson_date__gte=month_start,
+            lesson_date__lte=month_end,
+        ).order_by("lesson_date", "pk"):
+            lessons_by_date.setdefault(lesson.lesson_date, lesson)
+        records = LessonRecord.objects.filter(
+            student=student,
+            lesson_id__in=[lesson.pk for lesson in lessons_by_date.values()],
+        ).select_related("lesson")
+        grades = {record.lesson.lesson_date.isoformat(): record.grade for record in records}
+        numeric_grades = [int(grade) for grade in grades.values() if grade.isdigit()]
+        rows.append(
+            {
+                "group_id": group.pk,
+                "subject": group.course_name,
+                "mentor_name": group.mentor.user.full_name,
+                "grades": {day.isoformat(): grades.get(day.isoformat(), "") for day in days},
+                "lesson_dates": [day.isoformat() for day in lessons_by_date],
+                "grades_count": len(numeric_grades),
+                "attendance_count": len([grade for grade in grades.values() if grade and not is_absence_grade(grade)]),
+                "absence_count": len([grade for grade in grades.values() if is_absence_grade(grade)]),
+                "average_grade": round(sum(numeric_grades) / len(numeric_grades), 1) if numeric_grades else None,
+            }
+        )
+
+    return {
+        "student": {
+            "id": student.pk,
+            "full_name": student.user.full_name,
+            "username": student.user.username,
+            "parent_name": student.parent_name,
+            "parent_phone": str(student.parent_phone),
+            "college_course": student.college_course,
+            "organization_type": student.organization_type,
+            "groups_count": len(groups),
+        },
+        "month": selected_month.strftime("%Y-%m"),
+        "previous_month": previous_month.strftime("%Y-%m"),
+        "next_month": next_month.strftime("%Y-%m"),
+        "days": [
+            {
+                "date": day.isoformat(),
+                "day": day.day,
+                "weekday": ["Пн", "Вт", "Ср", "Чт", "Пт", "Сб", "Вс"][day.weekday()],
+                "is_weekend": day.weekday() >= 5,
+                "is_today": day == timezone.localdate(),
+            }
+            for day in days
+        ],
+        "rows": rows,
+        "grade_choices": serialize_choice_pairs(LessonRecord.GRADE_CHOICES),
+        "can_edit": True,
+    }
+
+
+def save_admin_student_gradebook(student, organization_type, selected_month, entries):
+    if not isinstance(entries, list):
+        raise ValidationError({"entries": "Список оценок должен быть массивом."})
+    groups = list(groups_for_student_gradebook(student, organization_type))
+    groups_by_id = {group.pk: group for group in groups}
+    invalid_group_ids = {
+        entry.get("group") for entry in entries if entry.get("group") not in groups_by_id
+    }
+    if invalid_group_ids:
+        raise ValidationError({"entries": "Одна из групп не назначена выбранному студенту."})
+
+    month_start, month_end = month_bounds(selected_month)
+    month_days = build_month_days(selected_month)
+    for group in groups:
+        lessons_by_date = {}
+        for lesson in group.lessons.filter(
+            lesson_date__gte=month_start,
+            lesson_date__lte=month_end,
+        ).order_by("lesson_date", "pk"):
+            lessons_by_date.setdefault(lesson.lesson_date, lesson)
+        group_entries = [
+            {
+                "student": student.pk,
+                "date": entry.get("date"),
+                "grade": entry.get("grade", ""),
+            }
+            for entry in entries
+            if entry.get("group") == group.pk
+        ]
+        save_gradebook_entries(group, [student], month_days, lessons_by_date, group_entries)
+
+    dispatch_due_reports_after_gradebook_save([student], selected_month)
+
+
 def build_dashboard_payload(user, organization_type=None):
     if user.role == User.ROLE_ADMIN:
-        groups = groups_for_user(user).filter(organization_type=organization_type).annotate(
-            students_count=Count("students", filter=Q(students__archived_at__isnull=True))
+        groups = annotate_group_students_count(
+            groups_for_user(user).filter(organization_type=organization_type),
+            organization_type,
         )
         mentors = MentorProfile.objects.filter(organization_type=organization_type).select_related("user").annotate(groups_count=Count("groups"))
         students = students_for_user(user).filter(organization_type=organization_type)
@@ -465,8 +591,9 @@ def build_dashboard_payload(user, organization_type=None):
         }
 
     if user.role == User.ROLE_MENTOR and hasattr(user, "mentor_profile"):
-        groups = groups_for_user(user).filter(organization_type=organization_type).annotate(
-            students_count=Count("students", filter=Q(students__archived_at__isnull=True))
+        groups = annotate_group_students_count(
+            groups_for_user(user).filter(organization_type=organization_type),
+            organization_type,
         )
         students = students_for_user(user).filter(organization_type=organization_type)
         lessons = lessons_for_user(user).filter(group__organization_type=organization_type)
@@ -904,6 +1031,28 @@ class StudentProfileViewSet(viewsets.ModelViewSet):
         instance.user.delete()
         return Response(status=status.HTTP_204_NO_CONTENT)
 
+    @action(detail=True, methods=["get", "post"])
+    def gradebook(self, request, pk=None):
+        if request.user.role != User.ROLE_ADMIN:
+            raise PermissionDenied
+        organization = organization_for_request(request)
+        student = self.get_object()
+
+        if request.method == "GET":
+            selected_month = get_selected_month(request)
+            return Response(build_admin_student_gradebook_payload(student, organization, selected_month))
+
+        selected_month = parse_month_value(request.data.get("month"))
+        if selected_month is None:
+            raise ValidationError({"month": "Неверный формат месяца. Используйте YYYY-MM."})
+        save_admin_student_gradebook(
+            student,
+            organization,
+            selected_month,
+            request.data.get("entries", []),
+        )
+        return Response(build_admin_student_gradebook_payload(student, organization, selected_month))
+
     @action(detail=True, methods=["post"])
     def archive(self, request, pk=None):
         if request.user.role != User.ROLE_ADMIN:
@@ -945,8 +1094,9 @@ class StudentProfileViewSet(viewsets.ModelViewSet):
 class GroupViewSet(viewsets.ModelViewSet):
     def get_queryset(self):
         organization = organization_for_request(self.request)
-        return groups_for_user(self.request.user).filter(organization_type=organization).annotate(
-            students_count=Count("students", filter=Q(students__archived_at__isnull=True))
+        return annotate_group_students_count(
+            groups_for_user(self.request.user).filter(organization_type=organization),
+            organization,
         )
 
     def get_serializer_class(self):

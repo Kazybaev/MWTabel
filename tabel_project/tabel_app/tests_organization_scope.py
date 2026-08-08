@@ -99,6 +99,78 @@ class OrganizationScopeApiTests(APITestCase):
         self.assertEqual(math_month["grades_count"], 1)
         self.assertEqual(english_month["grades_count"], 1)
 
+    def test_admin_can_view_and_edit_one_student_gradebook_across_all_groups(self):
+        second_group = Group.objects.create(
+            course_name="English",
+            mentor=self.college_mentor,
+            study_days=Group.MON_FRI,
+            organization_type=ORGANIZATION_COLLEGE,
+        )
+        student_user = User.objects.create_user(
+            username="personal-gradebook-student",
+            password="pass-12345",
+            full_name="Personal Gradebook Student",
+            role=User.ROLE_STUDENT,
+        )
+        student = StudentProfile.objects.create(
+            user=student_user,
+            parent_name="Parent",
+            parent_phone="+996700000005",
+            group=self.college_group,
+            organization_type=ORGANIZATION_COLLEGE,
+            college_course="1",
+        )
+        student.college_groups.set([self.college_group, second_group])
+        month = timezone.localdate().replace(day=1)
+        math_lesson = Lesson.objects.create(group=self.college_group, lesson_date=month, topic="Math")
+        english_lesson = Lesson.objects.create(group=second_group, lesson_date=month.replace(day=2), topic="English")
+
+        response = self.client.get(
+            f"/api/students/{student.pk}/gradebook/?month={month:%Y-%m}",
+            **self.headers(ORGANIZATION_COLLEGE),
+        )
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.assertEqual(response.data["student"]["full_name"], "Personal Gradebook Student")
+        self.assertSetEqual({row["subject"] for row in response.data["rows"]}, {"Math", "English"})
+
+        group_detail = self.client.get(
+            f"/api/groups/{second_group.pk}/",
+            **self.headers(ORGANIZATION_COLLEGE),
+        )
+        self.assertEqual(group_detail.status_code, status.HTTP_200_OK)
+        self.assertEqual(group_detail.data["students_count"], 1)
+        self.assertEqual(group_detail.data["students"][0]["id"], student.pk)
+
+        group_gradebook = self.client.get(
+            f"/api/groups/{second_group.pk}/gradebook/?month={month:%Y-%m}",
+            **self.headers(ORGANIZATION_COLLEGE),
+        )
+        self.assertEqual(group_gradebook.status_code, status.HTTP_200_OK)
+        self.assertEqual(group_gradebook.data["rows"][0]["student"]["id"], student.pk)
+
+        response = self.client.post(
+            f"/api/students/{student.pk}/gradebook/",
+            {
+                "month": month.strftime("%Y-%m"),
+                "entries": [
+                    {"group": self.college_group.pk, "date": month.isoformat(), "grade": "5"},
+                    {"group": second_group.pk, "date": month.replace(day=2).isoformat(), "grade": "Н"},
+                ],
+            },
+            format="json",
+            **self.headers(ORGANIZATION_COLLEGE),
+        )
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.assertTrue(LessonRecord.objects.filter(student=student, lesson=math_lesson, grade="5").exists())
+        self.assertTrue(LessonRecord.objects.filter(student=student, lesson=english_lesson, grade="Н").exists())
+
+        self.client.force_authenticate(self.college_mentor.user)
+        forbidden = self.client.get(
+            f"/api/students/{student.pk}/gradebook/?month={month:%Y-%m}",
+            **self.headers(ORGANIZATION_COLLEGE),
+        )
+        self.assertEqual(forbidden.status_code, status.HTTP_403_FORBIDDEN)
+
     def test_user_without_college_access_receives_403(self):
         student_user = User.objects.create_user(username="academy-student", password="pass-12345", full_name="Academy Student", role=User.ROLE_STUDENT)
         StudentProfile.objects.create(user=student_user, parent_name="Parent", parent_phone="+996700000002", group=self.academy_group, organization_type=ORGANIZATION_ACADEMY)
