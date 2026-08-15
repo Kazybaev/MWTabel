@@ -43,6 +43,66 @@ class OrganizationScopeApiTests(APITestCase):
         response = self.client.post("/api/groups/", {"course_name": "Invalid", "mentor": self.academy_mentor.pk, "study_days": Group.MON_FRI}, format="json", **self.headers(ORGANIZATION_COLLEGE))
         self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
 
+    def test_admin_can_create_one_mentor_for_both_organizations(self):
+        response = self.client.post(
+            "/api/mentors/",
+            {
+                "full_name": "Shared Mentor",
+                "username": "shared-mentor",
+                "password": "pass-12345",
+                "email": "shared@example.com",
+                "organizations": [ORGANIZATION_ACADEMY, ORGANIZATION_COLLEGE],
+            },
+            format="json",
+            **self.headers(ORGANIZATION_ACADEMY),
+        )
+
+        self.assertEqual(response.status_code, status.HTTP_201_CREATED)
+        mentor = MentorProfile.objects.get(user__username="shared-mentor")
+        self.assertSetEqual(
+            set(mentor.user.organization_accesses.values_list("organization_type", flat=True)),
+            {ORGANIZATION_ACADEMY, ORGANIZATION_COLLEGE},
+        )
+
+        academy = self.client.get("/api/mentors/", **self.headers(ORGANIZATION_ACADEMY))
+        college = self.client.get("/api/mentors/", **self.headers(ORGANIZATION_COLLEGE))
+        self.assertIn(mentor.pk, {item["id"] for item in academy.data})
+        self.assertIn(mentor.pk, {item["id"] for item in college.data})
+
+        college_group = self.client.post(
+            "/api/groups/",
+            {
+                "course_name": "Shared Mentor Subject",
+                "mentor": mentor.pk,
+                "study_days": Group.MON_FRI,
+            },
+            format="json",
+            **self.headers(ORGANIZATION_COLLEGE),
+        )
+        self.assertEqual(college_group.status_code, status.HTTP_201_CREATED)
+
+        self.client.force_authenticate(mentor.user)
+        me = self.client.get("/api/me/")
+        self.assertSetEqual(set(me.data["organizations"]), {ORGANIZATION_ACADEMY, ORGANIZATION_COLLEGE})
+        mentor_college_groups = self.client.get("/api/groups/", **self.headers(ORGANIZATION_COLLEGE))
+        self.assertEqual([item["course_name"] for item in mentor_college_groups.data], ["Shared Mentor Subject"])
+
+    def test_admin_can_update_mentor_organization_access(self):
+        response = self.client.patch(
+            f"/api/mentors/{self.academy_mentor.pk}/",
+            {"organizations": [ORGANIZATION_ACADEMY, ORGANIZATION_COLLEGE]},
+            format="json",
+            **self.headers(ORGANIZATION_ACADEMY),
+        )
+
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.assertSetEqual(
+            set(self.academy_mentor.user.organization_accesses.values_list("organization_type", flat=True)),
+            {ORGANIZATION_ACADEMY, ORGANIZATION_COLLEGE},
+        )
+        college = self.client.get("/api/mentors/", **self.headers(ORGANIZATION_COLLEGE))
+        self.assertIn(self.academy_mentor.pk, {item["id"] for item in college.data})
+
     def test_student_cannot_use_group_from_other_organization(self):
         response = self.client.post("/api/students/", {"full_name": "Wrong Student", "username": "wrong-student", "password": "pass-12345", "email": "", "parent_name": "Parent", "parent_phone": "+996700000001", "group": self.academy_group.pk}, format="json", **self.headers(ORGANIZATION_COLLEGE))
         self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)

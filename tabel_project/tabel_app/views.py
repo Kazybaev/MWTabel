@@ -961,7 +961,15 @@ class MentorProfileViewSet(viewsets.ModelViewSet):
 
     def get_queryset(self):
         organization = organization_for_request(self.request)
-        queryset = MentorProfile.objects.filter(organization_type=organization).select_related("user").annotate(groups_count=Count("groups"))
+        queryset = (
+            MentorProfile.objects.filter(
+                Q(user__organization_accesses__organization_type=organization)
+                | Q(user__organization_accesses__isnull=True, organization_type=organization)
+            )
+            .select_related("user")
+            .distinct()
+            .annotate(groups_count=Count("groups", filter=Q(groups__organization_type=organization), distinct=True))
+        )
         if self.request.user.role == User.ROLE_ADMIN:
             return queryset
         if self.request.user.role == User.ROLE_MENTOR and hasattr(self.request.user, "mentor_profile"):

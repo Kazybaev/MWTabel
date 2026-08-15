@@ -125,7 +125,7 @@ function SidebarIntro({ eyebrow, title, description, compact = false, children }
   );
 }
 
-function MentorSidebar({ currentPath, mentorGroups, user, onLogout }) {
+function MentorSidebar({ currentPath, mentorGroups, user, onLogout, organization, onOrganizationChange }) {
   const currentGroupId = extractCurrentGroupId(currentPath);
 
   return (
@@ -135,6 +135,26 @@ function MentorSidebar({ currentPath, mentorGroups, user, onLogout }) {
           <span className="mentor-sidebar__back-icon">←</span>
           <span>Список групп</span>
         </a>
+        {user.organizations?.length > 1 ? (
+          <div className="organization-switcher" role="group" aria-label="Выбор организации">
+            <button
+              type="button"
+              className={organization === "academy" ? "organization-switcher__button organization-switcher__button--active" : "organization-switcher__button"}
+              aria-pressed={organization === "academy"}
+              onClick={() => onOrganizationChange?.("academy")}
+            >
+              Академия
+            </button>
+            <button
+              type="button"
+              className={organization === "college" ? "organization-switcher__button organization-switcher__button--active" : "organization-switcher__button"}
+              aria-pressed={organization === "college"}
+              onClick={() => onOrganizationChange?.("college")}
+            >
+              Колледж
+            </button>
+          </div>
+        ) : null}
       </div>
 
       <div className="mentor-sidebar__section mentor-sidebar__section--grow">
@@ -220,7 +240,14 @@ export function AppShell({
         </div>
 
         {isMentor ? (
-          <MentorSidebar currentPath={currentPath} mentorGroups={mentorGroups} user={user} onLogout={onLogout} />
+          <MentorSidebar
+            currentPath={currentPath}
+            mentorGroups={mentorGroups}
+            user={user}
+            onLogout={onLogout}
+            organization={organization}
+            onOrganizationChange={onOrganizationChange}
+          />
         ) : (
           <>
             <SidebarIntro eyebrow={intro.eyebrow} title={intro.title} description={intro.description}>

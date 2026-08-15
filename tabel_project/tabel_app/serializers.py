@@ -3,7 +3,16 @@ from django.db import transaction
 from rest_framework import serializers
 from rest_framework_simplejwt.tokens import RefreshToken
 
-from .models import Group, Lesson, LessonRecord, MentorProfile, StudentProfile, User
+from .models import (
+    Group,
+    Lesson,
+    LessonRecord,
+    MentorProfile,
+    ORGANIZATION_CHOICES,
+    StudentProfile,
+    User,
+    UserOrganizationAccess,
+)
 from .organization import allowed_organizations_for_user, organization_for_request
 
 
@@ -137,10 +146,15 @@ class MentorProfileSerializer(serializers.ModelSerializer):
     email = serializers.EmailField(source="user.email", allow_blank=True, required=False)
     password = serializers.CharField(write_only=True, required=False, allow_blank=True, style={"input_type": "password"})
     groups_count = serializers.SerializerMethodField()
+    organizations = serializers.ListField(
+        child=serializers.ChoiceField(choices=ORGANIZATION_CHOICES),
+        allow_empty=False,
+        required=False,
+    )
 
     class Meta:
         model = MentorProfile
-        fields = ["id", "user_id", "full_name", "username", "email", "password", "groups_count", "organization_type"]
+        fields = ["id", "user_id", "full_name", "username", "email", "password", "groups_count", "organization_type", "organizations"]
         read_only_fields = ["organization_type"]
 
     def get_groups_count(self, obj):
@@ -157,14 +171,47 @@ class MentorProfileSerializer(serializers.ModelSerializer):
             raise serializers.ValidationError("Пользователь с таким логином уже существует.")
         return value
 
+    def validate_organizations(self, value):
+        organizations = list(dict.fromkeys(value))
+        if self.instance:
+            assigned = set(self.instance.groups.values_list("organization_type", flat=True))
+            missing = assigned.difference(organizations)
+            if missing:
+                labels = dict(ORGANIZATION_CHOICES)
+                names = ", ".join(labels[item] for item in sorted(missing))
+                raise serializers.ValidationError(
+                    f"Нельзя убрать доступ: у ментора остались группы в разделе {names}."
+                )
+        return organizations
+
     def validate(self, attrs):
         if not self.instance and not attrs.get("password"):
             raise serializers.ValidationError({"password": "Пароль обязателен для нового ментора."})
         return attrs
 
+    def to_representation(self, instance):
+        data = super().to_representation(instance)
+        data["organizations"] = allowed_organizations_for_user(instance.user)
+        return data
+
+    @staticmethod
+    def sync_organizations(user, organizations):
+        UserOrganizationAccess.objects.filter(user=user).exclude(
+            organization_type__in=organizations
+        ).delete()
+        UserOrganizationAccess.objects.bulk_create(
+            [
+                UserOrganizationAccess(user=user, organization_type=organization)
+                for organization in organizations
+            ],
+            ignore_conflicts=True,
+        )
+
+    @transaction.atomic
     def create(self, validated_data):
         password = validated_data.pop("password")
         user_data = validated_data.pop("user")
+        organizations = validated_data.pop("organizations", [validated_data.get("organization_type", "academy")])
         user = User.objects.create_user(
             username=user_data["username"],
             password=password,
@@ -172,11 +219,15 @@ class MentorProfileSerializer(serializers.ModelSerializer):
             email=user_data.get("email", ""),
             role=User.ROLE_MENTOR,
         )
-        return MentorProfile.objects.create(user=user, **validated_data)
+        mentor = MentorProfile.objects.create(user=user, **validated_data)
+        self.sync_organizations(user, organizations)
+        return mentor
 
+    @transaction.atomic
     def update(self, instance, validated_data):
         password = validated_data.pop("password", "")
         user_data = validated_data.pop("user", {})
+        organizations = validated_data.pop("organizations", None)
         user = instance.user
         user.full_name = user_data.get("full_name", user.full_name)
         user.username = user_data.get("username", user.username)
@@ -185,6 +236,8 @@ class MentorProfileSerializer(serializers.ModelSerializer):
         if password:
             user.set_password(password)
         user.save()
+        if organizations is not None:
+            self.sync_organizations(user, organizations)
         return instance
 
 
@@ -355,7 +408,7 @@ class GroupWriteSerializer(serializers.ModelSerializer):
 
     def validate_mentor(self, mentor):
         request = self.context.get("request")
-        if request and mentor.organization_type != organization_for_request(request):
+        if request and organization_for_request(request) not in allowed_organizations_for_user(mentor.user):
             raise serializers.ValidationError("Ментор относится к другой организации.")
         return mentor
 

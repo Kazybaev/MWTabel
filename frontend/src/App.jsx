@@ -332,7 +332,7 @@ function App() {
     }
 
     if (route.path === "/mentors") {
-      return <MentorsPage api={callApi} sessionToken={session.access} user={session.user} onNotice={setNotice} />;
+      return <MentorsPage api={callApi} sessionToken={session.access} user={session.user} onNotice={setNotice} organization={organization} />;
     }
 
     if (route.path === "/reports") {
