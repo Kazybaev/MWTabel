@@ -1,21 +1,39 @@
-import { useEffect, useState } from "react";
+import { useState } from "react";
 
-import { Badge, Button, NoticeBanner } from "./Ui";
+import { NoticeBanner } from "./Ui";
 import { formatRole } from "../lib/format";
 
+const navigationIcons = {
+  dashboard: <><rect x="3" y="3" width="7" height="7" rx="2" /><rect x="14" y="3" width="7" height="7" rx="2" /><rect x="3" y="14" width="7" height="7" rx="2" /><rect x="14" y="14" width="7" height="7" rx="2" /></>,
+  groups: <><path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2" /><circle cx="9" cy="7" r="4" /><path d="M22 21v-2a4 4 0 0 0-3-3.87M16 3.13a4 4 0 0 1 0 7.75" /></>,
+  students: <><circle cx="12" cy="8" r="4" /><path d="M4 21a8 8 0 0 1 16 0" /><path d="M17.5 4.5 19 6l3-3" /></>,
+  archive: <><path d="M3 6h18" /><path d="M5 6v14h14V6" /><path d="M8 3h8l2 3H6l2-3Z" /><path d="M9 11h6" /></>,
+  mentors: <><path d="m3 10 9-5 9 5-9 5-9-5Z" /><path d="M7 12.2V16c2.8 2.2 7.2 2.2 10 0v-3.8" /><path d="M21 10v6" /></>,
+  reports: <><path d="M21 15a4 4 0 0 1-4 4H8l-5 3V7a4 4 0 0 1 4-4h10a4 4 0 0 1 4 4v8Z" /><path d="M8 9h8M8 13h5" /></>,
+  grades: <><path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20" /><path d="M6.5 2H20v20H6.5A2.5 2.5 0 0 1 4 19.5v-15A2.5 2.5 0 0 1 6.5 2Z" /><path d="m9 10 2 2 4-4" /></>,
+};
+
+function NavigationIcon({ name }) {
+  return (
+    <svg className="sidebar__link-icon" viewBox="0 0 24 24" aria-hidden="true">
+      {navigationIcons[name]}
+    </svg>
+  );
+}
+
 function buildNavigation(role) {
-  const items = [{ label: "Дашборд", href: "/dashboard" }];
+  const items = [{ label: "Дашборд", href: "/dashboard", icon: "dashboard" }];
 
   if (role === "ADMIN") {
-    items.push({ label: "Группы", href: "/groups" });
-    items.push({ label: "Студенты", href: "/students" });
-    items.push({ label: "Архив", href: "/archive" });
-    items.push({ label: "Менторы", href: "/mentors" });
-    items.push({ label: "Отчёты", href: "/reports" });
+    items.push({ label: "Группы", href: "/groups", icon: "groups" });
+    items.push({ label: "Студенты", href: "/students", icon: "students" });
+    items.push({ label: "Архив", href: "/archive", icon: "archive" });
+    items.push({ label: "Менторы", href: "/mentors", icon: "mentors" });
+    items.push({ label: "Отчёты", href: "/reports", icon: "reports" });
   }
 
   if (role === "STUDENT") {
-    items.push({ label: "Мои оценки", href: "/my-grades" });
+    items.push({ label: "Мои оценки", href: "/my-grades", icon: "grades" });
   }
 
   return items;
@@ -125,14 +143,38 @@ function SidebarIntro({ eyebrow, title, description, compact = false, children }
   );
 }
 
-function MentorSidebar({ currentPath, mentorGroups, user, onLogout, organization, onOrganizationChange }) {
+function LogoutButton({ onLogout }) {
+  return (
+    <div className="sidebar__logout-zone">
+      <button
+        type="button"
+        className="logout-control"
+        onClick={onLogout}
+        aria-label="Выйти из системы"
+        title="Выйти из системы"
+      >
+        <span className="logout-control__icon" aria-hidden="true">
+          <svg viewBox="0 0 24 24">
+            <path className="logout-control__door" d="M14 4.5V3H5v18h9v-1.5" />
+            <path className="logout-control__arrow" d="M10 12h11m-4-4 4 4-4 4" />
+          </svg>
+        </span>
+        <span className="logout-control__label">Выйти</span>
+      </button>
+    </div>
+  );
+}
+
+function MentorSidebar({ currentPath, mentorGroups, user, onLogout, organization, onOrganizationChange, onNavigate }) {
   const currentGroupId = extractCurrentGroupId(currentPath);
 
   return (
     <>
       <div className="mentor-sidebar__section">
-        <a className="mentor-sidebar__back" href="#/groups" title="Вернуться к списку групп">
-          <span className="mentor-sidebar__back-icon">←</span>
+        <a className="mentor-sidebar__back" href="#/groups" title="Вернуться к списку групп" onClick={onNavigate}>
+          <svg className="mentor-sidebar__back-icon" viewBox="0 0 24 24" aria-hidden="true">
+            <path d="m15 18-6-6 6-6" />
+          </svg>
           <span>Список групп</span>
         </a>
         {user.organizations?.length > 1 ? (
@@ -169,6 +211,7 @@ function MentorSidebar({ currentPath, mentorGroups, user, onLogout, organization
                   className={`mentor-sidebar__group-link ${active ? "mentor-sidebar__group-link--active" : ""}`.trim()}
                   href={`#/groups/${group.id}/gradebook`}
                   title={group.course_name}
+                  onClick={onNavigate}
                 >
                   <strong>{group.course_name}</strong>
                   <small>{group.study_days_label}</small>
@@ -182,13 +225,7 @@ function MentorSidebar({ currentPath, mentorGroups, user, onLogout, organization
         </div>
       </div>
 
-      <div className="sidebar__profile mentor-sidebar__profile">
-        <Badge tone="teal">{formatRole(user.role)}</Badge>
-        <strong>{user.full_name}</strong>
-        <Button variant="ghost" onClick={onLogout}>
-          Выйти
-        </Button>
-      </div>
+      <LogoutButton onLogout={onLogout} />
     </>
   );
 }
@@ -217,10 +254,6 @@ export function AppShell({
   const sidebarClassName = ["sidebar", isMentor ? "sidebar--mentor" : ""].filter(Boolean).join(" ");
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
 
-  useEffect(() => {
-    setMobileMenuOpen(false);
-  }, [currentPath]);
-
   return (
     <div className={shellClassName}>
       <div
@@ -235,7 +268,7 @@ export function AppShell({
             <strong>{user.full_name}</strong>
           </div>
           <button type="button" className="sidebar__mobile-close" onClick={() => setMobileMenuOpen(false)}>
-            ×
+            <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6 6l12 12M18 6 6 18" /></svg>
           </button>
         </div>
 
@@ -247,6 +280,7 @@ export function AppShell({
             onLogout={onLogout}
             organization={organization}
             onOrganizationChange={onOrganizationChange}
+            onNavigate={() => setMobileMenuOpen(false)}
           />
         ) : (
           <>
@@ -279,19 +313,15 @@ export function AppShell({
                   key={item.href}
                   className={`sidebar__link ${isActiveLink(currentPath, item.href) ? "sidebar__link--active" : ""}`}
                   href={`#${item.href}`}
+                  onClick={() => setMobileMenuOpen(false)}
                 >
-                  {item.label}
+                  <NavigationIcon name={item.icon} />
+                  <span>{item.label}</span>
                 </a>
               ))}
             </nav>
 
-            <div className="sidebar__profile">
-              <Badge tone="teal">{formatRole(user.role)}</Badge>
-              <strong>{user.full_name}</strong>
-              <Button variant="ghost" onClick={onLogout}>
-                Выйти
-              </Button>
-            </div>
+            <LogoutButton onLogout={onLogout} />
           </>
         )}
       </aside>
@@ -304,7 +334,7 @@ export function AppShell({
             <header className="topbar">
               <div className="topbar__heading">
                 <button type="button" className="topbar__menu-button" onClick={() => setMobileMenuOpen(true)}>
-                  ☰
+                  <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 7h16M4 12h16M4 17h16" /></svg>
                 </button>
                 <p className="topbar__eyebrow">{topbarEyebrow}</p>
                 <h2>{topbarTitle}</h2>
