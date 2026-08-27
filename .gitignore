@@ -1,6 +1,5 @@
 .env
 .env.*
-!.env.example
 *.pid
 .codex-run-*.cmd
 .venv/
