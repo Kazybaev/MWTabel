@@ -134,6 +134,16 @@ def get_student_trigger_lesson(student: StudentProfile, month_start: date) -> Le
     )
 
 
+def get_student_report_groups(student: StudentProfile) -> list[Group]:
+    """Return all subjects for a college student, or the single academy group."""
+    if student.organization_type != "college":
+        return [student.group]
+    groups = list(student.college_groups.all().select_related("mentor__user").order_by("course_name", "id"))
+    if student.group_id and all(group.pk != student.group_id for group in groups):
+        groups.insert(0, student.group)
+    return groups or [student.group]
+
+
 def has_student_trigger_lesson_record(student: StudentProfile, trigger_lesson: Lesson) -> bool:
     return LessonRecord.objects.filter(student=student, lesson=trigger_lesson).exists()
 
@@ -142,10 +152,10 @@ def get_month_lessons_for_student(student: StudentProfile, month_start: date) ->
     month_start, month_end = month_bounds(month_start)
     return list(
         Lesson.objects.filter(
-            group=student.group,
+            group__in=get_student_report_groups(student),
             lesson_date__gte=month_start,
             lesson_date__lte=month_end,
-        ).order_by("lesson_date", "id")
+        ).select_related("group").order_by("lesson_date", "id")
     )
 
 
@@ -154,7 +164,7 @@ def get_month_records_for_student(student: StudentProfile, month_start: date) ->
     return list(
         LessonRecord.objects.filter(
             student=student,
-            lesson__group=student.group,
+            lesson__group__in=get_student_report_groups(student),
             lesson__lesson_date__gte=month_start,
             lesson__lesson_date__lte=month_end,
         )
@@ -172,7 +182,11 @@ def build_student_month_report(
     month_start, month_end = month_bounds(month_start)
     lessons = get_month_lessons_for_student(student, month_start)
     records = get_month_records_for_student(student, month_start)
-    trigger_date = trigger_date or get_group_last_lesson_date(student.group, month_start)
+    groups = get_student_report_groups(student)
+    trigger_date = trigger_date or max(
+        (get_group_last_lesson_date(group, month_start) for group in groups),
+        default=None,
+    )
 
     records_by_lesson_id = {record.lesson_id: record for record in records}
     numeric_grades: list[int] = []
@@ -205,6 +219,8 @@ def build_student_month_report(
         lesson_rows.append(
             {
                 "lesson_id": lesson.pk,
+                "group_id": lesson.group_id,
+                "group_name": lesson.group.course_name,
                 "date": lesson.lesson_date.isoformat(),
                 "topic": lesson.topic,
                 "grade": grade,
@@ -242,6 +258,17 @@ def build_student_month_report(
             "study_days_label": student.group.get_study_days_display(),
             "description": student.group.description,
         },
+        "groups": [
+            {
+                "id": group.pk,
+                "course_name": group.course_name,
+                "study_days": group.study_days,
+                "study_days_label": group.get_study_days_display(),
+                "description": group.description,
+                "mentor_name": group.mentor.user.full_name,
+            }
+            for group in groups
+        ],
         "mentor": {
             "id": student.group.mentor_id,
             "full_name": mentor_user.full_name,

@@ -9,6 +9,7 @@ const STATUS = {
   pending: { label: "В очереди", tone: "blue" },
   succeeded: { label: "Отправлено", tone: "teal" },
   failed: { label: "Ошибка", tone: "sand" },
+  not_sent: { label: "Не отправлялся", tone: "neutral" },
 };
 
 function formatDateTime(value) {
@@ -75,7 +76,9 @@ export function ReportConversationsPage({ api, sessionToken, user }) {
   const [selectedStudentId, setSelectedStudentId] = useState(null);
   const [confirmSendAll, setConfirmSendAll] = useState(false);
   const [sendingAll, setSendingAll] = useState(false);
+  const [sendingStudentId, setSendingStudentId] = useState(null);
   const [sendAllResult, setSendAllResult] = useState(null);
+  const [sendStudentResult, setSendStudentResult] = useState("");
   const [sendAllError, setSendAllError] = useState("");
   const messagesRef = useRef(null);
   const conversations = useResource(() => api("/api/reports/conversations/"), [sessionToken]);
@@ -120,6 +123,25 @@ export function ReportConversationsPage({ api, sessionToken, user }) {
     }
   }
 
+  async function handleSendStudent(studentId) {
+    setSendingStudentId(studentId);
+    setSendAllError("");
+    setSendStudentResult("");
+    try {
+      const result = await api("/api/reports/send/", {
+        method: "POST",
+        body: { student_id: studentId },
+      });
+      setSendStudentResult(result.status === "sent" ? "Отчёт отправлен." : `Результат: ${result.status || "обработано"}.`);
+      conversations.reload();
+      if (activeStudentId === studentId) detail.reload();
+    } catch (error) {
+      setSendAllError(error.message || "Не удалось отправить отчёт.");
+    } finally {
+      setSendingStudentId(null);
+    }
+  }
+
   if (user.role !== "ADMIN") {
     return <EmptyState title="Нет доступа" description="Чат отчётов доступен только администратору." />;
   }
@@ -152,6 +174,7 @@ export function ReportConversationsPage({ api, sessionToken, user }) {
           <button type="button" onClick={() => setSendAllResult(null)}>Закрыть</button>
         </div>
       ) : null}
+      {sendStudentResult ? <div className="report-chat__bulk-result" role="status">{sendStudentResult}</div> : null}
 
       <div className="report-chat">
         <aside className="report-chat__sidebar" aria-label="Диалоги отчётов">
@@ -173,21 +196,30 @@ export function ReportConversationsPage({ api, sessionToken, user }) {
 
           <div className="report-chat__conversation-list">
             {filtered.map((item) => (
-              <button
-                key={item.student_id}
-                type="button"
-                className={`report-chat__conversation ${activeStudentId === item.student_id ? "report-chat__conversation--active" : ""}`.trim()}
-                onClick={() => setSelectedStudentId(item.student_id)}
-                aria-pressed={activeStudentId === item.student_id}
-              >
-                <span className="report-chat__avatar" aria-hidden="true">{item.student_name.slice(0, 1).toLocaleUpperCase("ru-RU")}</span>
-                <span className="report-chat__conversation-copy">
-                  <strong>{item.student_name}</strong>
-                  <small>{item.group_name} · {item.parent_phone}</small>
-                  <span>{formatMonthLabel(item.latest_month)} · {item.messages_count} сообщ.</span>
-                </span>
-                <StatusBadge value={item.latest_status} />
-              </button>
+              <div className="report-chat__conversation-row" key={item.student_id}>
+                <button
+                  type="button"
+                  className={`report-chat__conversation ${activeStudentId === item.student_id ? "report-chat__conversation--active" : ""}`.trim()}
+                  onClick={() => setSelectedStudentId(item.student_id)}
+                  aria-pressed={activeStudentId === item.student_id}
+                >
+                  <span className="report-chat__avatar" aria-hidden="true">{item.student_name.slice(0, 1).toLocaleUpperCase("ru-RU")}</span>
+                  <span className="report-chat__conversation-copy">
+                    <strong>{item.student_name}</strong>
+                    <small>{item.group_name} · {item.parent_phone}</small>
+                    <span>{formatMonthLabel(item.latest_month)} · {item.messages_count} сообщ.</span>
+                  </span>
+                  <StatusBadge value={item.latest_status} />
+                </button>
+                <Button
+                  variant="secondary"
+                  className="report-chat__send-one"
+                  onClick={() => handleSendStudent(item.student_id)}
+                  disabled={sendingAll || sendingStudentId !== null}
+                >
+                  {sendingStudentId === item.student_id ? "Отправляем…" : "Отправить"}
+                </Button>
+              </div>
             ))}
             {!filtered.length ? <EmptyState title="Ничего не найдено" description="Измените поиск или фильтр." /> : null}
           </div>
@@ -227,8 +259,7 @@ export function ReportConversationsPage({ api, sessionToken, user }) {
       >
         <div className="report-chat__bulk-warning">
           <strong>Вы точно хотите продолжить?</strong>
-          <p>Отчёт уйдёт родителям всех активных студентов, даже если сегодня не последний урок, оценка ещё не выставлена или отчёт за этот месяц уже отправлялся.</p>
-          <p>Повторное нажатие может повторно отправить сообщение каждому родителю.</p>
+          <p>Отчёт уйдёт родителям всех активных студентов по очереди. Отправка не зависит от даты урока и предыдущих отправок.</p>
           {sendAllError ? <p className="report-chat__bulk-error" role="alert">{sendAllError}</p> : null}
         </div>
       </Modal>

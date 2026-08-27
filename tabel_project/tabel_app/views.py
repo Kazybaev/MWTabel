@@ -366,24 +366,8 @@ def save_gradebook_entries(group, students, month_days, lessons_by_date, entries
 
 
 def dispatch_due_reports_after_gradebook_save(students, selected_month):
-    if (os.getenv("AUTO_MONTHLY_REPORTS", "false") or "").strip().lower() not in {"1", "true", "yes", "on"}:
-        return []
-
-    results = []
-    run_date = timezone.localdate()
-    for student in students:
-        result = send_student_month_report(
-            student,
-            run_date=run_date,
-            month_start=selected_month,
-            force=False,
-        )
-        if result["status"] != "skipped" or result.get("reason") in {
-            "already_sent",
-            "send_already_in_progress",
-        }:
-            results.append(result)
-    return results
+    # Reports are intentionally sent only by an explicit action in the Reports section.
+    return []
 
 
 def build_student_monthly_stats(student_profile, *, organization_type=None, group_id=None):
@@ -846,6 +830,8 @@ class ReportDispatchAPIView(APIView):
             month_start=month_start,
             dry_run=serializer.validated_data.get("dry_run", False),
             force=serializer.validated_data.get("force", True),
+            bypass_schedule=True,
+            resend_succeeded=True,
         )
         response_status = status.HTTP_502_BAD_GATEWAY if result.get("status") == "failed" else status.HTTP_200_OK
         return Response(result, status=response_status)

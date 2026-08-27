@@ -8,7 +8,7 @@ from typing import Any
 from django.db import transaction
 from django.utils import timezone
 
-from .models import MonthlyStudentReportAttempt, MonthlyStudentReportDispatch
+from .models import MonthlyStudentReportAttempt, MonthlyStudentReportDispatch, StudentProfile
 
 
 logger = logging.getLogger("tabel_app.reports")
@@ -17,6 +17,7 @@ logger = logging.getLogger("tabel_app.reports")
 def build_report_message_text(payload: dict[str, Any]) -> str:
     student = payload.get("student", {})
     group = payload.get("group", {})
+    groups = payload.get("groups") or []
     period = payload.get("period", {})
     summary = payload.get("summary", {})
     month_names = {
@@ -50,7 +51,7 @@ def build_report_message_text(payload: dict[str, Any]) -> str:
     return (
         "Саламатсызбы!\n"
         "Сиз менен Motion Web IT академиясынан байланышып жатабыз ✅\n\n"
-        f"Сизге {group.get('course_name', '')}-группанын студенти "
+        f"Сизге {', '.join(item.get('course_name', '') for item in groups) or group.get('course_name', '')}-группанын студенти "
         f"{student.get('full_name', '')} окуусу тууралуу маалымат бере кетели 📊\n\n"
         f"{month_label} айындагы баалары:\n"
         f"{grades_text}\n\n"
@@ -194,6 +195,25 @@ def build_report_conversations(organization_type: str | None = None) -> list[dic
                 "latest_month": dispatch.month.strftime("%Y-%m"),
                 "latest_at": attempt.updated_at,
                 "messages_count": message_counts[dispatch.student_id],
+            }
+        )
+    student_queryset = StudentProfile.objects.select_related("user", "group").filter(archived_at__isnull=True)
+    if organization_type:
+        student_queryset = student_queryset.filter(organization_type=organization_type)
+    for student in student_queryset:
+        if student.pk in seen_students:
+            continue
+        conversations.append(
+            {
+                "student_id": student.pk,
+                "student_name": student.user.full_name,
+                "parent_name": student.parent_name,
+                "parent_phone": str(student.parent_phone),
+                "group_name": student.group.course_name,
+                "latest_status": "not_sent",
+                "latest_month": None,
+                "latest_at": None,
+                "messages_count": 0,
             }
         )
     return conversations
