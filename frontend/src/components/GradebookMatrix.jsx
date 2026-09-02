@@ -123,7 +123,7 @@ export function GradebookMatrix({
           </div>
         }
       >
-        <div className={`gradebook-scroll gradebook-scroll--matrix ${lockedMode ? "gradebook-scroll--locked" : ""}`.trim()}>
+        <div className={`gradebook-scroll gradebook-scroll--matrix ${lockedMode ? "gradebook-scroll--locked" : ""} ${studentMode ? "gradebook-scroll--student" : ""}`.trim()} tabIndex="0" aria-label="Таблица оценок с горизонтальной прокруткой">
           <table className="gradebook-table">
             <thead>
               <tr>

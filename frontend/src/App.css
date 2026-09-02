@@ -3343,6 +3343,19 @@
     height: auto;
   }
 
+  /* The student table must remain its own horizontal scroll area on mobile. */
+  .gradebook-scroll--locked,
+  .gradebook-scroll--mentor {
+    width: 100%;
+    min-width: 0;
+    max-width: 100%;
+    overflow-x: auto;
+    overflow-y: auto;
+    touch-action: pan-x pan-y;
+    overscroll-behavior: contain;
+    -webkit-overflow-scrolling: touch;
+  }
+
   .panel__body,
   .panel__header,
   .modal-card__body,
@@ -5952,6 +5965,24 @@ summary {
   background: rgba(17, 114, 93, 0.1);
 }
 
+/* Keep the student's month matrix scrollable even when the page shell is responsive. */
+.gradebook-scroll--student {
+  display: block;
+  width: 100%;
+  min-width: 0;
+  max-width: 100%;
+  overflow-x: auto !important;
+  overflow-y: auto !important;
+  overscroll-behavior: contain;
+  touch-action: pan-x pan-y;
+  -webkit-overflow-scrolling: touch;
+}
+
+.gradebook-scroll--student .gradebook-table {
+  width: max-content;
+  min-width: max-content;
+}
+
 /* Group gradebook needs its own vertical scroll so all students stay visible. */
 .gradebook-layout--admin.gradebook-layout--locked,
 .gradebook-layout--mentor.gradebook-layout--locked {
@@ -5959,6 +5990,47 @@ summary {
   height: calc(100vh - 92px);
   grid-template-rows: auto minmax(0, 1fr);
   overflow: hidden;
+}
+
+/* Academy student's "My grades" page: keep the calendar controls visible and
+   let only the wide matrix scroll horizontally. */
+.gradebook-layout--student {
+  min-width: 0;
+  max-width: 100%;
+  height: auto;
+  min-height: 0;
+  overflow: visible;
+}
+
+.gradebook-layout--student .gradebook-panel,
+.gradebook-layout--student .gradebook-panel .panel__body {
+  min-width: 0;
+  max-width: 100%;
+  height: auto;
+  min-height: 0;
+  overflow: visible;
+}
+
+.gradebook-layout--student .gradebook-panel .panel__header {
+  position: relative;
+  z-index: 4;
+}
+
+.gradebook-layout--student .gradebook-scroll--student {
+  display: block;
+  width: 100%;
+  max-width: 100%;
+  max-height: min(62dvh, 680px);
+  overflow-x: auto !important;
+  overflow-y: auto !important;
+  overscroll-behavior: contain;
+  touch-action: pan-x pan-y;
+  -webkit-overflow-scrolling: touch;
+}
+
+.gradebook-layout--student .gradebook-scroll--student .gradebook-table {
+  width: max-content;
+  min-width: max-content;
 }
 
 .gradebook-layout--admin .hero-band,
