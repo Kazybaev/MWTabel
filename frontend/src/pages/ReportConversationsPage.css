@@ -14,6 +14,17 @@
 .report-chat__bulk-result button { margin-left: auto; min-height: 44px; border: 0; background: transparent; color: #176b5b; font-weight: 800; cursor: pointer; }
 .report-chat__bulk-warning { display: grid; gap: 10px; color: var(--ink-strong); line-height: 1.55; }
 .report-chat__bulk-warning p { margin: 0; }
+.report-chat__dispatch-card { gap: 14px; }
+.report-chat__dispatch-modes { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 8px; }
+.report-chat__dispatch-modes button { min-height: 44px; padding: 8px 10px; border: 1px solid rgba(23,107,91,.16); border-radius: 10px; background: rgba(255,255,255,.7); color: var(--ink-strong); font-weight: 800; cursor: pointer; }
+.report-chat__dispatch-modes button.is-active { border-color: #176b5b; background: #eaf4f0; color: #176b5b; box-shadow: inset 0 0 0 1px #176b5b; }
+.report-chat__month-field { display: grid; gap: 6px; color: var(--ink-soft); font-size: .82rem; font-weight: 800; }
+.report-chat__month-field input { min-height: 44px; padding: 0 12px; border: 1px solid rgba(15,54,47,.14); border-radius: 10px; background: #fff; color: var(--ink-strong); }
+.report-chat__dispatch-list { max-height: 220px; display: grid; gap: 6px; overflow: auto; padding: 4px; }
+.report-chat__dispatch-list label { min-height: 44px; display: flex; align-items: center; gap: 10px; padding: 7px 9px; border-radius: 9px; background: rgba(234,244,240,.72); cursor: pointer; }
+.report-chat__dispatch-list input { width: 18px; height: 18px; accent-color: #176b5b; }
+.report-chat__dispatch-list label span { display: grid; gap: 2px; }
+.report-chat__dispatch-list small { color: var(--ink-soft); font-size: .76rem; }
 .report-chat__bulk-error { padding: 10px 12px; border-radius: 10px; background: #fbe7e4; color: #7b281c; }
 .report-chat { min-height: 0; display: grid; grid-template-columns: minmax(0, 1fr) minmax(300px, 360px); grid-template-areas: "thread sidebar"; overflow: hidden; border: 1px solid rgba(15,54,47,.1); border-radius: 20px; background: rgba(255,251,243,.96); box-shadow: 0 14px 34px rgba(25,58,51,.08); }
 .report-chat__sidebar { grid-area: sidebar; min-width: 0; min-height: 0; display: grid; grid-template-rows: auto minmax(0,1fr); overflow: hidden; border-left: 1px solid rgba(15,54,47,.1); background: #fbf8f0; }
@@ -59,6 +70,7 @@
 .report-chat__technical pre { max-height: 240px; overflow: auto; padding: 12px; border-radius: 10px; background: #142923; color: #eaf4f0; white-space: pre-wrap; overflow-wrap: anywhere; }
 @media (max-width: 980px) { .report-chat { grid-template-columns: minmax(0,1fr) 280px; } .report-chat__filters { grid-template-columns: 1fr; } .report-chat__conversation { grid-template-columns: 38px minmax(0,1fr); } .report-chat__conversation > .badge { grid-column: 2; justify-self: start; } .report-chat__summary { grid-template-columns: repeat(2,minmax(0,1fr)); } }
 @media (max-width: 720px) { .workspace--reports { height: auto; min-height: 100vh; overflow: visible; } .workspace--reports .workspace__stage, .workspace--reports .workspace__stage-inner, .workspace--reports .workspace__content { height: auto; min-height: 0; overflow: visible; } .report-chat-page { height: auto; min-height: auto; overflow: visible; } .report-chat-page__header { align-items: stretch; flex-direction: column; } .report-chat-page__actions .button { flex: 1 1 180px; } .report-chat { min-height: 0; grid-template-columns: 1fr; grid-template-areas: "sidebar" "thread"; overflow: visible; } .report-chat__sidebar { height: 420px; max-height: 52dvh; border-left: 0; border-bottom: 1px solid rgba(15,54,47,.1); } .report-chat__thread { height: min(70dvh, 680px); min-height: 480px; overflow: hidden; } .report-chat__message { width: 100%; } .report-chat__thread-head { align-items: flex-start; flex-direction: column; } .report-chat__thread-head div:last-child { text-align: left; } }
+@media (max-width: 520px) { .report-chat__dispatch-modes { grid-template-columns: 1fr; } }
 @media (prefers-reduced-motion: reduce) { .report-chat__conversation { transition: none; } }
 
 /* Liquid Glass layer for the report workspace. */
@@ -122,3 +134,28 @@
   backdrop-filter: blur(16px) saturate(140%);
   box-shadow: inset 0 1px 0 rgba(255,255,255,.8), 0 10px 24px rgba(21,58,50,.08);
 }
+
+:root[data-theme="dark"] .report-chat-page__header p { color: #79b9ff; }
+:root[data-theme="dark"] .report-chat {
+  border-color: rgba(126, 190, 255, .28);
+  background: linear-gradient(145deg, rgba(19, 45, 82, .82), rgba(8, 24, 51, .72));
+  box-shadow: 0 18px 50px rgba(2, 8, 34, .4), inset 0 1px rgba(190, 225, 255, .12);
+}
+:root[data-theme="dark"] .report-chat__sidebar { border-color: rgba(126, 190, 255, .2); background: rgba(10, 29, 58, .62); }
+:root[data-theme="dark"] .report-chat__thread { background: rgba(8, 22, 46, .7); }
+:root[data-theme="dark"] .report-chat__thread-head { border-color: rgba(126, 190, 255, .18); background: rgba(20, 48, 87, .66); box-shadow: inset 0 1px rgba(205, 233, 255, .12); }
+:root[data-theme="dark"] .report-chat__filters input,
+:root[data-theme="dark"] .report-chat__filters select { border-color: rgba(126, 190, 255, .3); background: rgba(7, 25, 53, .8); box-shadow: inset 0 1px rgba(205, 233, 255, .1); color: #e8f4ff; }
+:root[data-theme="dark"] .report-chat__conversation { border-color: rgba(126, 190, 255, .16); background: rgba(40, 86, 143, .2); box-shadow: inset 0 1px rgba(205, 233, 255, .1); }
+:root[data-theme="dark"] .report-chat__conversation:hover,
+:root[data-theme="dark"] .report-chat__conversation--active { border-color: rgba(130, 211, 255, .55); background: linear-gradient(145deg, rgba(50, 112, 220, .46), rgba(22, 163, 222, .25)); box-shadow: 0 10px 24px rgba(13, 69, 180, .26), inset 0 1px rgba(235, 249, 255, .18); }
+:root[data-theme="dark"] .report-chat__avatar { border-color: rgba(163, 221, 255, .5); background: radial-gradient(circle at 32% 18%, #2e9cff, #2e28d8 68%); box-shadow: 0 8px 20px rgba(27, 104, 235, .34), inset 0 1px rgba(255,255,255,.38); }
+:root[data-theme="dark"] .report-chat__message { border-color: rgba(143, 204, 255, .3); background: linear-gradient(145deg, rgba(30, 67, 112, .78), rgba(13, 35, 70, .78)); box-shadow: 0 14px 34px rgba(2, 10, 38, .3), inset 0 1px rgba(215, 239, 255, .12); }
+:root[data-theme="dark"] .report-chat__summary span,
+:root[data-theme="dark"] .report-chat__text { border-color: rgba(132, 201, 255, .22); background: linear-gradient(145deg, rgba(36, 88, 148, .45), rgba(15, 42, 83, .48)); box-shadow: inset 0 1px rgba(220, 241, 255, .1); color: #d9edff; }
+:root[data-theme="dark"] .report-chat__text { color: #e3f2ff; }
+:root[data-theme="dark"] .report-chat__bulk-result { border-color: rgba(119, 207, 255, .35); background: rgba(21, 83, 151, .42); color: #e4f4ff; }
+:root[data-theme="dark"] .report-chat__bulk-result button { color: #9bd5ff; }
+:root[data-theme="dark"] .report-chat__technical pre { background: #071a35; color: #d9edff; }
+:root[data-theme="dark"] .report-chat__messages,
+:root[data-theme="dark"] .report-chat__conversation-list { scrollbar-color: rgba(67, 157, 255, .72) rgba(40, 91, 160, .25); }

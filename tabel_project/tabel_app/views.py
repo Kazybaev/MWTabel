@@ -40,6 +40,7 @@ from .serializers import (
     LoginSerializer,
     MentorProfileSerializer,
     ReportDispatchRequestSerializer,
+    ReportBulkDispatchRequestSerializer,
     ReportDeliveryCallbackSerializer,
     StudentProfileSerializer,
     UserSerializer,
@@ -884,6 +885,28 @@ class ReportConversationListAPIView(APIView):
         return Response(build_report_conversations(organization_for_request(request)))
 
 
+class ReportDispatchOptionsAPIView(APIView):
+    permission_classes = [permissions.IsAuthenticated]
+
+    def get(self, request, *args, **kwargs):
+        if request.user.role != User.ROLE_ADMIN:
+            raise PermissionDenied
+        organization = organization_for_request(request)
+        groups = Group.objects.filter(
+            organization_type=organization,
+        ).filter(
+            Q(students__archived_at__isnull=True) | Q(college_students__archived_at__isnull=True),
+        ).distinct().order_by("course_name", "pk")
+        students = students_for_user(request.user).filter(
+            organization_type=organization,
+        ).order_by("group__course_name", "user__full_name")
+        return Response({
+            "organization": organization,
+            "groups": [{"id": group.pk, "name": group.course_name} for group in groups],
+            "students": [{"id": student.pk, "name": student.user.full_name, "group_id": student.group_id, "group_name": student.group.course_name} for student in students],
+        })
+
+
 class ForceSendAllReportsAPIView(APIView):
     permission_classes = [permissions.IsAuthenticated]
 
@@ -891,11 +914,18 @@ class ForceSendAllReportsAPIView(APIView):
         if request.user.role != User.ROLE_ADMIN:
             raise PermissionDenied
 
-        month_start = timezone.localdate().replace(day=1)
+        serializer = ReportBulkDispatchRequestSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        organization = organization_for_request(request)
+        if organization == "college" and (serializer.validated_data.get("group_ids") or serializer.validated_data.get("student_ids")):
+            raise ValidationError("Для колледжа доступна только отправка всем студентам.")
+        month_start = parse_month_value(serializer.validated_data.get("month")) or timezone.localdate().replace(day=1)
         results = force_send_all_monthly_reports(
             run_date=timezone.localdate(),
             month_start=month_start,
-            organization_type=organization_for_request(request),
+            organization_type=organization,
+            group_ids=serializer.validated_data.get("group_ids"),
+            student_ids=serializer.validated_data.get("student_ids"),
         )
         sent_count = sum(result.get("status") == "sent" for result in results)
         failed_count = sum(result.get("status") == "failed" for result in results)

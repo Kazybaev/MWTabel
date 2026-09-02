@@ -84,6 +84,12 @@ class ReportDispatchRequestSerializer(serializers.Serializer):
     force = serializers.BooleanField(required=False, default=False)
 
 
+class ReportBulkDispatchRequestSerializer(serializers.Serializer):
+    month = serializers.RegexField(regex=r"^\d{4}-\d{2}$", required=False)
+    group_ids = serializers.ListField(child=serializers.IntegerField(min_value=1), required=False, allow_empty=False)
+    student_ids = serializers.ListField(child=serializers.IntegerField(min_value=1), required=False, allow_empty=False)
+
+
 class ReportDeliveryCallbackSerializer(serializers.Serializer):
     delivery = serializers.JSONField()
     meta_status_code = serializers.IntegerField(min_value=100, max_value=599)

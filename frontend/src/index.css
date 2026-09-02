@@ -26,6 +26,21 @@
   -moz-osx-font-smoothing: grayscale;
 }
 
+:root[data-theme="dark"] {
+  --ink-strong: #e8f2ff;
+  --ink-soft: #9fb3cc;
+  --paper: #081426;
+  --paper-deep: #0d1d34;
+  --line: rgba(150, 190, 235, 0.14);
+  --glass-surface: rgba(15, 36, 64, 0.72);
+  --glass-surface-strong: rgba(19, 46, 80, 0.86);
+  --glass-surface-soft: rgba(26, 57, 94, 0.52);
+  --glass-border: rgba(150, 202, 255, 0.25);
+  --glass-line: rgba(110, 177, 242, 0.24);
+  --glass-shadow: 0 18px 50px rgba(0, 4, 16, 0.34), inset 0 1px 0 rgba(190, 224, 255, 0.1);
+  --glass-shadow-raised: 0 24px 62px rgba(0, 4, 16, 0.46), inset 0 1px 0 rgba(190, 224, 255, 0.14);
+}
+
 * {
   box-sizing: border-box;
 }
@@ -43,6 +58,13 @@ body {
   background:
     radial-gradient(circle at top left, rgba(36, 131, 109, 0.13), transparent 20%),
     linear-gradient(180deg, #faf5e8 0%, #f2ecdc 100%);
+}
+
+:root[data-theme="dark"] body {
+  color: var(--ink-soft);
+  background:
+    radial-gradient(circle at top left, rgba(38, 116, 190, 0.28), transparent 28%),
+    linear-gradient(180deg, #0b1d35 0%, #06101f 100%);
 }
 
 body,

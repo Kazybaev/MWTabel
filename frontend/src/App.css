@@ -4921,6 +4921,155 @@ summary {
   }
 }
 
+/* Night mode: deep blue glass surfaces matching the project mark. */
+:root[data-theme="dark"] .workspace,
+:root[data-theme="dark"] .workspace__stage,
+:root[data-theme="dark"] .workspace__stage-inner {
+  background: transparent;
+}
+:root[data-theme="dark"] .topbar,
+:root[data-theme="dark"] .panel,
+:root[data-theme="dark"] .modal-card,
+:root[data-theme="dark"] .metric-card,
+:root[data-theme="dark"] .dashboard-panel,
+:root[data-theme="dark"] .list-card,
+:root[data-theme="dark"] .table-wrap {
+  background: var(--glass-surface);
+  border-color: var(--glass-border);
+  color: var(--ink-strong);
+  box-shadow: var(--glass-shadow);
+}
+:root[data-theme="dark"] .topbar__user,
+:root[data-theme="dark"] .panel__description,
+:root[data-theme="dark"] .metric-card__label,
+:root[data-theme="dark"] .dashboard-panel__description,
+:root[data-theme="dark"] .list-card p {
+  color: var(--ink-soft);
+}
+:root[data-theme="dark"] input,
+:root[data-theme="dark"] select,
+:root[data-theme="dark"] textarea {
+  background: rgba(7, 22, 42, 0.82);
+  border-color: var(--glass-border);
+  color: var(--ink-strong);
+}
+.theme-toggle {
+  min-height: 44px;
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  padding: 0 12px;
+  border: 1px solid rgba(29, 122, 101, 0.2);
+  border-radius: 999px;
+  background: var(--glass-surface-soft);
+  color: var(--ink-strong);
+  cursor: pointer;
+  transition: background .2s ease, border-color .2s ease, transform .2s ease;
+}
+.theme-toggle:hover { transform: translateY(-1px); border-color: rgba(29, 122, 101, 0.42); }
+.theme-toggle:focus-visible { outline: 3px solid rgba(68, 154, 230, 0.38); outline-offset: 2px; }
+.theme-toggle svg { width: 18px; height: 18px; fill: none; stroke: currentColor; stroke-width: 1.8; stroke-linecap: round; stroke-linejoin: round; }
+:root[data-theme="dark"] .theme-toggle { border-color: rgba(126, 195, 255, 0.28); background: rgba(36, 91, 148, 0.42); color: #d7edff; }
+
+:root[data-theme="dark"] .sidebar {
+  background:
+    radial-gradient(circle at 15% 8%, rgba(42, 102, 255, 0.58), transparent 33%),
+    radial-gradient(circle at 88% 82%, rgba(16, 197, 255, 0.2), transparent 38%),
+    linear-gradient(165deg, #171a92 0%, #10145e 48%, #071b48 100%);
+  border-right-color: rgba(125, 183, 255, 0.28);
+  box-shadow: inset -1px 0 rgba(168, 213, 255, 0.16), 14px 0 42px rgba(3, 10, 47, 0.34);
+}
+:root[data-theme="dark"] .sidebar__link,
+:root[data-theme="dark"] .mentor-sidebar__back,
+:root[data-theme="dark"] .mentor-sidebar__group-link,
+:root[data-theme="dark"] .organization-switcher {
+  border-color: rgba(152, 205, 255, 0.2);
+  background: linear-gradient(120deg, rgba(108, 163, 255, 0.2), rgba(20, 61, 143, 0.18));
+  box-shadow: inset 0 1px rgba(220, 240, 255, 0.12), 0 10px 24px rgba(2, 8, 49, 0.22);
+}
+:root[data-theme="dark"] .sidebar__link:hover,
+:root[data-theme="dark"] .sidebar__link--active,
+:root[data-theme="dark"] .mentor-sidebar__group-link:hover,
+:root[data-theme="dark"] .mentor-sidebar__group-link--active {
+  border-color: rgba(153, 222, 255, 0.52);
+  background: linear-gradient(120deg, rgba(76, 143, 255, 0.42), rgba(27, 179, 239, 0.25));
+  box-shadow: 0 0 22px rgba(48, 146, 255, 0.22), inset 0 1px rgba(235, 249, 255, 0.22);
+}
+:root[data-theme="dark"] .button--primary,
+:root[data-theme="dark"] .button--danger {
+  border-color: rgba(152, 219, 255, 0.5);
+  background: linear-gradient(135deg, #3041ed 0%, #197fd9 52%, #16b9e9 100%);
+  color: #f4fbff;
+  box-shadow: 0 10px 24px rgba(24, 85, 226, 0.34), inset 0 1px rgba(255, 255, 255, 0.3);
+}
+:root[data-theme="dark"] .button--ghost,
+:root[data-theme="dark"] .button--secondary {
+  border-color: rgba(132, 194, 255, 0.3);
+  background: rgba(42, 91, 164, 0.35);
+  color: #d9efff;
+}
+:root[data-theme="dark"] .badge--teal,
+:root[data-theme="dark"] .metric-card--teal { border-color: rgba(105, 192, 255, .34); background: rgba(35, 115, 201, .3); color: #a8dcff; }
+:root[data-theme="dark"] .badge--blue,
+:root[data-theme="dark"] .metric-card--blue { border-color: rgba(124, 181, 255, .34); background: rgba(42, 81, 190, .32); color: #c2dcff; }
+:root[data-theme="dark"] .dashboard-page--admin .hero-band,
+:root[data-theme="dark"] .hero-band,
+:root[data-theme="dark"] .dashboard-panel,
+:root[data-theme="dark"] .dashboard-panel .list-card {
+  border-color: rgba(126, 190, 255, .25);
+  background: linear-gradient(145deg, rgba(24, 62, 111, .72), rgba(10, 30, 64, .72));
+  color: var(--ink-strong);
+  box-shadow: 0 14px 32px rgba(2, 9, 38, .3), inset 0 1px rgba(211, 237, 255, .1);
+}
+:root[data-theme="dark"] .dashboard-panel__scroll {
+  scrollbar-color: rgba(67, 157, 255, .72) rgba(40, 91, 160, .25);
+}
+:root[data-theme="dark"] .dashboard-panel__scroll::-webkit-scrollbar-thumb { background: rgba(67, 157, 255, .7); }
+:root[data-theme="dark"] .dashboard-panel__scroll::-webkit-scrollbar-track { background: rgba(40, 91, 160, .24); }
+:root[data-theme="dark"] .dashboard-panel .list-card:hover { border-color: rgba(130, 211, 255, .5); background: linear-gradient(145deg, rgba(50, 112, 220, .44), rgba(22, 163, 222, .22)); }
+:root[data-theme="dark"] .dashboard-panel .badge--teal { background: rgba(35, 115, 201, .35); color: #a8dcff; }
+
+/* Keep grade colors intact; only the gradebook chrome changes in night mode. */
+:root[data-theme="dark"] .gradebook-header,
+:root[data-theme="dark"] .gradebook-panel,
+:root[data-theme="dark"] .gradebook-toolbar,
+:root[data-theme="dark"] .college-gradebook__scroll,
+:root[data-theme="dark"] .gradebook-scroll,
+:root[data-theme="dark"] .gradebook-scroll--mentor,
+:root[data-theme="dark"] .gradebook-scroll--locked {
+  border-color: rgba(126, 190, 255, .28);
+  background: linear-gradient(145deg, rgba(18, 53, 98, .78), rgba(8, 25, 55, .76));
+  box-shadow: 0 16px 36px rgba(1, 8, 34, .34), inset 0 1px rgba(210, 237, 255, .1);
+}
+:root[data-theme="dark"] .gradebook-table,
+:root[data-theme="dark"] .college-gradebook { background: rgba(7, 22, 48, .72); color: var(--ink-strong); }
+:root[data-theme="dark"] .gradebook-table th,
+:root[data-theme="dark"] .college-gradebook thead th,
+:root[data-theme="dark"] .college-gradebook th:first-child {
+  border-color: rgba(126, 190, 255, .24);
+  background: linear-gradient(180deg, rgba(32, 79, 143, .8), rgba(14, 43, 86, .84));
+  color: #dceeff;
+}
+:root[data-theme="dark"] .gradebook-table td,
+:root[data-theme="dark"] .college-gradebook td {
+  border-color: rgba(126, 190, 255, .16);
+  background: rgba(11, 32, 66, .72);
+  color: var(--ink-strong);
+}
+:root[data-theme="dark"] .gradebook-table__sticky { background: rgba(15, 43, 82, .9); color: #e5f3ff; }
+:root[data-theme="dark"] .gradebook-toolbar__status,
+:root[data-theme="dark"] .gradebook-header__meta { border-color: rgba(126, 190, 255, .25); background: rgba(25, 72, 132, .5); color: #dceeff; }
+:root[data-theme="dark"] .gradebook-table th small,
+:root[data-theme="dark"] .gradebook-table__sticky small { color: #9fc7ee; }
+:root[data-theme="dark"] .gradebook-table td.gradebook-table__cell--excellent { background: #8de0aa; color: #12392d; }
+:root[data-theme="dark"] .gradebook-table td.gradebook-table__cell--good { background: #f5bf72; color: #553510; }
+:root[data-theme="dark"] .gradebook-table td.gradebook-table__cell--warning { background: #ef8d63; color: #4c2118; }
+:root[data-theme="dark"] .gradebook-table td.gradebook-table__cell--danger,
+:root[data-theme="dark"] .gradebook-table td.gradebook-table__cell--absence { background: #c83d44; color: #fff8f4; }
+:root[data-theme="dark"] .gradebook-table td.gradebook-table__cell--empty { background: rgba(11, 32, 66, .72); color: var(--ink-strong); }
+:root[data-theme="dark"] .gradebook-table th.is-weekend { background: linear-gradient(180deg, #204f8f 0%, #123866 100%); }
+:root[data-theme="dark"] .gradebook-table td.is-weekend.gradebook-table__cell--empty { background: #102b52; }
+
 @media (max-width: 540px) {
   :root {
     --device-canvas-width: 560px;

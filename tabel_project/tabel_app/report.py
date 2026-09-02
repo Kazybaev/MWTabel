@@ -708,6 +708,8 @@ def force_send_all_monthly_reports(
     run_date: date | datetime | None = None,
     month_start: date | datetime | None = None,
     organization_type: str | None = None,
+    group_ids: list[int] | None = None,
+    student_ids: list[int] | None = None,
 ) -> list[dict[str, Any]]:
     """Explicit admin action: send the selected month to every active student."""
     run_date = normalize_run_date(run_date)
@@ -715,6 +717,10 @@ def force_send_all_monthly_reports(
     student_queryset = StudentProfile.objects.select_related("user", "group", "group__mentor__user").filter(archived_at__isnull=True)
     if organization_type:
         student_queryset = student_queryset.filter(organization_type=organization_type)
+    if group_ids:
+        student_queryset = student_queryset.filter(group_id__in=group_ids)
+    if student_ids:
+        student_queryset = student_queryset.filter(pk__in=student_ids)
     students = list(
         student_queryset
         .order_by("group__course_name", "user__full_name")

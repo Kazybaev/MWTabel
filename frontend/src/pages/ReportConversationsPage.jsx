@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 
 import { Badge, Button, EmptyState, ErrorBlock, LoadingBlock, Modal } from "../components/Ui";
-import { formatMonthLabel } from "../lib/format";
+import { formatMonthLabel, toMonthValue } from "../lib/format";
 import { useResource } from "../lib/useResource";
 import "./ReportConversationsPage.css";
 
@@ -70,18 +70,21 @@ function ReportMessage({ message }) {
   );
 }
 
-export function ReportConversationsPage({ api, sessionToken, user }) {
+export function ReportConversationsPage({ api, sessionToken, user, organization = "academy" }) {
   const [query, setQuery] = useState("");
   const [statusFilter, setStatusFilter] = useState("");
   const [selectedStudentId, setSelectedStudentId] = useState(null);
   const [confirmSendAll, setConfirmSendAll] = useState(false);
+  const [sendMode, setSendMode] = useState("all");
+  const [sendMonth, setSendMonth] = useState(toMonthValue());
+  const [selectedGroupIds, setSelectedGroupIds] = useState([]);
+  const [selectedStudentIds, setSelectedStudentIds] = useState([]);
   const [sendingAll, setSendingAll] = useState(false);
-  const [sendingStudentId, setSendingStudentId] = useState(null);
   const [sendAllResult, setSendAllResult] = useState(null);
-  const [sendStudentResult, setSendStudentResult] = useState("");
   const [sendAllError, setSendAllError] = useState("");
   const messagesRef = useRef(null);
   const conversations = useResource(() => api("/api/reports/conversations/"), [sessionToken]);
+  const dispatchOptions = useResource(() => api("/api/reports/options/"), [sessionToken, organization]);
   const activeStudentId = selectedStudentId || conversations.data?.[0]?.student_id || null;
   const detail = useResource(
     () => activeStudentId ? api(`/api/reports/conversations/${activeStudentId}/`) : Promise.resolve(null),
@@ -111,7 +114,10 @@ export function ReportConversationsPage({ api, sessionToken, user }) {
     setSendingAll(true);
     setSendAllError("");
     try {
-      const result = await api("/api/reports/send-all/", { method: "POST" });
+      const body = { month: sendMonth };
+      if (sendMode === "groups") body.group_ids = selectedGroupIds;
+      if (sendMode === "students") body.student_ids = selectedStudentIds;
+      const result = await api("/api/reports/send-all/", { method: "POST", body });
       setSendAllResult(result);
       setConfirmSendAll(false);
       conversations.reload();
@@ -123,23 +129,17 @@ export function ReportConversationsPage({ api, sessionToken, user }) {
     }
   }
 
-  async function handleSendStudent(studentId) {
-    setSendingStudentId(studentId);
+  function openDispatchCard() {
+    setSendMode(organization === "college" ? "all" : "all");
+    setSendMonth(toMonthValue());
+    setSelectedGroupIds([]);
+    setSelectedStudentIds([]);
     setSendAllError("");
-    setSendStudentResult("");
-    try {
-      const result = await api("/api/reports/send/", {
-        method: "POST",
-        body: { student_id: studentId },
-      });
-      setSendStudentResult(result.status === "sent" ? "Отчёт отправлен." : `Результат: ${result.status || "обработано"}.`);
-      conversations.reload();
-      if (activeStudentId === studentId) detail.reload();
-    } catch (error) {
-      setSendAllError(error.message || "Не удалось отправить отчёт.");
-    } finally {
-      setSendingStudentId(null);
-    }
+    setConfirmSendAll(true);
+  }
+
+  function toggleSelection(setter, id) {
+    setter((current) => current.includes(id) ? current.filter((item) => item !== id) : [...current, id]);
   }
 
   if (user.role !== "ADMIN") {
@@ -159,7 +159,7 @@ export function ReportConversationsPage({ api, sessionToken, user }) {
           <span>Результаты отправок родителям через Dify и Meta</span>
         </div>
         <div className="report-chat-page__actions">
-          <Button variant="danger" onClick={() => { setSendAllError(""); setConfirmSendAll(true); }}>
+          <Button variant="danger" onClick={openDispatchCard}>
             Отправить отчёт всем
           </Button>
           <Button variant="secondary" onClick={conversations.reload} disabled={conversations.refreshing}>
@@ -174,7 +174,6 @@ export function ReportConversationsPage({ api, sessionToken, user }) {
           <button type="button" onClick={() => setSendAllResult(null)}>Закрыть</button>
         </div>
       ) : null}
-      {sendStudentResult ? <div className="report-chat__bulk-result" role="status">{sendStudentResult}</div> : null}
 
       <div className="report-chat">
         <aside className="report-chat__sidebar" aria-label="Диалоги отчётов">
@@ -211,14 +210,6 @@ export function ReportConversationsPage({ api, sessionToken, user }) {
                   </span>
                   <StatusBadge value={item.latest_status} />
                 </button>
-                <Button
-                  variant="secondary"
-                  className="report-chat__send-one"
-                  onClick={() => handleSendStudent(item.student_id)}
-                  disabled={sendingAll || sendingStudentId !== null}
-                >
-                  {sendingStudentId === item.student_id ? "Отправляем…" : "Отправить"}
-                </Button>
               </div>
             ))}
             {!filtered.length ? <EmptyState title="Ничего не найдено" description="Измените поиск или фильтр." /> : null}
@@ -245,21 +236,38 @@ export function ReportConversationsPage({ api, sessionToken, user }) {
 
       <Modal
         open={confirmSendAll}
-        title="Отправить отчёт всем студентам?"
-        description="Это принудительная массовая отправка за текущий месяц."
+        title="Отправить отчёты"
+        description={organization === "college" ? "Выберите месяц для отправки отчётов студентам колледжа." : "Выберите получателей и месяц отчёта."}
         onClose={() => { if (!sendingAll) setConfirmSendAll(false); }}
         footer={(
           <>
             <Button variant="ghost" onClick={() => setConfirmSendAll(false)} disabled={sendingAll}>Отмена</Button>
-            <Button variant="danger" onClick={handleSendAll} disabled={sendingAll}>
-              {sendingAll ? "Отправляем…" : "Да, отправить всем"}
+            <Button variant="danger" onClick={handleSendAll} disabled={sendingAll || (sendMode === "groups" && !selectedGroupIds.length) || (sendMode === "students" && !selectedStudentIds.length)}>
+              {sendingAll ? "Отправляем…" : "Отправить отчёты"}
             </Button>
           </>
         )}
       >
-        <div className="report-chat__bulk-warning">
-          <strong>Вы точно хотите продолжить?</strong>
-          <p>Отчёт уйдёт родителям всех активных студентов по очереди. Отправка не зависит от даты урока и предыдущих отправок.</p>
+        <div className="report-chat__bulk-warning report-chat__dispatch-card">
+          {organization !== "college" ? (
+            <div className="report-chat__dispatch-modes" role="group" aria-label="Кому отправить отчёт">
+              <button type="button" className={sendMode === "all" ? "is-active" : ""} onClick={() => setSendMode("all")}>Отправить всем</button>
+              <button type="button" className={sendMode === "groups" ? "is-active" : ""} onClick={() => setSendMode("groups")}>Выбрать группы</button>
+              <button type="button" className={sendMode === "students" ? "is-active" : ""} onClick={() => setSendMode("students")}>Выбрать студентов</button>
+            </div>
+          ) : null}
+          <label className="report-chat__month-field"><span>Месяц отчёта</span><input type="month" value={sendMonth} onChange={(event) => setSendMonth(event.target.value)} /></label>
+          {sendMode === "groups" ? (
+            <div className="report-chat__dispatch-list" aria-label="Группы">
+              {!dispatchOptions.data?.groups?.length ? <p>Нет доступных групп.</p> : dispatchOptions.data.groups.map((group) => <label key={group.id}><input type="checkbox" checked={selectedGroupIds.includes(group.id)} onChange={() => toggleSelection(setSelectedGroupIds, group.id)} /><span>{group.name}</span></label>)}
+            </div>
+          ) : null}
+          {sendMode === "students" ? (
+            <div className="report-chat__dispatch-list" aria-label="Студенты">
+              {!dispatchOptions.data?.students?.length ? <p>Нет доступных студентов.</p> : dispatchOptions.data.students.map((student) => <label key={student.id}><input type="checkbox" checked={selectedStudentIds.includes(student.id)} onChange={() => toggleSelection(setSelectedStudentIds, student.id)} /><span>{student.name}<small>{student.group_name}</small></span></label>)}
+            </div>
+          ) : null}
+          <p>Отчёты будут отправлены родителям выбранных активных студентов. Повторная ручная отправка разрешена.</p>
           {sendAllError ? <p className="report-chat__bulk-error" role="alert">{sendAllError}</p> : null}
         </div>
       </Modal>

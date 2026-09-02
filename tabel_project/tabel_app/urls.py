@@ -18,6 +18,7 @@ from .views import (
     ReportDeliveryCallbackAPIView,
     ReportConversationDetailAPIView,
     ReportConversationListAPIView,
+    ReportDispatchOptionsAPIView,
     StudentProfileViewSet,
 )
 
@@ -42,6 +43,7 @@ urlpatterns = [
     path("api/reports/send-all/", ForceSendAllReportsAPIView.as_view(), name="api-report-send-all"),
     path("api/report-logs/", ReportDeliveryCallbackAPIView.as_view(), name="api-report-delivery-callback"),
     path("api/reports/conversations/", ReportConversationListAPIView.as_view(), name="api-report-conversations"),
+    path("api/reports/options/", ReportDispatchOptionsAPIView.as_view(), name="api-report-options"),
     path("api/reports/conversations/<int:student_id>/", ReportConversationDetailAPIView.as_view(), name="api-report-conversation-detail"),
     path("api/", include(api_router.urls)),
 ]

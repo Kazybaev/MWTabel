@@ -69,6 +69,7 @@ function buildNotice(message, tone = "info") {
 
 function App() {
   const [session, setSession] = useState(() => readStoredSession());
+  const [theme, setTheme] = useState(() => window.localStorage.getItem("tabel.theme") || "light");
   const [organization, setOrganization] = useState(() => window.localStorage.getItem("tabel.organization") || "academy");
   const [route, setRoute] = useState(() => parseHashLocation());
   const [meta, setMeta] = useState(emptyMeta);
@@ -77,6 +78,12 @@ function App() {
   const [authLoading, setAuthLoading] = useState(false);
   const [authError, setAuthError] = useState("");
   const [bootstrapping, setBootstrapping] = useState(Boolean(readStoredSession()?.access));
+
+  useEffect(() => {
+    const nextTheme = theme === "dark" ? "dark" : "light";
+    document.documentElement.dataset.theme = nextTheme;
+    window.localStorage.setItem("tabel.theme", nextTheme);
+  }, [theme]);
 
   function updateSession(nextSession) {
     if (!nextSession) {
@@ -336,7 +343,7 @@ function App() {
     }
 
     if (route.path === "/reports") {
-      return <ReportConversationsPage api={callApi} sessionToken={session.access} user={session.user} />;
+      return <ReportConversationsPage api={callApi} sessionToken={session.access} user={session.user} organization={organization} />;
     }
 
     if (route.path === "/my-grades") {
@@ -425,6 +432,8 @@ function App() {
       lockedContent={lockedContent}
       organization={organization}
       onOrganizationChange={changeOrganization}
+      theme={theme}
+      onThemeChange={() => setTheme((current) => (current === "dark" ? "light" : "dark"))}
     >
       {renderAuthenticatedPage()}
     </AppShell>
