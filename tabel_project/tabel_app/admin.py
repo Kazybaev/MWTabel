@@ -3,6 +3,7 @@ from django.contrib.auth.admin import UserAdmin as DjangoUserAdmin
 
 from .models import (
     Group,
+    ImportedGradeCell,
     Lesson,
     LessonRecord,
     MentorProfile,
@@ -77,3 +78,26 @@ class MonthlyStudentReportDispatchAdmin(admin.ModelAdmin):
         "created_at",
         "updated_at",
     )
+
+
+@admin.register(ImportedGradeCell)
+class ImportedGradeCellAdmin(admin.ModelAdmin):
+    list_display = ('source_id', 'source_class', 'source_row', 'source_column', 'reason', 'student', 'lesson')
+    list_filter = ('reason', 'source_class')
+    search_fields = ('source_id', 'source_class', 'student__user__username')
+    readonly_fields = tuple(field.name for field in ImportedGradeCell._meta.fields)
+
+    def has_view_permission(self, request, obj=None):
+        return request.user.is_active and request.user.is_staff and (request.user.is_superuser or request.user.role == 'ADMIN')
+
+    def has_module_permission(self, request):
+        return self.has_view_permission(request)
+
+    def has_add_permission(self, request):
+        return False
+
+    def has_change_permission(self, request, obj=None):
+        return False
+
+    def has_delete_permission(self, request, obj=None):
+        return False

@@ -255,6 +255,7 @@ class CollegeGroupSerializer(serializers.ModelSerializer):
 
 
 class StudentProfileSerializer(serializers.ModelSerializer):
+    parent_name = serializers.CharField(required=False, allow_blank=True, max_length=100)
     user_id = serializers.IntegerField(source="user.id", read_only=True)
     full_name = serializers.CharField(source="user.full_name")
     username = serializers.CharField(source="user.username")

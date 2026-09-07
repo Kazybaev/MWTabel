@@ -25,3 +25,9 @@ staticfiles/
 media/
 .docker/
 *.sqlite3
+
+# Private college import input and audit artifacts
+college*seed*.json
+college-import*.json
+import-private/
+*.dump

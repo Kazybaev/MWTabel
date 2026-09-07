@@ -228,3 +228,23 @@ class MonthlyStudentReportAttempt(models.Model):
 
     def __str__(self):
         return f"{self.dispatch} / attempt {self.attempt_number}"
+
+
+class ImportedGradeCell(models.Model):
+    """Immutable source evidence, including cells resolved into LessonRecord."""
+    source_id = models.CharField(max_length=255)
+    source_class = models.CharField(max_length=255)
+    source_row = models.PositiveIntegerField()
+    source_column = models.CharField(max_length=64)
+    original_value = models.JSONField(null=True, blank=True)
+    original_header = models.JSONField(null=True, blank=True)
+    content_sha256 = models.CharField(max_length=64)
+    student = models.ForeignKey(StudentProfile, null=True, blank=True, on_delete=models.SET_NULL)
+    group = models.ForeignKey(Group, null=True, blank=True, on_delete=models.SET_NULL)
+    lesson = models.ForeignKey(Lesson, null=True, blank=True, on_delete=models.SET_NULL)
+    reason = models.CharField(max_length=100)
+
+    class Meta:
+        constraints = [models.UniqueConstraint(
+            fields=['source_id', 'source_class', 'source_row', 'source_column'],
+            name='unique_imported_grade_cell')]
