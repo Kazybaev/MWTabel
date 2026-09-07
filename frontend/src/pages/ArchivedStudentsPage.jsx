@@ -17,7 +17,12 @@ export function ArchivedStudentsPage({ api, sessionToken, user, onNotice }) {
     () => (user.role === "ADMIN" ? api("/api/groups/") : Promise.resolve([])),
     [sessionToken, user.role],
   );
+  const { data: archivedGroups } = useResource(
+    () => (user.role === "ADMIN" ? api("/api/groups/archived/") : Promise.resolve([])),
+    [sessionToken, user.role],
+  );
   const [search, setSearch] = useState("");
+  const [activeTab, setActiveTab] = useState("students");
   const [restoreTarget, setRestoreTarget] = useState(null);
   const [restoreGroup, setRestoreGroup] = useState("");
   const [deleteTarget, setDeleteTarget] = useState(null);
@@ -38,6 +43,10 @@ export function ArchivedStudentsPage({ api, sessionToken, user, onNotice }) {
     const haystack =
       `${student.full_name} ${student.username} ${student.group_name} ${student.parent_name} ${student.parent_phone}`.toLowerCase();
     return haystack.includes(query) || (phoneQuery && normalizePhoneSearch(student.parent_phone).includes(phoneQuery));
+  });
+  const filteredGroups = sortGroupsByName(archivedGroups).filter((group) => {
+    const query = deferredSearch.trim().toLowerCase();
+    return `${group.course_name} ${group.mentor_name} ${group.study_days_label}`.toLowerCase().includes(query);
   });
 
   async function handleRestore() {
@@ -81,19 +90,42 @@ export function ArchivedStudentsPage({ api, sessionToken, user, onNotice }) {
     <div className="page-stack">
       <Panel
         eyebrow="Неактивные"
-        title="Архив студентов"
-        description="Здесь хранятся студенты, которые временно не учатся. Их аккаунты отключены, а оценки сохранены."
+        title={activeTab === "students" ? "Архив студентов" : "Архив групп"}
+        description={activeTab === "students" ? "Здесь хранятся студенты, которые временно не учатся. Их аккаунты отключены, а оценки сохранены." : "Здесь хранятся группы, которые были деактивированы. Уроки и оценки сохранены."}
         actions={
-          <input
-            className="search-input"
-            value={search}
-            onChange={(event) => setSearch(event.target.value)}
-            placeholder="Поиск по имени, группе, родителю или телефону"
-            aria-label="Поиск в архиве студентов"
-          />
+          <div className="toolbar">
+            <div className="button-group" role="tablist" aria-label="Тип архива">
+              <Button variant={activeTab === "students" ? "primary" : "ghost"} onClick={() => setActiveTab("students")}>Студенты ({data?.length || 0})</Button>
+              <Button variant={activeTab === "groups" ? "primary" : "ghost"} onClick={() => setActiveTab("groups")}>Группы ({archivedGroups?.length || 0})</Button>
+            </div>
+            <input
+              className="search-input"
+              value={search}
+              onChange={(event) => setSearch(event.target.value)}
+              placeholder={activeTab === "students" ? "Поиск по имени, группе, родителю или телефону" : "Поиск по названию группы или ментору"}
+              aria-label={activeTab === "students" ? "Поиск в архиве студентов" : "Поиск в архиве групп"}
+            />
+          </div>
         }
       >
-        {students.length ? (
+        {activeTab === "groups" ? (filteredGroups.length ? (
+          <div className="list-stack">
+            {filteredGroups.map((group) => (
+              <div key={group.id} className="list-card list-card--archived">
+                <div>
+                  <strong>{group.course_name}</strong>
+                  <p>{group.mentor_name} · {group.study_days_label}</p>
+                  <small>Группа деактивирована, оценки и уроки сохранены</small>
+                </div>
+                <div className="list-card__actions">
+                  <Badge tone="slate">В архиве</Badge>
+                </div>
+              </div>
+            ))}
+          </div>
+        ) : (
+          <EmptyState title={archivedGroups?.length ? "Группы не найдены" : "Архив групп пуст"} description={archivedGroups?.length ? "Попробуйте изменить поисковый запрос." : "Архивные группы появятся здесь после архивирования."} />
+        )) : students.length ? (
           <div className="list-stack">
             {students.map((student) => (
               <div key={student.id} className="list-card list-card--actions list-card--archived">
