@@ -101,16 +101,9 @@ def get_group_study_weekdays(group: Group) -> set[int]:
 
 
 def get_group_last_lesson_date(group: Group, month_start: date) -> date | None:
-    month_start, month_end = month_bounds(month_start)
-    study_weekdays = get_group_study_weekdays(group)
-    if study_weekdays:
-        current_date = month_end
-        while current_date >= month_start:
-            if current_date.weekday() in study_weekdays:
-                return current_date
-            current_date -= timedelta(days=1)
+    if group.archived_at is not None:
         return None
-
+    month_start, month_end = month_bounds(month_start)
     return (
         group.lessons.filter(lesson_date__gte=month_start, lesson_date__lte=month_end)
         .order_by("-lesson_date", "-id")
@@ -138,8 +131,8 @@ def get_student_report_groups(student: StudentProfile) -> list[Group]:
     """Return all subjects for a college student, or the single academy group."""
     if student.organization_type != "college":
         return [student.group]
-    groups = list(student.college_groups.all().select_related("mentor__user").order_by("course_name", "id"))
-    if student.group_id and all(group.pk != student.group_id for group in groups):
+    groups = list(student.college_groups.filter(archived_at__isnull=True).select_related("mentor__user").order_by("course_name", "id"))
+    if student.group_id and student.group.archived_at is None and all(group.pk != student.group_id for group in groups):
         groups.insert(0, student.group)
     return groups or [student.group]
 
@@ -178,6 +171,13 @@ def build_student_month_report(
     month_start: date | datetime | None = None,
     trigger_date: date | None = None,
 ) -> dict[str, Any]:
+    if student.archived_at is not None or student.group.archived_at is not None:
+        return {
+            "student_id": student.pk,
+            "student_name": student.user.full_name,
+            "status": "skipped",
+            "reason": "archived_student_or_group",
+        }
     month_start = normalize_month_start(month_start)
     month_start, month_end = month_bounds(month_start)
     lessons = get_month_lessons_for_student(student, month_start)
@@ -714,11 +714,14 @@ def force_send_all_monthly_reports(
     """Explicit admin action: send the selected month to every active student."""
     run_date = normalize_run_date(run_date)
     month_start = normalize_month_start(month_start or run_date)
-    student_queryset = StudentProfile.objects.select_related("user", "group", "group__mentor__user").filter(archived_at__isnull=True)
+    student_queryset = StudentProfile.objects.select_related("user", "group", "group__mentor__user").filter(
+        archived_at__isnull=True,
+        group__archived_at__isnull=True,
+    )
     if organization_type:
         student_queryset = student_queryset.filter(organization_type=organization_type)
     if group_ids:
-        student_queryset = student_queryset.filter(group_id__in=group_ids)
+        student_queryset = student_queryset.filter(group_id__in=group_ids, group__archived_at__isnull=True)
     if student_ids:
         student_queryset = student_queryset.filter(pk__in=student_ids)
     students = list(
@@ -759,6 +762,7 @@ def send_due_monthly_reports(
         "group__mentor__user",
     ).filter(
         archived_at__isnull=True,
+        group__archived_at__isnull=True,
         group__lessons__lesson_date__gte=month_start,
         group__lessons__lesson_date__lte=month_end,
     ).distinct()

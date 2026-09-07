@@ -296,11 +296,15 @@ class StudentProfileSerializer(serializers.ModelSerializer):
         group = attrs.get("group", self.instance.group if self.instance else None)
         if group and group.organization_type != organization:
             raise serializers.ValidationError({"group": "Группа относится к другой организации."})
+        if group and group.archived_at is not None:
+            raise serializers.ValidationError({"group": "Нельзя назначить студента в архивную группу."})
         college_groups = attrs.get("college_groups", [])
         if organization == "college" and not college_groups and not self.instance:
             raise serializers.ValidationError({"college_groups": "Выберите хотя бы одну группу."})
         if any(item.organization_type != organization for item in college_groups):
             raise serializers.ValidationError({"college_groups": "Все предметы должны относиться к текущей организации."})
+        if any(item.archived_at is not None for item in college_groups):
+            raise serializers.ValidationError({"college_groups": "Нельзя выбрать архивную группу."})
         return attrs
 
     @transaction.atomic
@@ -374,6 +378,8 @@ class LessonSerializer(serializers.ModelSerializer):
         request = self.context.get("request")
         if request and group.organization_type != organization_for_request(request):
             raise serializers.ValidationError("Группа относится к другой организации.")
+        if group.archived_at is not None:
+            raise serializers.ValidationError("Нельзя назначить студента в архивную группу.")
         return group
 
 
@@ -381,6 +387,7 @@ class GroupListSerializer(serializers.ModelSerializer):
     mentor_name = serializers.CharField(source="mentor.user.full_name", read_only=True)
     study_days_label = serializers.CharField(source="get_study_days_display", read_only=True)
     students_count = serializers.SerializerMethodField()
+    is_archived = serializers.SerializerMethodField()
 
     class Meta:
         model = Group
@@ -395,7 +402,12 @@ class GroupListSerializer(serializers.ModelSerializer):
             "students_count",
             "organization_type",
             "college_course",
+            "archived_at",
+            "is_archived",
         ]
+
+    def get_is_archived(self, obj):
+        return obj.archived_at is not None
 
     def get_students_count(self, obj):
         annotated_count = getattr(obj, "students_count", None)
@@ -426,6 +438,7 @@ class GroupDetailSerializer(serializers.ModelSerializer):
     students_count = serializers.SerializerMethodField()
     students = serializers.SerializerMethodField()
     lessons = serializers.SerializerMethodField()
+    is_archived = serializers.SerializerMethodField()
 
     class Meta:
         model = Group
@@ -442,7 +455,12 @@ class GroupDetailSerializer(serializers.ModelSerializer):
             "lessons",
             "organization_type",
             "college_course",
+            "archived_at",
+            "is_archived",
         ]
+
+    def get_is_archived(self, obj):
+        return obj.archived_at is not None
 
     def get_students_count(self, obj):
         annotated_count = getattr(obj, "students_count", None)

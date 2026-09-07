@@ -71,6 +71,7 @@ class Group(models.Model):
     description = models.TextField(blank=True)
     organization_type = models.CharField(max_length=16, choices=ORGANIZATION_CHOICES, default=ORGANIZATION_ACADEMY, db_index=True)
     college_course = models.CharField(max_length=1, choices=COLLEGE_COURSE_CHOICES, blank=True)
+    archived_at = models.DateTimeField(null=True, blank=True)
 
     class Meta:
         ordering = ("course_name",)

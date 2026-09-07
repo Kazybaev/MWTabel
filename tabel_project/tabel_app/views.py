@@ -52,7 +52,7 @@ FRONTEND_DIST_DIR = Path(__file__).resolve().parents[2] / "frontend" / "dist"
 
 
 def groups_for_user(user):
-    queryset = Group.objects.select_related("mentor__user").prefetch_related("students__user", "lessons")
+    queryset = Group.objects.filter(archived_at__isnull=True).select_related("mentor__user").prefetch_related("students__user", "lessons")
     if user.role == User.ROLE_ADMIN:
         return queryset
     if user.role == User.ROLE_MENTOR and hasattr(user, "mentor_profile"):
@@ -65,16 +65,16 @@ def groups_for_user(user):
 def students_for_user(user):
     queryset = StudentProfile.objects.select_related("user", "group", "group__mentor__user")
     if user.role == User.ROLE_ADMIN:
-        return queryset.filter(archived_at__isnull=True)
+        return queryset.filter(archived_at__isnull=True, group__archived_at__isnull=True)
     if user.role == User.ROLE_MENTOR and hasattr(user, "mentor_profile"):
-        return queryset.filter(group__mentor=user.mentor_profile, archived_at__isnull=True)
+        return queryset.filter(group__mentor=user.mentor_profile, group__archived_at__isnull=True, archived_at__isnull=True)
     if user.role == User.ROLE_STUDENT and hasattr(user, "student_profile"):
         return queryset.filter(pk=user.student_profile.pk, archived_at__isnull=True)
     return queryset.none()
 
 
 def lessons_for_user(user):
-    queryset = Lesson.objects.select_related("group", "group__mentor__user").prefetch_related("records__student__user")
+    queryset = Lesson.objects.filter(group__archived_at__isnull=True).select_related("group", "group__mentor__user").prefetch_related("records__student__user")
     if user.role == User.ROLE_ADMIN:
         return queryset
     if user.role == User.ROLE_MENTOR and hasattr(user, "mentor_profile"):
@@ -86,9 +86,9 @@ def lessons_for_user(user):
 
 def manageable_groups_for_user(user):
     if user.role == User.ROLE_ADMIN:
-        return Group.objects.select_related("mentor__user")
+        return Group.objects.filter(archived_at__isnull=True).select_related("mentor__user")
     if user.role == User.ROLE_MENTOR and hasattr(user, "mentor_profile"):
-        return Group.objects.select_related("mentor__user").filter(mentor=user.mentor_profile)
+        return Group.objects.filter(archived_at__isnull=True).select_related("mentor__user").filter(mentor=user.mentor_profile)
     return Group.objects.none()
 
 
@@ -894,6 +894,7 @@ class ReportDispatchOptionsAPIView(APIView):
         organization = organization_for_request(request)
         groups = Group.objects.filter(
             organization_type=organization,
+            archived_at__isnull=True,
         ).filter(
             Q(students__archived_at__isnull=True) | Q(college_students__archived_at__isnull=True),
         ).distinct().order_by("course_name", "pk")
@@ -1118,6 +1119,11 @@ class StudentProfileViewSet(viewsets.ModelViewSet):
 class GroupViewSet(viewsets.ModelViewSet):
     def get_queryset(self):
         organization = organization_for_request(self.request)
+        if self.action == "archived":
+            return annotate_group_students_count(
+                Group.objects.filter(archived_at__isnull=False, organization_type=organization),
+                organization,
+            )
         return annotate_group_students_count(
             groups_for_user(self.request.user).filter(organization_type=organization),
             organization,
@@ -1153,9 +1159,29 @@ class GroupViewSet(viewsets.ModelViewSet):
         return super().partial_update(request, *args, **kwargs)
 
     def destroy(self, request, *args, **kwargs):
+        raise ValidationError("Удаление групп отключено. Используйте архивирование.")
+
+    @action(detail=True, methods=["post"])
+    def archive(self, request, pk=None):
         if request.user.role != User.ROLE_ADMIN:
             raise PermissionDenied
-        return super().destroy(request, *args, **kwargs)
+        group = self.get_object()
+        relation = group.college_students if group.organization_type == "college" else group.students
+        now = timezone.now()
+        with transaction.atomic():
+            group.archived_at = now
+            group.save(update_fields=["archived_at"])
+            students = relation.filter(archived_at__isnull=True)
+            student_ids = list(students.values_list("pk", flat=True))
+            students.update(archived_at=now)
+            User.objects.filter(student_profile__pk__in=student_ids).update(is_active=False)
+        return Response(self.get_serializer(group).data)
+
+    @action(detail=False, methods=["get"])
+    def archived(self, request):
+        if request.user.role != User.ROLE_ADMIN:
+            raise PermissionDenied
+        return Response(self.get_serializer(self.get_queryset(), many=True).data)
 
     @action(detail=True, methods=["get", "post"])
     def gradebook(self, request, pk=None):

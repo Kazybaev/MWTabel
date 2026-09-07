@@ -34,7 +34,7 @@ export function GroupsPage({ api, meta, sessionToken, user, onNotice }) {
   const [editorOpen, setEditorOpen] = useState(false);
   const [draft, setDraft] = useState(createEmptyGroup());
   const [editingId, setEditingId] = useState(null);
-  const [deleteTarget, setDeleteTarget] = useState(null);
+  const [archiveTarget, setArchiveTarget] = useState(null);
   const [saving, setSaving] = useState(false);
   const deferredSearch = useDeferredValue(search);
   const isMentorView = user.role === "MENTOR";
@@ -93,27 +93,27 @@ export function GroupsPage({ api, meta, sessionToken, user, onNotice }) {
     }
   }
 
-  async function handleDelete() {
-    if (!deleteTarget) {
+  async function handleArchive() {
+    if (!archiveTarget) {
       return;
     }
 
     setSaving(true);
 
     try {
-      await api(`/api/groups/${deleteTarget.id}/`, {
-        method: "DELETE",
+      await api(`/api/groups/${archiveTarget.id}/archive/`, {
+        method: "POST",
       });
-      setDeleteTarget(null);
+      setArchiveTarget(null);
       await reload();
       onNotice({
         tone: "success",
-        message: "Группа удалена.",
+        message: "Группа и связанные студенты перемещены в архив.",
       });
-    } catch (deleteError) {
+    } catch (archiveError) {
       onNotice({
         tone: "danger",
-        message: deleteError.message,
+        message: archiveError.message,
       });
     } finally {
       setSaving(false);
@@ -196,8 +196,8 @@ export function GroupsPage({ api, meta, sessionToken, user, onNotice }) {
                         <Button variant="ghost" onClick={() => openEdit(group)}>
                           Изменить
                         </Button>
-                        <Button variant="danger" onClick={() => setDeleteTarget(group)}>
-                          Удалить
+                        <Button variant="danger" onClick={() => setArchiveTarget(group)}>
+                          Архивировать
                         </Button>
                       </>
                     ) : null}
@@ -264,17 +264,17 @@ export function GroupsPage({ api, meta, sessionToken, user, onNotice }) {
       </Modal>
 
       <Modal
-        open={Boolean(deleteTarget)}
-        title="Удалить группу"
-        description={deleteTarget ? `Группа ${deleteTarget.course_name} будет удалена вместе с уроками и записями табеля.` : ""}
-        onClose={() => setDeleteTarget(null)}
+        open={Boolean(archiveTarget)}
+        title="Архивировать группу"
+        description={archiveTarget ? `Группа ${archiveTarget.course_name} станет неактивной. Студенты будут архивированы, а уроки, оценки и история отчетов сохранятся.` : ""}
+        onClose={() => setArchiveTarget(null)}
         footer={
           <>
-            <Button variant="ghost" onClick={() => setDeleteTarget(null)}>
+            <Button variant="ghost" onClick={() => setArchiveTarget(null)}>
               Отмена
             </Button>
-            <Button variant="danger" onClick={handleDelete} disabled={saving}>
-              {saving ? "Удаляем..." : "Удалить"}
+            <Button variant="danger" onClick={handleArchive} disabled={saving}>
+              {saving ? "Архивируем..." : "Архивировать"}
             </Button>
           </>
         }

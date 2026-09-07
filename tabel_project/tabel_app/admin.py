@@ -39,9 +39,9 @@ class StudentProfileAdmin(admin.ModelAdmin):
 
 @admin.register(Group)
 class GroupAdmin(admin.ModelAdmin):
-    list_display = ("course_name", "mentor", "study_days")
+    list_display = ("course_name", "mentor", "study_days", "archived_at")
     search_fields = ("course_name", "mentor__user__full_name")
-    list_filter = ("study_days",)
+    list_filter = ("study_days", "archived_at")
 
 
 @admin.register(Lesson)
