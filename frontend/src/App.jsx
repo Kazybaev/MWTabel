@@ -294,6 +294,7 @@ function App() {
       if (session.user.role === "MENTOR") {
         return (
           <GroupsPage
+            organization={organization}
             api={callApi}
             meta={meta}
             sessionToken={session.access}
@@ -309,6 +310,7 @@ function App() {
     if (route.path === "/groups") {
       return (
         <GroupsPage
+            organization={organization}
           api={callApi}
           meta={meta}
           sessionToken={session.access}
@@ -371,6 +373,7 @@ function App() {
           groupId={Number(gradebookRoute.id)}
           routeMonth={route.query.month}
           onNotice={setNotice}
+          archived={route.query.archived === "1"}
         />
       );
     }
@@ -395,6 +398,7 @@ function App() {
           sessionToken={session.access}
           user={session.user}
           groupId={Number(groupRoute.id)}
+          archived={route.query.archived === "1"}
           onNotice={setNotice}
         />
       );

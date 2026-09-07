@@ -54,6 +54,16 @@ class MentorProfile(models.Model):
         return self.user.full_name
 
 
+class CollegeGroup(models.Model):
+    name = models.CharField(max_length=100, unique=True)
+
+    class Meta:
+        ordering = ("name",)
+
+    def __str__(self):
+        return self.name
+
+
 class Group(models.Model):
     MON_WED_SAT = "MON_WED_SAT"
     TUE_THU_SUN = "TUE_THU_SUN"
@@ -65,6 +75,9 @@ class Group(models.Model):
 
     STUDY_DAYS_CHOICES += ((MON_FRI, "Пн • Вт • Ср • Чт • Пт"),)
 
+    main_group = models.ForeignKey(
+        CollegeGroup, null=True, blank=True, on_delete=models.PROTECT, related_name="subgroups",
+    )
     course_name = models.CharField(max_length=100)
     mentor = models.ForeignKey(MentorProfile, on_delete=models.CASCADE, related_name="groups")
     study_days = models.CharField(max_length=32, choices=STUDY_DAYS_CHOICES)
@@ -86,7 +99,7 @@ class StudentProfile(models.Model):
         on_delete=models.CASCADE,
         related_name="student_profile",
     )
-    parent_name = models.CharField(max_length=100)
+    parent_name = models.CharField(max_length=100, blank=True)
     parent_phone = PhoneNumberField()
     group = models.ForeignKey(Group, on_delete=models.CASCADE, related_name="students")
     archived_at = models.DateTimeField(null=True, blank=True)

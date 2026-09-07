@@ -10,6 +10,7 @@ from .views import (
     CollegeGradebookAPIView,
     DashboardAPIView,
     GroupViewSet,
+    CollegeGroupViewSet,
     ForceSendAllReportsAPIView,
     LessonViewSet,
     LogoutAPIView,
@@ -26,6 +27,7 @@ from .views import (
 api_router = routers.DefaultRouter()
 api_router.register(r"mentors", MentorProfileViewSet, basename="api-mentors")
 api_router.register(r"students", StudentProfileViewSet, basename="api-students")
+api_router.register(r"college-groups", CollegeGroupViewSet, basename="api-college-groups")
 api_router.register(r"groups", GroupViewSet, basename="api-groups")
 api_router.register(r"lessons", LessonViewSet, basename="api-lessons")
 

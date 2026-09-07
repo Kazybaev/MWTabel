@@ -184,7 +184,7 @@ def build_student_month_report(
     records = get_month_records_for_student(student, month_start)
     groups = get_student_report_groups(student)
     trigger_date = trigger_date or max(
-        (get_group_last_lesson_date(group, month_start) for group in groups),
+        (day for group in groups if (day := get_group_last_lesson_date(group, month_start)) is not None),
         default=None,
     )
 
@@ -242,7 +242,7 @@ def build_student_month_report(
     attendance_rate = round((attendance_count / total_lessons) * 100, 1) if total_lessons else  0
 
     mentor_user = student.group.mentor.user
-    return {
+    payload = {
         "student": {
             "id": student.pk,
             "user_id": student.user_id,
@@ -299,16 +299,69 @@ def build_student_month_report(
         },
         "lessons": lesson_rows,
     }
+    if student.organization_type == "college":
+        payload["main_group"] = {
+            "id": student.group.main_group_id,
+            "name": student.group.main_group.name if student.group.main_group_id else "",
+        }
+        payload["subjects"] = [
+            {
+                "group_id": group.pk,
+                "name": group.course_name,
+                "grade_counts": {
+                    grade: sum(row["group_id"] == group.pk and row["grade"] == grade for row in lesson_rows)
+                    for grade in ("5", "4", "3", "2")
+                },
+                "absence_dates": sorted({row["date"] for row in lesson_rows if row["group_id"] == group.pk and row["status"] == "absent"}),
+            }
+            for group in groups
+        ]
+        payload["absence_dates"] = sorted({row["date"] for row in lesson_rows if row["status"] == "absent"})
+        payload["message_text"] = format_college_parent_message(payload)
+    return payload
+
+
+KYRGYZ_MONTH_NAMES = (
+    "январь", "февраль", "март", "апрель", "май", "июнь",
+    "июль", "август", "сентябрь", "октябрь", "ноябрь", "декабрь",
+)
+
+
+def format_college_parent_message(payload: dict[str, Any]) -> str:
+    month = date.fromisoformat(payload["period"]["month_start"])
+    group_name = payload["main_group"]["name"] or payload["group"]["course_name"]
+    lines = [
+        "Саламатсызбы!", "",
+        "Мен Motion Web IT академиясынан байланышып жатам ✅", "",
+        f"Сизге *{group_name}* группасынын окуучусу *{payload['student']['full_name']}* "
+        f"{month.year}-жылдын *{KYRGYZ_MONTH_NAMES[month.month - 1]}* айындагы окуу жыйынтыктары тууралуу маалымат бере кетейин:",
+        "", "📊 Сабактар боюнча баалары:",
+    ]
+    for subject in payload["subjects"]:
+        counts = subject["grade_counts"]
+        lines.extend([
+            "", f"• *{subject['name']}* сабагы —", "",
+            f'“5”тен {counts["5"]} даана', f'“4”төн {counts["4"]} даана',
+            f'“3”төн {counts["3"]} даана', f'“2”ден {counts["2"]} даана',
+        ])
+    lines.extend(["", "📌 Сабактан калуулар:"])
+    if payload["absence_dates"]:
+        dates = [date.fromisoformat(value) for value in payload["absence_dates"]]
+        labels = [f"{day.day}-{KYRGYZ_MONTH_NAMES[day.month - 1]}" for day in dates]
+        lines.append(f"• Бир айда {', '.join(labels)} сабактан калган.")
+    else:
+        lines.append("• Сабактан калган жок.")
+    return "\n".join(lines)
 
 
 def build_dify_inputs(report_payload: dict[str, Any]) -> dict[str, Any]:
     summary = report_payload["summary"]
-    return {
+    inputs = {
         "report": report_payload,
         "student_name": report_payload["student"]["full_name"],
         "recipient_name": report_payload["student"]["parent_name"] or report_payload["student"]["full_name"],
         "recipient_phone": report_payload["student"]["parent_phone"],
-        "group_name": report_payload["group"]["course_name"],
+        "group_name": report_payload.get("main_group", {}).get("name") or report_payload["group"]["course_name"],
         "mentor_name": report_payload["mentor"]["full_name"],
         "month": report_payload["period"]["month"],
         "average_grade": summary["average_grade"],
@@ -320,6 +373,9 @@ def build_dify_inputs(report_payload: dict[str, Any]) -> dict[str, Any]:
         "total_two": summary["total_two"],
         "attendance_rate": summary["attendance_rate"],
     }
+    if "message_text" in report_payload:
+        inputs["message_text"] = report_payload["message_text"]
+    return inputs
 
 
 def get_dify_run_url() -> str:

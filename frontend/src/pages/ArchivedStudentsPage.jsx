@@ -116,6 +116,7 @@ export function ArchivedStudentsPage({ api, sessionToken, user, onNotice }) {
                   <strong>{group.course_name}</strong>
                   <p>{group.mentor_name} · {group.study_days_label}</p>
                   <small>Группа деактивирована, оценки и уроки сохранены</small>
+                  <a className="button button--ghost" href={`#/groups/${group.id}?archived=1`}>Открыть группу</a>
                 </div>
                 <div className="list-card__actions">
                   <Badge tone="slate">В архиве</Badge>

@@ -37,7 +37,7 @@ function serializeGradeMap(gradeMap = {}) {
   );
 }
 
-export function GradebookPage({ api, sessionToken, user, groupId, routeMonth, onNotice, mode = "group" }) {
+export function GradebookPage({ api, sessionToken, user, groupId, routeMonth, onNotice, mode = "group", archived = false }) {
   const resolvedGroupId = mode === "student" ? user.group_id : groupId;
   const monthValue = routeMonth || toMonthValue();
   const lockedGradebook = mode === "student" || user.role === "MENTOR" || user.role === "ADMIN";
@@ -53,9 +53,9 @@ export function GradebookPage({ api, sessionToken, user, groupId, routeMonth, on
       if (!resolvedGroupId) {
         return Promise.resolve(null);
       }
-      return api(`/api/groups/${resolvedGroupId}/gradebook/?month=${monthValue}`);
+      return api(`/api/groups/${resolvedGroupId}/gradebook/?month=${monthValue}${archived ? "&archived=1" : ""}`);
     },
-    [sessionToken, resolvedGroupId, monthValue],
+    [sessionToken, resolvedGroupId, monthValue, archived],
   );
 
   useEffect(() => {

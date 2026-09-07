@@ -20,6 +20,7 @@ from rest_framework_simplejwt.tokens import RefreshToken
 from rest_framework_simplejwt.views import TokenObtainPairView
 
 from .models import (
+    CollegeGroup,
     Group,
     Lesson,
     LessonRecord,
@@ -33,6 +34,7 @@ from .report_delivery import build_report_conversations, record_meta_delivery_ca
 from .report import force_send_all_monthly_reports, is_absence_grade, send_student_month_report
 from .organization import organization_for_request
 from .serializers import (
+    CollegeGroupSerializer,
     GroupDetailSerializer,
     GroupListSerializer,
     GroupWriteSerializer,
@@ -58,7 +60,7 @@ def groups_for_user(user):
     if user.role == User.ROLE_MENTOR and hasattr(user, "mentor_profile"):
         return queryset.filter(mentor=user.mentor_profile)
     if user.role == User.ROLE_STUDENT and hasattr(user, "student_profile"):
-        return queryset.filter(pk=user.student_profile.group_id)
+        return queryset.filter(Q(pk=user.student_profile.group_id) | Q(college_students=user.student_profile)).distinct()
     return queryset.none()
 
 
@@ -67,7 +69,7 @@ def students_for_user(user):
     if user.role == User.ROLE_ADMIN:
         return queryset.filter(archived_at__isnull=True, group__archived_at__isnull=True)
     if user.role == User.ROLE_MENTOR and hasattr(user, "mentor_profile"):
-        return queryset.filter(group__mentor=user.mentor_profile, group__archived_at__isnull=True, archived_at__isnull=True)
+        return queryset.filter(Q(group__mentor=user.mentor_profile, group__archived_at__isnull=True) | Q(college_groups__mentor=user.mentor_profile, college_groups__archived_at__isnull=True), archived_at__isnull=True).distinct()
     if user.role == User.ROLE_STUDENT and hasattr(user, "student_profile"):
         return queryset.filter(pk=user.student_profile.pk, archived_at__isnull=True)
     return queryset.none()
@@ -80,7 +82,7 @@ def lessons_for_user(user):
     if user.role == User.ROLE_MENTOR and hasattr(user, "mentor_profile"):
         return queryset.filter(group__mentor=user.mentor_profile)
     if user.role == User.ROLE_STUDENT and hasattr(user, "student_profile"):
-        return queryset.filter(group=user.student_profile.group)
+        return queryset.filter(Q(group=user.student_profile.group) | Q(group__college_students=user.student_profile)).distinct()
     return queryset.none()
 
 
@@ -211,15 +213,15 @@ def serialize_choice_pairs(choices):
 
 
 def build_gradebook_payload(group, user, selected_month):
-    can_edit = user.role in {User.ROLE_ADMIN, User.ROLE_MENTOR}
+    can_edit = user.role in {User.ROLE_ADMIN, User.ROLE_MENTOR} and group.archived_at is None
     previous_month, next_month = month_navigation(selected_month)
     month_days = build_month_days(selected_month)
     month_start, month_end = month_bounds(selected_month)
     study_weekdays = get_group_study_weekdays(group)
 
-    if can_edit:
+    if user.role in {User.ROLE_ADMIN, User.ROLE_MENTOR}:
         relation = group.college_students if group.organization_type == "college" else group.students
-        students = list(relation.filter(archived_at__isnull=True).select_related("user"))
+        students = list((relation if group.archived_at is not None else relation.filter(archived_at__isnull=True)).select_related("user"))
     elif hasattr(user, "student_profile") and (
         user.student_profile.group_id == group.pk
         or user.student_profile.college_groups.filter(pk=group.pk).exists()
@@ -1029,7 +1031,7 @@ class StudentProfileViewSet(viewsets.ModelViewSet):
             if self.action in {"archived", "restore", "destroy"}:
                 return queryset.filter(archived_at__isnull=False)
             return queryset.filter(archived_at__isnull=True)
-        return students_for_user(self.request.user)
+        return students_for_user(self.request.user).filter(organization_type=organization)
 
     def create(self, request, *args, **kwargs):
         if request.user.role != User.ROLE_ADMIN:
@@ -1110,16 +1112,39 @@ class StudentProfileViewSet(viewsets.ModelViewSet):
             instance.group = group
             instance.archived_at = None
             instance.save(update_fields=["group", "archived_at"])
-            move_student_records_to_group(instance, old_group, group)
+            if instance.organization_type == "college":
+                instance.college_groups.set([group])
+            else:
+                move_student_records_to_group(instance, old_group, group)
             instance.user.is_active = True
             instance.user.save(update_fields=["is_active"])
         return Response(self.get_serializer(instance).data)
 
 
+class CollegeGroupViewSet(viewsets.ModelViewSet):
+    serializer_class = CollegeGroupSerializer
+    http_method_names = ["get", "post", "put", "patch", "head", "options"]
+
+    def get_queryset(self):
+        if organization_for_request(self.request) != "college":
+            raise PermissionDenied("Основные группы доступны только в колледже.")
+        if self.request.method not in permissions.SAFE_METHODS and self.request.user.role != User.ROLE_ADMIN:
+            raise PermissionDenied
+        queryset = CollegeGroup.objects.all()
+        if self.request.user.role != User.ROLE_ADMIN:
+            queryset = queryset.filter(subgroups__in=groups_for_user(self.request.user)).distinct()
+        return queryset
+
+    def perform_create(self, serializer):
+        self.get_queryset()
+        serializer.save()
+
+
 class GroupViewSet(viewsets.ModelViewSet):
     def get_queryset(self):
         organization = organization_for_request(self.request)
-        if self.action == "archived":
+        include_archived = self.request.query_params.get("archived") == "1" and self.request.user.role == User.ROLE_ADMIN
+        if self.action == "archived" or include_archived:
             return annotate_group_students_count(
                 Group.objects.filter(archived_at__isnull=False, organization_type=organization),
                 organization,
@@ -1171,10 +1196,16 @@ class GroupViewSet(viewsets.ModelViewSet):
         with transaction.atomic():
             group.archived_at = now
             group.save(update_fields=["archived_at"])
-            students = relation.filter(archived_at__isnull=True)
-            student_ids = list(students.values_list("pk", flat=True))
-            students.update(archived_at=now)
-            User.objects.filter(student_profile__pk__in=student_ids).update(is_active=False)
+            for student in relation.filter(archived_at__isnull=True).select_related("user", "group"):
+                if group.organization_type == "college":
+                    has_active_group = student.college_groups.filter(archived_at__isnull=True).exclude(pk=group.pk).exists()
+                else:
+                    has_active_group = False
+                if not has_active_group:
+                    student.archived_at = now
+                    student.save(update_fields=["archived_at"])
+                    student.user.is_active = False
+                    student.user.save(update_fields=["is_active"])
         return Response(self.get_serializer(group).data)
 
     @action(detail=False, methods=["get"])
@@ -1191,6 +1222,9 @@ class GroupViewSet(viewsets.ModelViewSet):
             selected_month = get_selected_month(request)
             payload, _, _, _ = build_gradebook_payload(group, request.user, selected_month)
             return Response(payload)
+
+        if group.archived_at is not None:
+            raise ValidationError("Архивный табель доступен только для просмотра.")
 
         if request.user.role not in {User.ROLE_ADMIN, User.ROLE_MENTOR}:
             raise PermissionDenied

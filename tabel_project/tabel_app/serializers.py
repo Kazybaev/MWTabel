@@ -4,6 +4,7 @@ from rest_framework import serializers
 from rest_framework_simplejwt.tokens import RefreshToken
 
 from .models import (
+    CollegeGroup,
     Group,
     Lesson,
     LessonRecord,
@@ -247,12 +248,20 @@ class MentorProfileSerializer(serializers.ModelSerializer):
         return instance
 
 
+class CollegeGroupSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = CollegeGroup
+        fields = ["id", "name"]
+
+
 class StudentProfileSerializer(serializers.ModelSerializer):
     user_id = serializers.IntegerField(source="user.id", read_only=True)
     full_name = serializers.CharField(source="user.full_name")
     username = serializers.CharField(source="user.username")
     email = serializers.EmailField(source="user.email", allow_blank=True, required=False)
     password = serializers.CharField(write_only=True, required=False, allow_blank=True, style={"input_type": "password"})
+    main_group = serializers.IntegerField(source="group.main_group_id", read_only=True)
+    main_group_name = serializers.CharField(source="group.main_group.name", read_only=True, default="")
     group_name = serializers.CharField(source="group.course_name", read_only=True)
     is_archived = serializers.SerializerMethodField()
 
@@ -269,6 +278,8 @@ class StudentProfileSerializer(serializers.ModelSerializer):
             "parent_phone",
             "group",
             "group_name",
+            "main_group",
+            "main_group_name",
             "archived_at",
             "is_archived",
             "organization_type",
@@ -298,13 +309,18 @@ class StudentProfileSerializer(serializers.ModelSerializer):
             raise serializers.ValidationError({"group": "Группа относится к другой организации."})
         if group and group.archived_at is not None:
             raise serializers.ValidationError({"group": "Нельзя назначить студента в архивную группу."})
-        college_groups = attrs.get("college_groups", [])
-        if organization == "college" and not college_groups and not self.instance:
+        college_groups = attrs.get("college_groups", list(self.instance.college_groups.all()) if self.instance else [])
+        if organization == "college" and not college_groups:
             raise serializers.ValidationError({"college_groups": "Выберите хотя бы одну группу."})
         if any(item.organization_type != organization for item in college_groups):
             raise serializers.ValidationError({"college_groups": "Все предметы должны относиться к текущей организации."})
         if any(item.archived_at is not None for item in college_groups):
             raise serializers.ValidationError({"college_groups": "Нельзя выбрать архивную группу."})
+        if organization == "college" and college_groups:
+            if len({item.main_group_id for item in college_groups}) > 1:
+                raise serializers.ValidationError({"college_groups": "Подгруппы должны принадлежать одной основной группе."})
+            if group not in college_groups:
+                raise serializers.ValidationError({"group": "Выберите одну из назначенных подгрупп."})
         return attrs
 
     @transaction.atomic
@@ -344,10 +360,12 @@ class StudentProfileSerializer(serializers.ModelSerializer):
             instance.parent_name = validated_data.get("parent_name", instance.parent_name)
             instance.parent_phone = validated_data.get("parent_phone", instance.parent_phone)
             instance.group = new_group
+            instance.college_course = validated_data.get("college_course", instance.college_course)
             instance.save()
             if "college_groups" in validated_data:
                 instance.college_groups.set(validated_data["college_groups"])
-            move_student_records_to_group(instance, old_group, new_group)
+            if instance.organization_type != "college":
+                move_student_records_to_group(instance, old_group, new_group)
         return instance
 
 
@@ -384,6 +402,7 @@ class LessonSerializer(serializers.ModelSerializer):
 
 
 class GroupListSerializer(serializers.ModelSerializer):
+    main_group_name = serializers.CharField(source="main_group.name", read_only=True, default="")
     mentor_name = serializers.CharField(source="mentor.user.full_name", read_only=True)
     study_days_label = serializers.CharField(source="get_study_days_display", read_only=True)
     students_count = serializers.SerializerMethodField()
@@ -394,6 +413,8 @@ class GroupListSerializer(serializers.ModelSerializer):
         fields = [
             "id",
             "course_name",
+            "main_group",
+            "main_group_name",
             "study_days",
             "study_days_label",
             "description",
@@ -410,6 +431,8 @@ class GroupListSerializer(serializers.ModelSerializer):
         return obj.archived_at is not None
 
     def get_students_count(self, obj):
+        if obj.archived_at is not None:
+            return obj.college_students.count() if obj.organization_type == "college" else obj.students.count()
         annotated_count = getattr(obj, "students_count", None)
         if annotated_count is not None:
             return annotated_count
@@ -421,8 +444,20 @@ class GroupListSerializer(serializers.ModelSerializer):
 class GroupWriteSerializer(serializers.ModelSerializer):
     class Meta:
         model = Group
-        fields = ["id", "course_name", "mentor", "study_days", "description", "organization_type", "college_course"]
+        fields = ["id", "course_name", "mentor", "study_days", "description", "organization_type", "college_course", "main_group"]
         read_only_fields = ["organization_type"]
+
+    def validate(self, attrs):
+        request = self.context.get("request")
+        organization = organization_for_request(request) if request else "academy"
+        main_group = attrs.get("main_group", self.instance.main_group if self.instance else None)
+        if main_group and organization != "college":
+            raise serializers.ValidationError({"main_group": "Основные группы доступны только в колледже."})
+        if self.instance and main_group != self.instance.main_group:
+            students = self.instance.college_students.all()
+            if Group.objects.filter(college_students__in=students).exclude(pk=self.instance.pk).exclude(main_group__isnull=True).exclude(main_group=main_group).exists():
+                raise serializers.ValidationError({"main_group": "Сначала измените состав студентов: у них есть подгруппы другой основной группы."})
+        return attrs
 
     def validate_mentor(self, mentor):
         request = self.context.get("request")
@@ -432,6 +467,7 @@ class GroupWriteSerializer(serializers.ModelSerializer):
 
 
 class GroupDetailSerializer(serializers.ModelSerializer):
+    main_group_name = serializers.CharField(source="main_group.name", read_only=True, default="")
     mentor = MentorProfileSerializer(read_only=True)
     mentor_name = serializers.CharField(source="mentor.user.full_name", read_only=True)
     study_days_label = serializers.CharField(source="get_study_days_display", read_only=True)
@@ -445,6 +481,8 @@ class GroupDetailSerializer(serializers.ModelSerializer):
         fields = [
             "id",
             "course_name",
+            "main_group",
+            "main_group_name",
             "study_days",
             "study_days_label",
             "description",
@@ -463,6 +501,8 @@ class GroupDetailSerializer(serializers.ModelSerializer):
         return obj.archived_at is not None
 
     def get_students_count(self, obj):
+        if obj.archived_at is not None:
+            return obj.college_students.count() if obj.organization_type == "college" else obj.students.count()
         annotated_count = getattr(obj, "students_count", None)
         if annotated_count is not None:
             return annotated_count
@@ -475,7 +515,7 @@ class GroupDetailSerializer(serializers.ModelSerializer):
         if request and request.user.role == User.ROLE_STUDENT:
             return []
         relation = obj.college_students if obj.organization_type == "college" else obj.students
-        queryset = relation.filter(archived_at__isnull=True).select_related("user")
+        queryset = (relation if obj.archived_at is not None else relation.filter(archived_at__isnull=True)).select_related("user")
         return StudentProfileSerializer(queryset, many=True).data
 
     def get_lessons(self, obj):

@@ -13,8 +13,8 @@ import {
   TextField,
 } from "../components/Ui";
 
-export function GroupDetailPage({ api, sessionToken, groupId, user, onNotice }) {
-  const { data, error, loading, reload } = useResource(() => api(`/api/groups/${groupId}/`), [sessionToken, groupId]);
+export function GroupDetailPage({ api, sessionToken, groupId, user, onNotice, archived = false }) {
+  const { data, error, loading, reload } = useResource(() => api(`/api/groups/${groupId}/${archived ? "?archived=1" : ""}`), [sessionToken, groupId, archived]);
   const [lessonEditorOpen, setLessonEditorOpen] = useState(false);
   const [lessonDraft, setLessonDraft] = useState({
     lesson_date: new Date().toISOString().slice(0, 10),
@@ -67,14 +67,14 @@ export function GroupDetailPage({ api, sessionToken, groupId, user, onNotice }) 
     }
   }
 
-  const canManageLessons = ["ADMIN", "MENTOR"].includes(user.role);
+  const canManageLessons = !archived && ["ADMIN", "MENTOR"].includes(user.role);
 
   return (
     <div className="page-stack">
       <section className="hero-band">
         <div>
           <p className="hero-band__eyebrow">ГРУППА</p>
-          <h2>{data.course_name}</h2>
+          <h2>{[data.main_group_name, data.course_name].filter(Boolean).join(" / ")}</h2>
           <p>{data.description || "Описание пока не заполнено."}</p>
         </div>
         <div className="hero-band__meta">
@@ -86,7 +86,7 @@ export function GroupDetailPage({ api, sessionToken, groupId, user, onNotice }) 
       <div className="metric-grid">
         <Badge tone="teal">{data.students_count} студентов</Badge>
         <Badge tone="sand">{data.study_days_label}</Badge>
-        <a className="button button--primary" href={`#/groups/${data.id}/gradebook`}>
+          <a className="button button--primary" href={`#/groups/${data.id}/gradebook${archived ? "?archived=1" : ""}`}>
           Открыть табель
         </a>
       </div>

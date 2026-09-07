@@ -18,18 +18,25 @@ import {
 function createEmptyGroup() {
   return {
     course_name: "",
+    main_group: "",
     mentor: "",
     study_days: "",
     description: "",
   };
 }
 
-export function GroupsPage({ api, meta, sessionToken, user, onNotice }) {
+export function GroupsPage({ api, meta, sessionToken, user, onNotice, organization = "academy" }) {
   const { data, error, loading, reload } = useResource(() => api("/api/groups/"), [sessionToken]);
   const { data: mentors } = useResource(
     () => (user.role === "ADMIN" ? api("/api/mentors/") : Promise.resolve([])),
     [sessionToken, user.role],
   );
+  const isCollege = organization === "college";
+  const { data: mainGroups, error: mainError, reload: reloadMainGroups } = useResource(
+    () => isCollege ? api("/api/college-groups/") : Promise.resolve([]), [sessionToken, organization],
+  );
+  const [selectedMain, setSelectedMain] = useState(null);
+  const [mainDraft, setMainDraft] = useState(null);
   const [search, setSearch] = useState("");
   const [editorOpen, setEditorOpen] = useState(false);
   const [draft, setDraft] = useState(createEmptyGroup());
@@ -50,7 +57,7 @@ export function GroupsPage({ api, meta, sessionToken, user, onNotice }) {
 
   function openCreate() {
     setEditingId(null);
-    setDraft(createEmptyGroup());
+    setDraft({ ...createEmptyGroup(), main_group: selectedMain || "", study_days: isCollege ? "MON_FRI" : "" });
     setEditorOpen(true);
   }
 
@@ -58,6 +65,7 @@ export function GroupsPage({ api, meta, sessionToken, user, onNotice }) {
     setEditingId(group.id);
     setDraft({
       course_name: group.course_name,
+      main_group: group.main_group ? String(group.main_group) : "",
       mentor: `${group.mentor}`,
       study_days: group.study_days,
       description: group.description || "",
@@ -75,6 +83,7 @@ export function GroupsPage({ api, meta, sessionToken, user, onNotice }) {
         body: {
           ...draft,
           mentor: Number(draft.mentor),
+          main_group: isCollege && draft.main_group ? Number(draft.main_group) : null,
         },
       });
       setEditorOpen(false);
@@ -88,6 +97,23 @@ export function GroupsPage({ api, meta, sessionToken, user, onNotice }) {
         tone: "danger",
         message: saveError.message,
       });
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  async function saveMainGroup(event) {
+    event.preventDefault();
+    setSaving(true);
+    try {
+      await api(mainDraft.id ? `/api/college-groups/${mainDraft.id}/` : "/api/college-groups/", {
+        method: mainDraft.id ? "PATCH" : "POST", body: { name: mainDraft.name },
+      });
+      setMainDraft(null);
+      await reloadMainGroups();
+      onNotice({ tone: "success", message: "Основная группа сохранена." });
+    } catch (saveError) {
+      onNotice({ tone: "danger", message: saveError.message });
     } finally {
       setSaving(false);
     }
@@ -121,6 +147,7 @@ export function GroupsPage({ api, meta, sessionToken, user, onNotice }) {
   }
 
   const groups = sortGroupsByName(data).filter((group) => {
+    if (isCollege && (selectedMain === null || String(group.main_group || "") !== selectedMain)) return false;
     const haystack = `${group.course_name} ${group.mentor_name} ${group.study_days_label}`.toLowerCase();
     return haystack.includes(deferredSearch.trim().toLowerCase());
   });
@@ -129,16 +156,36 @@ export function GroupsPage({ api, meta, sessionToken, user, onNotice }) {
     return <LoadingBlock label="Загружаем группы..." />;
   }
 
-  if (error) {
-    return <ErrorBlock message={error} action={<Button onClick={reload}>Повторить</Button>} />;
+  if (error || mainError) {
+    return <ErrorBlock message={error || mainError} action={<Button onClick={() => { reload(); reloadMainGroups(); }}>Повторить</Button>} />;
   }
 
   return (
     <div className="page-stack">
+      {isCollege ? (
+        <Panel title="Основные группы" description="Выберите группу, чтобы открыть её подгруппы и табели."
+          actions={user.role === "ADMIN" ? <Button onClick={() => setMainDraft({ name: "" })}>Создать основную группу</Button> : null}>
+          <div className="list-stack">
+            {(mainGroups || []).map((main) => (
+              <div key={main.id} className="list-card list-card--actions">
+                <strong>{main.name}</strong>
+                <div className="list-card__actions">
+                  <Button variant={selectedMain === String(main.id) ? "primary" : "ghost"} onClick={() => setSelectedMain(String(main.id))}>Подгруппы</Button>
+                  {user.role === "ADMIN" ? <Button variant="ghost" onClick={() => setMainDraft(main)}>Изменить название</Button> : null}
+                </div>
+              </div>
+            ))}
+            {(data || []).some((group) => !group.main_group) ? <Button variant="ghost" onClick={() => setSelectedMain("")}>Без основной группы</Button> : null}
+            {!mainGroups?.length ? <p>Создайте основную группу и добавьте в неё подгруппы: ИИ, фронтенд, английский.</p> : null}
+          </div>
+        </Panel>
+      ) : null}
+      {(!isCollege || selectedMain !== null) ? <>
+
       <Panel
         className={isMentorView ? "groups-panel groups-panel--mentor" : "groups-panel"}
         eyebrow={isMentorView ? "МОИ ГРУППЫ" : "Потоки"}
-        title={isMentorView ? "Выберите группу" : "Группы"}
+        title={isCollege ? `Подгруппы · ${(mainGroups || []).find((main) => String(main.id) === selectedMain)?.name || "Без основной группы"}` : isMentorView ? "Выберите группу" : "Группы"}
         description={
           isMentorView
             ? "Нажмите на нужную группу, и сразу откроется табель на месяц. Здесь только ваши группы."
@@ -152,7 +199,7 @@ export function GroupsPage({ api, meta, sessionToken, user, onNotice }) {
               onChange={(event) => setSearch(event.target.value)}
               placeholder={isMentorView ? "Поиск по названию группы" : "Поиск по курсу или ментору"}
             />
-            {user.role === "ADMIN" ? <Button onClick={openCreate}>Создать группу</Button> : null}
+            {user.role === "ADMIN" ? <Button onClick={openCreate}>{isCollege ? "Создать подгруппу" : "Создать группу"}</Button> : null}
           </div>
         }
       >
@@ -218,6 +265,8 @@ export function GroupsPage({ api, meta, sessionToken, user, onNotice }) {
         )}
       </Panel>
 
+      </> : null}
+
       <Modal
         open={editorOpen}
         title={editingId ? "Редактирование группы" : "Новая группа"}
@@ -236,11 +285,14 @@ export function GroupsPage({ api, meta, sessionToken, user, onNotice }) {
       >
         <form id="group-form" className="form-grid" onSubmit={handleSave}>
           <TextField
-            label="Название курса"
+            label={isCollege ? "Название подгруппы / предмета" : "Название курса"}
             value={draft.course_name}
             onChange={(value) => setDraft((current) => ({ ...current, course_name: value }))}
             required
           />
+          {isCollege ? <SelectField label="Основная группа" value={draft.main_group}
+            onChange={(value) => setDraft((current) => ({ ...current, main_group: value }))}
+            options={(mainGroups || []).map((main) => ({ value: String(main.id), label: main.name }))} required /> : null}
           <SelectField
             label="Ментор"
             value={draft.mentor}
@@ -263,6 +315,12 @@ export function GroupsPage({ api, meta, sessionToken, user, onNotice }) {
         </form>
       </Modal>
 
+      <Modal open={Boolean(mainDraft)} title={mainDraft?.id ? "Название основной группы" : "Новая основная группа"}
+        onClose={() => setMainDraft(null)} footer={<Button type="submit" form="main-group-form" disabled={saving}>Сохранить</Button>}>
+        <form id="main-group-form" onSubmit={saveMainGroup}>
+          <TextField label="Название" value={mainDraft?.name || ""} onChange={(name) => setMainDraft((current) => ({ ...current, name }))} required />
+        </form>
+      </Modal>
       <Modal
         open={Boolean(archiveTarget)}
         title="Архивировать группу"

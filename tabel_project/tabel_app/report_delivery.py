@@ -15,6 +15,8 @@ logger = logging.getLogger("tabel_app.reports")
 
 
 def build_report_message_text(payload: dict[str, Any]) -> str:
+    if payload.get("message_text"):
+        return payload["message_text"]
     student = payload.get("student", {})
     group = payload.get("group", {})
     groups = payload.get("groups") or []
