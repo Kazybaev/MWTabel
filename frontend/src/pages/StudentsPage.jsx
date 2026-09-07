@@ -284,10 +284,6 @@ export function StudentsPage({ api, sessionToken, user, onNotice, organization =
             onChange={(value) => setDraft((current) => ({ ...current, parent_name: value }))}
             autoComplete="off"
             disableAutoFill
-<<<<<<< HEAD
-=======
-            help="Необязательно"
->>>>>>> 700ed30 (pulling)
           />
           <TextField
             label="Телефон родителя"
