@@ -119,6 +119,26 @@ def get_selected_month(request):
     return parse_month_value(request.GET.get("month")) or timezone.localdate().replace(day=1)
 
 
+def get_admin_student_gradebook_month(request, student, organization_type):
+    requested_month = parse_month_value(request.GET.get("month"))
+    if requested_month is not None:
+        return requested_month
+
+    latest_lesson_date = (
+        LessonRecord.objects.filter(
+            student=student,
+            lesson__group__organization_type=organization_type,
+        )
+        .order_by("-lesson__lesson_date", "-lesson_id")
+        .values_list("lesson__lesson_date", flat=True)
+        .first()
+    )
+    if latest_lesson_date is not None:
+        return latest_lesson_date.replace(day=1)
+
+    return timezone.localdate().replace(day=1)
+
+
 def month_bounds(current_month):
     next_month = (current_month.replace(day=28) + timedelta(days=4)).replace(day=1)
     return current_month, next_month - timedelta(days=1)
@@ -1066,7 +1086,7 @@ class StudentProfileViewSet(viewsets.ModelViewSet):
         student = self.get_object()
 
         if request.method == "GET":
-            selected_month = get_selected_month(request)
+            selected_month = get_admin_student_gradebook_month(request, student, organization)
             return Response(build_admin_student_gradebook_payload(student, organization, selected_month))
 
         selected_month = parse_month_value(request.data.get("month"))

@@ -239,7 +239,9 @@
 .student-gradebook__table th:not(:first-child),
 .student-gradebook__table td { min-width: 54px; }
 .college-gradebook__scroll--admin {
+  box-sizing: border-box;
   width: 100%;
+  min-width: 0;
   max-width: 100%;
   padding-bottom: 10px;
   overflow-x: scroll;
@@ -247,7 +249,9 @@
   scrollbar-gutter: stable;
   scrollbar-width: auto;
   scrollbar-color: #64748b #e2e8f0;
-  overscroll-behavior-inline: contain;
+  overscroll-behavior-x: contain;
+  touch-action: pan-x pan-y;
+  -webkit-overflow-scrolling: touch;
   scroll-behavior: smooth;
 }
 .college-gradebook__scroll--admin::-webkit-scrollbar { height: 14px; }
@@ -257,6 +261,13 @@
 .student-gradebook__hint strong { color: #475569; }
 .student-gradebook__savebar { display: flex; align-items: center; justify-content: flex-end; gap: 16px; margin-top: 18px; }
 .student-gradebook__savebar span { color: var(--muted); font-weight: 700; }
+
+.student-gradebook__table td.gradebook-table__cell--excellent { background: #8de0aa; color: #12392d; }
+.student-gradebook__table td.gradebook-table__cell--good { background: #f5bf72; color: #553510; }
+.student-gradebook__table td.gradebook-table__cell--warning { background: #ef8d63; color: #4c2118; }
+.student-gradebook__table td.gradebook-table__cell--danger,
+.student-gradebook__table td.gradebook-table__cell--absence { background: #c83d44; color: #fff8f4; }
+.student-gradebook__table td.gradebook-table__cell--empty { background: rgba(255, 255, 255, 0.64); color: var(--ink-strong); }
 
 @media (max-width: 720px) {
   .student-gradebook__hint { align-items: flex-start; flex-direction: column; gap: 4px; }
@@ -6031,6 +6042,117 @@ summary {
 .gradebook-layout--student .gradebook-scroll--student .gradebook-table {
   width: max-content;
   min-width: max-content;
+}
+
+/* Student gradebook: keep the wide calendar inside a real horizontal viewport. */
+.gradebook-layout--student .gradebook-panel {
+  width: 100%;
+  min-width: 0;
+  max-width: 100%;
+  overflow: hidden;
+}
+
+.gradebook-layout--student .gradebook-panel .panel__body {
+  width: 100%;
+  min-width: 0;
+  max-width: 100%;
+  overflow: hidden;
+}
+
+.gradebook-layout--student .gradebook-scroll--student {
+  box-sizing: border-box;
+  width: 100%;
+  min-width: 0;
+  max-width: 100%;
+  overflow-x: scroll !important;
+  overflow-y: auto !important;
+  scrollbar-width: auto;
+  scrollbar-color: rgba(17, 114, 93, 0.72) rgba(17, 114, 93, 0.12);
+  overscroll-behavior-x: contain;
+  touch-action: pan-x pan-y;
+}
+
+.gradebook-scroll-controls {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 10px;
+  color: var(--ink-soft);
+  font-size: 0.86rem;
+  font-weight: 700;
+}
+
+.gradebook-scroll-controls__buttons {
+  display: flex;
+  gap: 8px;
+  flex: 0 0 auto;
+}
+
+.gradebook-scroll-controls button {
+  width: 44px;
+  height: 44px;
+  display: inline-grid;
+  place-items: center;
+  padding: 0;
+  border: 1px solid rgba(17, 114, 93, 0.2);
+  border-radius: 14px;
+  background: rgba(255, 255, 255, 0.72);
+  color: var(--brand-strong);
+  cursor: pointer;
+  transition: background 180ms ease, border-color 180ms ease, transform 180ms ease;
+}
+
+.gradebook-scroll-controls button:hover {
+  border-color: rgba(17, 114, 93, 0.42);
+  background: rgba(255, 255, 255, 0.96);
+}
+
+.gradebook-scroll-controls button:active {
+  transform: scale(0.96);
+}
+
+.gradebook-scroll-controls button:focus-visible {
+  outline: 3px solid rgba(17, 114, 93, 0.28);
+  outline-offset: 2px;
+}
+
+.gradebook-scroll-controls svg {
+  width: 22px;
+  height: 22px;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 2;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+
+:root[data-theme="dark"] .gradebook-scroll-controls button {
+  border-color: rgba(126, 190, 255, 0.3);
+  background: rgba(15, 43, 82, 0.82);
+  color: #dceeff;
+}
+
+:root[data-theme="dark"] .student-gradebook__table td.gradebook-table__cell--excellent { background: #8de0aa; color: #12392d; }
+:root[data-theme="dark"] .student-gradebook__table td.gradebook-table__cell--good { background: #f5bf72; color: #553510; }
+:root[data-theme="dark"] .student-gradebook__table td.gradebook-table__cell--warning { background: #ef8d63; color: #4c2118; }
+:root[data-theme="dark"] .student-gradebook__table td.gradebook-table__cell--danger,
+:root[data-theme="dark"] .student-gradebook__table td.gradebook-table__cell--absence { background: #c83d44; color: #fff8f4; }
+:root[data-theme="dark"] .student-gradebook__table td.gradebook-table__cell--empty { background: rgba(11, 32, 66, 0.72); color: var(--ink-strong); }
+
+@media (max-width: 540px) {
+  .gradebook-scroll-controls {
+    align-items: flex-start;
+    flex-direction: column;
+  }
+
+  .gradebook-scroll-controls__buttons {
+    align-self: stretch;
+  }
+
+  .gradebook-scroll-controls button {
+    flex: 1 1 0;
+  }
 }
 
 .gradebook-layout--admin .hero-band,

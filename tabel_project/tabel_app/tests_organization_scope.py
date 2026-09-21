@@ -1,3 +1,5 @@
+from datetime import timedelta
+
 from rest_framework import status
 from rest_framework.test import APITestCase
 from django.utils import timezone
@@ -181,7 +183,7 @@ class OrganizationScopeApiTests(APITestCase):
             college_course="1",
         )
         student.college_groups.set([self.college_group, second_group])
-        month = timezone.localdate().replace(day=1)
+        month = (timezone.localdate().replace(day=1) - timedelta(days=1)).replace(day=1)
         math_lesson = Lesson.objects.create(group=self.college_group, lesson_date=month, topic="Math")
         english_lesson = Lesson.objects.create(group=second_group, lesson_date=month.replace(day=2), topic="English")
 
@@ -223,6 +225,19 @@ class OrganizationScopeApiTests(APITestCase):
         self.assertEqual(response.status_code, status.HTTP_200_OK)
         self.assertTrue(LessonRecord.objects.filter(student=student, lesson=math_lesson, grade="5").exists())
         self.assertTrue(LessonRecord.objects.filter(student=student, lesson=english_lesson, grade="Н").exists())
+        rows_by_subject = {row["subject"]: row for row in response.data["rows"]}
+        self.assertEqual(rows_by_subject["Math"]["grades"][month.isoformat()], "5")
+        self.assertEqual(rows_by_subject["English"]["grades"][month.replace(day=2).isoformat()], "Н")
+
+        latest_month_response = self.client.get(
+            f"/api/students/{student.pk}/gradebook/",
+            **self.headers(ORGANIZATION_COLLEGE),
+        )
+        self.assertEqual(latest_month_response.status_code, status.HTTP_200_OK)
+        self.assertEqual(latest_month_response.data["month"], month.strftime("%Y-%m"))
+        latest_rows = {row["subject"]: row for row in latest_month_response.data["rows"]}
+        self.assertEqual(latest_rows["Math"]["grades"][month.isoformat()], "5")
+        self.assertEqual(latest_rows["English"]["grades"][month.replace(day=2).isoformat()], "Н")
 
         self.client.force_authenticate(self.college_mentor.user)
         forbidden = self.client.get(

@@ -1,3 +1,5 @@
+import { useRef } from "react";
+
 import { formatMonthLabel } from "../lib/format";
 import { Button, Panel } from "./Ui";
 
@@ -55,6 +57,7 @@ export function GradebookMatrix({
   lockedMode = false,
   studentMode = false,
 }) {
+  const scrollContainerRef = useRef(null);
   const saveMessage =
     {
       pending: "Есть изменения. Сохраняем автоматически...",
@@ -62,6 +65,16 @@ export function GradebookMatrix({
       error: "Не удалось сохранить. Следующее изменение попробует снова.",
       synced: dirty ? "Изменения готовы к сохранению..." : "Все изменения сохраняются автоматически.",
     }[saveStatus] || "Все изменения сохраняются автоматически.";
+
+  function scrollTable(direction) {
+    const container = scrollContainerRef.current;
+    if (!container) return;
+
+    container.scrollBy({
+      left: direction * Math.max(container.clientWidth * 0.72, 280),
+      behavior: "smooth",
+    });
+  }
 
   return (
     <div
@@ -123,7 +136,21 @@ export function GradebookMatrix({
           </div>
         }
       >
-        <div className={`gradebook-scroll gradebook-scroll--matrix ${lockedMode ? "gradebook-scroll--locked" : ""} ${studentMode ? "gradebook-scroll--student" : ""}`.trim()} tabIndex="0" aria-label="Таблица оценок с горизонтальной прокруткой">
+        {studentMode ? (
+          <div className="gradebook-scroll-controls" aria-label="Управление прокруткой табеля">
+            <span>Листайте табель вправо и влево</span>
+            <div className="gradebook-scroll-controls__buttons">
+              <button type="button" onClick={() => scrollTable(-1)} aria-label="Прокрутить табель влево">
+                <svg viewBox="0 0 24 24" aria-hidden="true"><path d="m15 18-6-6 6-6" /></svg>
+              </button>
+              <button type="button" onClick={() => scrollTable(1)} aria-label="Прокрутить табель вправо">
+                <svg viewBox="0 0 24 24" aria-hidden="true"><path d="m9 18 6-6-6-6" /></svg>
+              </button>
+            </div>
+          </div>
+        ) : null}
+
+        <div ref={scrollContainerRef} className={`gradebook-scroll gradebook-scroll--matrix ${lockedMode ? "gradebook-scroll--locked" : ""} ${studentMode ? "gradebook-scroll--student" : ""}`.trim()} tabIndex="0" aria-label="Таблица оценок с горизонтальной прокруткой">
           <table className="gradebook-table">
             <thead>
               <tr>

@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useRef, useState } from "react";
 
 import { Badge, Button, EmptyState, ErrorBlock, LoadingBlock, Panel } from "../components/Ui";
 import { formatMonthLabel, toMonthValue } from "../lib/format";
@@ -34,6 +34,7 @@ function formatAverage(value) {
 }
 
 function StudentGradebookEditor({ api, data, month, onNotice, setData }) {
+  const scrollContainerRef = useRef(null);
   const [draftGrades, setDraftGrades] = useState(() => buildGradeMap(data.rows));
   const [saving, setSaving] = useState(false);
   const [dirty, setDirty] = useState(false);
@@ -41,6 +42,16 @@ function StudentGradebookEditor({ api, data, month, onNotice, setData }) {
   function updateGrade(groupId, date, grade) {
     setDraftGrades((current) => ({ ...current, [cellKey(groupId, date)]: grade }));
     setDirty(true);
+  }
+
+  function scrollTable(direction) {
+    const container = scrollContainerRef.current;
+    if (!container) return;
+
+    container.scrollBy({
+      left: direction * Math.max(container.clientWidth * 0.72, 280),
+      behavior: "smooth",
+    });
   }
 
   async function saveGrades() {
@@ -105,9 +116,20 @@ function StudentGradebookEditor({ api, data, month, onNotice, setData }) {
           <>
           <div className="student-gradebook__hint">
             <span>Полный календарь выбранного месяца</span>
-            <strong>Прокручивайте таблицу горизонтально →</strong>
+            <strong>Все оценки показаны по датам</strong>
           </div>
-          <div className="college-gradebook__scroll college-gradebook__scroll--admin" tabIndex="0" aria-label="Персональный табель с горизонтальной прокруткой">
+          <div className="gradebook-scroll-controls" aria-label="Управление прокруткой табеля студента">
+            <span>Свайпните таблицу или прокрутите её вправо и влево</span>
+            <div className="gradebook-scroll-controls__buttons">
+              <button type="button" onClick={() => scrollTable(-1)} aria-label="Прокрутить табель студента влево">
+                <svg viewBox="0 0 24 24" aria-hidden="true"><path d="m15 18-6-6 6-6" /></svg>
+              </button>
+              <button type="button" onClick={() => scrollTable(1)} aria-label="Прокрутить табель студента вправо">
+                <svg viewBox="0 0 24 24" aria-hidden="true"><path d="m9 18 6-6-6-6" /></svg>
+              </button>
+            </div>
+          </div>
+          <div ref={scrollContainerRef} className="college-gradebook__scroll college-gradebook__scroll--admin" tabIndex="0" aria-label="Персональный табель с горизонтальной прокруткой">
             <table className="college-gradebook student-gradebook__table">
               <thead>
                 <tr>
@@ -163,15 +185,16 @@ function StudentGradebookEditor({ api, data, month, onNotice, setData }) {
 }
 
 export function StudentGradebookPage({ api, sessionToken, studentId, routeMonth, onNotice }) {
-  const month = routeMonth || toMonthValue();
+  const requestedMonth = routeMonth || "";
   const { data, error, loading, reload, setData } = useResource(
-    () => api(`/api/students/${studentId}/gradebook/?month=${month}`),
-    [sessionToken, studentId, month],
+    () => api(`/api/students/${studentId}/gradebook/${requestedMonth ? `?month=${requestedMonth}` : ""}`),
+    [sessionToken, studentId, requestedMonth],
   );
 
   if (loading) return <LoadingBlock label="Загружаем персональный табель..." />;
   if (error) return <ErrorBlock message={error} action={<Button onClick={reload}>Повторить</Button>} />;
   if (!data) return <EmptyState title="Студент не найден" description="Вернитесь к списку студентов и выберите другую запись." />;
 
+  const month = data.month || requestedMonth || toMonthValue();
   return <StudentGradebookEditor key={`${studentId}-${month}`} api={api} data={data} month={month} onNotice={onNotice} setData={setData} />;
 }
