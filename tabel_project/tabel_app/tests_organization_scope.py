@@ -1,10 +1,15 @@
 from datetime import timedelta
+from importlib import import_module
 
+from django.apps import apps
 from rest_framework import status
 from rest_framework.test import APITestCase
 from django.utils import timezone
 
 from .models import (
+    COLLEGE_BRANCH_AGRARIAN,
+    COLLEGE_BRANCH_KUWAIT,
+    CollegeGroup,
     Group,
     Lesson,
     LessonRecord,
@@ -32,14 +37,130 @@ class OrganizationScopeApiTests(APITestCase):
         self.college_group = Group.objects.create(course_name="Math", mentor=self.college_mentor, study_days=Group.MON_FRI, organization_type=ORGANIZATION_COLLEGE)
         self.client.force_authenticate(self.admin)
 
-    def headers(self, organization):
-        return {"HTTP_X_ORGANIZATION_TYPE": organization}
+    def headers(self, organization, college_branch=COLLEGE_BRANCH_KUWAIT):
+        return {
+            "HTTP_X_ORGANIZATION_TYPE": organization,
+            "HTTP_X_COLLEGE_BRANCH": college_branch,
+        }
 
     def test_group_lists_are_fully_separated(self):
         academy = self.client.get("/api/groups/", **self.headers(ORGANIZATION_ACADEMY))
         college = self.client.get("/api/groups/", **self.headers(ORGANIZATION_COLLEGE))
         self.assertEqual([item["course_name"] for item in academy.data], ["Academy Group"])
         self.assertEqual([item["course_name"] for item in college.data], ["Math"])
+
+    def test_college_branches_are_separate_and_apply_course_defaults(self):
+        agrarian_group = self.client.post(
+            "/api/groups/",
+            {
+                "course_name": "Agronomy",
+                "mentor": self.college_mentor.pk,
+                "study_days": Group.MON_FRI,
+            },
+            format="json",
+            **self.headers(ORGANIZATION_COLLEGE, COLLEGE_BRANCH_AGRARIAN),
+        )
+        self.assertEqual(agrarian_group.status_code, status.HTTP_201_CREATED, agrarian_group.data)
+        self.assertEqual(agrarian_group.data["college_branch"], COLLEGE_BRANCH_AGRARIAN)
+        self.assertEqual(agrarian_group.data["college_course"], "1")
+
+        kuwait = self.client.get(
+            "/api/groups/",
+            **self.headers(ORGANIZATION_COLLEGE, COLLEGE_BRANCH_KUWAIT),
+        )
+        agrarian = self.client.get(
+            "/api/groups/",
+            **self.headers(ORGANIZATION_COLLEGE, COLLEGE_BRANCH_AGRARIAN),
+        )
+        self.assertEqual([item["course_name"] for item in kuwait.data], ["Math"])
+        self.assertEqual([item["course_name"] for item in agrarian.data], ["Agronomy"])
+
+        wrong_branch = self.client.post(
+            "/api/students/",
+            {
+                "full_name": "Wrong Branch",
+                "username": "wrong-branch",
+                "password": "pass-12345",
+                "parent_phone": "+996700000020",
+                "group": self.college_group.pk,
+                "college_groups": [self.college_group.pk],
+            },
+            format="json",
+            **self.headers(ORGANIZATION_COLLEGE, COLLEGE_BRANCH_AGRARIAN),
+        )
+        self.assertEqual(wrong_branch.status_code, status.HTTP_400_BAD_REQUEST)
+
+    def test_main_group_names_are_unique_inside_each_college(self):
+        kuwait = self.client.post(
+            "/api/college-groups/",
+            {"name": "К-01"},
+            format="json",
+            **self.headers(ORGANIZATION_COLLEGE, COLLEGE_BRANCH_KUWAIT),
+        )
+        agrarian = self.client.post(
+            "/api/college-groups/",
+            {"name": "К-01"},
+            format="json",
+            **self.headers(ORGANIZATION_COLLEGE, COLLEGE_BRANCH_AGRARIAN),
+        )
+        self.assertEqual(kuwait.status_code, status.HTTP_201_CREATED)
+        self.assertEqual(agrarian.status_code, status.HTTP_201_CREATED)
+        self.assertEqual(CollegeGroup.objects.filter(name="К-01").count(), 2)
+
+    def test_production_migration_splits_first_and_second_course_data(self):
+        main_group = CollegeGroup.objects.create(name="Legacy mixed group")
+        first_course_group = Group.objects.create(
+            course_name="Legacy Agronomy",
+            mentor=self.college_mentor,
+            main_group=main_group,
+            study_days=Group.MON_FRI,
+            organization_type=ORGANIZATION_COLLEGE,
+            college_course="1",
+        )
+        first_course_student = StudentProfile.objects.create(
+            user=User.objects.create_user(username="legacy-first-course", role=User.ROLE_STUDENT),
+            parent_phone="+996700000021",
+            group=first_course_group,
+            organization_type=ORGANIZATION_COLLEGE,
+            college_course="1",
+        )
+        first_course_student.college_groups.add(first_course_group)
+        second_course_group = Group.objects.create(
+            course_name="Legacy Kuwait",
+            mentor=self.college_mentor,
+            main_group=main_group,
+            study_days=Group.MON_FRI,
+            organization_type=ORGANIZATION_COLLEGE,
+            college_course="2",
+        )
+        second_course_student = StudentProfile.objects.create(
+            user=User.objects.create_user(username="legacy-second-course", role=User.ROLE_STUDENT),
+            parent_phone="+996700000022",
+            group=second_course_group,
+            organization_type=ORGANIZATION_COLLEGE,
+            college_course="2",
+        )
+        second_course_student.college_groups.add(second_course_group)
+
+        migration = import_module("tabel_app.migrations.0013_college_branches")
+        migration.split_existing_college_data(apps, None)
+
+        main_group.refresh_from_db()
+        first_course_group.refresh_from_db()
+        first_course_student.refresh_from_db()
+        second_course_group.refresh_from_db()
+        second_course_student.refresh_from_db()
+        self.college_group.refresh_from_db()
+        self.assertEqual(main_group.college_branch, COLLEGE_BRANCH_KUWAIT)
+        self.assertNotEqual(first_course_group.main_group_id, main_group.pk)
+        self.assertEqual(first_course_group.main_group.name, main_group.name)
+        self.assertEqual(first_course_group.main_group.college_branch, COLLEGE_BRANCH_AGRARIAN)
+        self.assertEqual(first_course_group.college_branch, COLLEGE_BRANCH_AGRARIAN)
+        self.assertEqual(first_course_student.college_branch, COLLEGE_BRANCH_AGRARIAN)
+        self.assertEqual(second_course_group.main_group_id, main_group.pk)
+        self.assertEqual(second_course_group.college_branch, COLLEGE_BRANCH_KUWAIT)
+        self.assertEqual(second_course_student.college_branch, COLLEGE_BRANCH_KUWAIT)
+        self.assertEqual(self.college_group.college_branch, COLLEGE_BRANCH_KUWAIT)
 
     def test_college_group_cannot_use_academy_mentor(self):
         response = self.client.post("/api/groups/", {"course_name": "Invalid", "mentor": self.academy_mentor.pk, "study_days": Group.MON_FRI}, format="json", **self.headers(ORGANIZATION_COLLEGE))

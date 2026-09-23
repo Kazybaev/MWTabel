@@ -8,6 +8,12 @@ ORGANIZATION_ACADEMY = "academy"
 ORGANIZATION_COLLEGE = "college"
 ORGANIZATION_CHOICES = ((ORGANIZATION_ACADEMY, "Академия"), (ORGANIZATION_COLLEGE, "Колледж"))
 COLLEGE_COURSE_CHOICES = (("1", "1 курс"), ("2", "2 курс"), ("3", "3 курс"), ("4", "4 курс"))
+COLLEGE_BRANCH_KUWAIT = "kuwait"
+COLLEGE_BRANCH_AGRARIAN = "agrarian"
+COLLEGE_BRANCH_CHOICES = (
+    (COLLEGE_BRANCH_KUWAIT, "Кувейтский колледж"),
+    (COLLEGE_BRANCH_AGRARIAN, "Аграрный колледж"),
+)
 
 
 class User(AbstractUser):
@@ -55,10 +61,22 @@ class MentorProfile(models.Model):
 
 
 class CollegeGroup(models.Model):
-    name = models.CharField(max_length=100, unique=True)
+    name = models.CharField(max_length=100)
+    college_branch = models.CharField(
+        max_length=16,
+        choices=COLLEGE_BRANCH_CHOICES,
+        default=COLLEGE_BRANCH_KUWAIT,
+        db_index=True,
+    )
 
     class Meta:
         ordering = ("name",)
+        constraints = [
+            models.UniqueConstraint(
+                fields=("college_branch", "name"),
+                name="unique_college_group_name_per_branch",
+            )
+        ]
 
     def __str__(self):
         return self.name
@@ -84,6 +102,12 @@ class Group(models.Model):
     description = models.TextField(blank=True)
     organization_type = models.CharField(max_length=16, choices=ORGANIZATION_CHOICES, default=ORGANIZATION_ACADEMY, db_index=True)
     college_course = models.CharField(max_length=1, choices=COLLEGE_COURSE_CHOICES, blank=True)
+    college_branch = models.CharField(
+        max_length=16,
+        choices=COLLEGE_BRANCH_CHOICES,
+        default=COLLEGE_BRANCH_KUWAIT,
+        db_index=True,
+    )
     archived_at = models.DateTimeField(null=True, blank=True)
 
     class Meta:
@@ -106,6 +130,12 @@ class StudentProfile(models.Model):
     organization_type = models.CharField(max_length=16, choices=ORGANIZATION_CHOICES, default=ORGANIZATION_ACADEMY, db_index=True)
     college_groups = models.ManyToManyField(Group, blank=True, related_name="college_students")
     college_course = models.CharField(max_length=1, choices=COLLEGE_COURSE_CHOICES, blank=True)
+    college_branch = models.CharField(
+        max_length=16,
+        choices=COLLEGE_BRANCH_CHOICES,
+        default=COLLEGE_BRANCH_KUWAIT,
+        db_index=True,
+    )
 
     class Meta:
         ordering = ("user__full_name",)
@@ -148,13 +178,66 @@ class LessonRecord(models.Model):
     lesson = models.ForeignKey(Lesson, on_delete=models.CASCADE, related_name="records")
     grade = models.CharField(max_length=2, choices=GRADE_CHOICES)
     comment = models.CharField(max_length=255, blank=True)
+    author = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        null=True,
+        blank=True,
+        on_delete=models.SET_NULL,
+        related_name="authored_lesson_records",
+    )
+    sequence = models.PositiveSmallIntegerField(default=1)
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
 
     class Meta:
-        ordering = ("student__user__full_name",)
-        unique_together = ("student", "lesson")
+        ordering = ("student__user__full_name", "lesson__lesson_date", "sequence", "id")
+        constraints = [
+            models.UniqueConstraint(
+                fields=("student", "lesson", "sequence"),
+                name="unique_student_lesson_record_sequence",
+            )
+        ]
 
     def __str__(self):
         return f"{self.student.user.full_name}: {self.grade}"
+
+
+class Badge(models.Model):
+    name = models.CharField(max_length=100, unique=True)
+    description = models.CharField(max_length=255, blank=True)
+    icon = models.CharField(max_length=32)
+    is_active = models.BooleanField(default=True, db_index=True)
+    sort_order = models.PositiveSmallIntegerField(default=0)
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        ordering = ("sort_order", "name", "id")
+
+    def __str__(self):
+        return f"{self.icon} {self.name}"
+
+
+class StudentBadge(models.Model):
+    student = models.ForeignKey(StudentProfile, on_delete=models.CASCADE, related_name="badges")
+    badge = models.ForeignKey(Badge, on_delete=models.PROTECT, related_name="awards")
+    group = models.ForeignKey(Group, on_delete=models.PROTECT, related_name="student_badges")
+    teacher = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        null=True,
+        blank=True,
+        on_delete=models.SET_NULL,
+        related_name="awarded_student_badges",
+    )
+    comment = models.CharField(max_length=255, blank=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        ordering = ("-created_at", "-id")
+
+    def __str__(self):
+        return f"{self.student}: {self.badge}"
 
 
 class MonthlyStudentReportDispatch(models.Model):

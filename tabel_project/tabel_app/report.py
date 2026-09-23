@@ -161,8 +161,8 @@ def get_month_records_for_student(student: StudentProfile, month_start: date) ->
             lesson__lesson_date__gte=month_start,
             lesson__lesson_date__lte=month_end,
         )
-        .select_related("lesson")
-        .order_by("lesson__lesson_date", "lesson_id")
+        .select_related("lesson", "author")
+        .order_by("lesson__lesson_date", "lesson_id", "sequence", "id")
     )
 
 
@@ -188,7 +188,9 @@ def build_student_month_report(
         default=None,
     )
 
-    records_by_lesson_id = {record.lesson_id: record for record in records}
+    records_by_lesson_id: dict[int, list[LessonRecord]] = {}
+    for record in records:
+        records_by_lesson_id.setdefault(record.lesson_id, []).append(record)
     numeric_grades: list[int] = []
     attendance_count = 0
     absence_count = 0
@@ -202,41 +204,53 @@ def build_student_month_report(
     lesson_rows: list[dict[str, Any]] = []
 
     for lesson in lessons:
-        record = records_by_lesson_id.get(lesson.pk)
-        grade = (record.grade or "").strip() if record else ""
-        if grade.isdigit():
-            numeric_grades.append(int(grade))
-            attendance_count += 1
-            if grade in grade_totals:
-                grade_totals[grade] += 1
-        elif grade:
-            if is_absence_grade(grade):
-                absence_count += 1
-                grade_totals["Н"] += 1
-            else:
-                attendance_count += 1
+        lesson_records = records_by_lesson_id.get(lesson.pk, [])
+        grades = [(record.grade or "").strip() for record in lesson_records]
+        has_attendance = any(grade and not is_absence_grade(grade) for grade in grades)
+        has_absence = any(is_absence_grade(grade) for grade in grades)
+        attendance_count += int(has_attendance)
+        absence_count += int(has_absence and not has_attendance)
 
-        lesson_rows.append(
-            {
-                "lesson_id": lesson.pk,
-                "group_id": lesson.group_id,
-                "group_name": lesson.group.course_name,
-                "date": lesson.lesson_date.isoformat(),
-                "topic": lesson.topic,
-                "grade": grade,
-                "comment": record.comment if record else "",
-                "status": (
-                    "absent"
-                    if is_absence_grade(grade)
-                    else "attended"
-                    if grade
-                    else "unmarked"
-                ),
-            }
-        )
+        for record, grade in zip(lesson_records, grades):
+            if grade.isdigit():
+                numeric_grades.append(int(grade))
+                if grade in grade_totals:
+                    grade_totals[grade] += 1
+            elif is_absence_grade(grade):
+                grade_totals["Н"] += 1
+
+            lesson_rows.append(
+                {
+                    "record_id": record.pk,
+                    "lesson_id": lesson.pk,
+                    "group_id": lesson.group_id,
+                    "group_name": lesson.group.course_name,
+                    "date": lesson.lesson_date.isoformat(),
+                    "topic": lesson.topic,
+                    "grade": grade,
+                    "comment": record.comment,
+                    "teacher_name": record.author.full_name if record.author else "",
+                    "status": "absent" if is_absence_grade(grade) else "attended" if grade else "unmarked",
+                }
+            )
+        if not lesson_records:
+            lesson_rows.append(
+                {
+                    "record_id": None,
+                    "lesson_id": lesson.pk,
+                    "group_id": lesson.group_id,
+                    "group_name": lesson.group.course_name,
+                    "date": lesson.lesson_date.isoformat(),
+                    "topic": lesson.topic,
+                    "grade": "",
+                    "comment": "",
+                    "teacher_name": "",
+                    "status": "unmarked",
+                }
+            )
 
     total_lessons = len(lessons)
-    marked_lessons_count = len(records)
+    marked_lessons_count = len(records_by_lesson_id)
     unmarked_count = max(total_lessons - marked_lessons_count, 0)
     average_grade = round(sum(numeric_grades) / len(numeric_grades), 1) if numeric_grades else 0
     attendance_rate = round((attendance_count / total_lessons) * 100, 1) if total_lessons else  0
@@ -764,6 +778,7 @@ def force_send_all_monthly_reports(
     run_date: date | datetime | None = None,
     month_start: date | datetime | None = None,
     organization_type: str | None = None,
+    college_branch: str | None = None,
     group_ids: list[int] | None = None,
     student_ids: list[int] | None = None,
 ) -> list[dict[str, Any]]:
@@ -776,6 +791,8 @@ def force_send_all_monthly_reports(
     )
     if organization_type:
         student_queryset = student_queryset.filter(organization_type=organization_type)
+    if college_branch:
+        student_queryset = student_queryset.filter(college_branch=college_branch)
     if group_ids:
         student_queryset = student_queryset.filter(group_id__in=group_ids, group__archived_at__isnull=True)
     if student_ids:

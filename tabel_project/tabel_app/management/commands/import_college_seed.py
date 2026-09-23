@@ -162,7 +162,13 @@ class Planner:
             values = dict(mentor=mentor, study_days=days, archived_at=None)
             if 'college_course' in decision:
                 values['college_course'] = decision['college_course']
-            group = self.ensure(Group, {'course_name': name, 'organization_type': 'college'}, values, src)
+            college_branch = 'agrarian' if decision.get('college_course') == '1' else 'kuwait'
+            group = self.ensure(
+                Group,
+                {'course_name': name, 'organization_type': 'college', 'college_branch': college_branch},
+                values,
+                src,
+            )
             if group:
                 groups[name] = group
         roster = {}
@@ -206,6 +212,7 @@ class Planner:
                 values = dict(parent_name=parent_name, parent_phone=probe.parent_phone, group=groups[primary], organization_type='college', archived_at=None)
                 if 'college_course' in decision:
                     values['college_course'] = decision['college_course']
+                values['college_branch'] = 'agrarian' if decision.get('college_course') == '1' else 'kuwait'
                 profile = self.ensure(StudentProfile, {'user': user}, values, src)
                 if profile:
                     students[login] = profile
@@ -276,7 +283,7 @@ class Planner:
                 continue
             if reason == 'lesson_record':
                 lesson = self.ensure(Lesson, {'group': group, 'lesson_date': date}, {}, src)
-                result = self.ensure(LessonRecord, {'student': student, 'lesson': lesson}, {'grade': grade}, src) if lesson else None
+                result = self.ensure(LessonRecord, {'student': student, 'lesson': lesson, 'sequence': 1}, {'grade': grade}, src) if lesson else None
                 if result is None:
                     reason = 'existing_lesson_or_grade_conflict'
             if reason == 'no_grade':

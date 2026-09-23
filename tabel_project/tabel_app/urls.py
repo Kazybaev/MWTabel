@@ -3,8 +3,10 @@ from rest_framework import routers
 from rest_framework_simplejwt.views import TokenRefreshView
 
 from .views import (
+    AgrarianGradeRecordViewSet,
     ApiRootAPIView,
     AppMetaAPIView,
+    BadgeViewSet,
     CurrentUserAPIView,
     CustomLoginView,
     CollegeGradebookAPIView,
@@ -21,11 +23,15 @@ from .views import (
     ReportConversationListAPIView,
     ReportDispatchOptionsAPIView,
     StudentProfileViewSet,
+    StudentBadgeViewSet,
 )
 
 
 api_router = routers.DefaultRouter()
 api_router.register(r"mentors", MentorProfileViewSet, basename="api-mentors")
+api_router.register(r"grade-records", AgrarianGradeRecordViewSet, basename="api-grade-records")
+api_router.register(r"badges", BadgeViewSet, basename="api-badges")
+api_router.register(r"student-badges", StudentBadgeViewSet, basename="api-student-badges")
 api_router.register(r"students", StudentProfileViewSet, basename="api-students")
 api_router.register(r"college-groups", CollegeGroupViewSet, basename="api-college-groups")
 api_router.register(r"groups", GroupViewSet, basename="api-groups")

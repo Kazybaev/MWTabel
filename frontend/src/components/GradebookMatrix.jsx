@@ -1,6 +1,7 @@
 import { useRef } from "react";
 
 import { formatMonthLabel } from "../lib/format";
+import { AgrarianGradeCellContent } from "./AgrarianGradeCellContent";
 import { Button, Panel } from "./Ui";
 
 function cellKey(studentId, date) {
@@ -56,6 +57,7 @@ export function GradebookMatrix({
   adminMode = false,
   lockedMode = false,
   studentMode = false,
+  onOpenAgrarianCell,
 }) {
   const scrollContainerRef = useRef(null);
   const saveMessage =
@@ -203,7 +205,20 @@ export function GradebookMatrix({
                           .filter(Boolean)
                           .join(" ")}
                       >
-                        {data.can_edit ? (
+                        {data.agrarian_features && data.can_edit ? (
+                          <button
+                            type="button"
+                            className="agrarian-cell-button"
+                            onClick={() => onOpenAgrarianCell?.(row.student, cell)}
+                            aria-label={`Оценки и достижения: ${row.student.full_name}, ${cell.date}`}
+                          >
+                            <AgrarianGradeCellContent
+                              entries={cell.grade_entries}
+                              bestGrade={cell.best_grade}
+                              count={cell.grade_count}
+                            />
+                          </button>
+                        ) : data.can_edit ? (
                           <select
                             className={[
                               "grade-select",
@@ -235,7 +250,7 @@ export function GradebookMatrix({
           </table>
         </div>
 
-        {data.can_edit ? (
+        {data.can_edit && !data.agrarian_features ? (
           <div className="gradebook-toolbar">
             <span className={`gradebook-toolbar__status gradebook-toolbar__status--${saveStatus}`}>{saveMessage}</span>
           </div>

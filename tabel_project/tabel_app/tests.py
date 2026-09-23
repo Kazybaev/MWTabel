@@ -560,7 +560,7 @@ class MonthlyReportServiceTests(APITestCase):
         self.assertEqual(MonthlyStudentReportDispatch.objects.count(), 0)
 
     @patch("tabel_app.report.run_dify_workflow")
-    def test_report_does_not_treat_earlier_created_lesson_as_month_end(self, mocked_run_dify_workflow):
+    def test_report_uses_latest_existing_lesson_as_month_end(self, mocked_run_dify_workflow):
         self.third_lesson.delete()
         LessonRecord.objects.create(student=self.student, lesson=self.first_lesson, grade="5")
         LessonRecord.objects.create(student=self.student, lesson=self.second_lesson, grade="4")
@@ -571,7 +571,7 @@ class MonthlyReportServiceTests(APITestCase):
         )
 
         self.assertEqual(results[0]["status"], "skipped")
-        self.assertEqual(results[0]["reason"], "trigger_lesson_not_created")
+        self.assertEqual(results[0]["reason"], "not_due_today")
         mocked_run_dify_workflow.assert_not_called()
         self.assertEqual(MonthlyStudentReportDispatch.objects.count(), 0)
 

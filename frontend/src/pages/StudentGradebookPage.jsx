@@ -1,6 +1,8 @@
 import { useRef, useState } from "react";
 
 import { Badge, Button, EmptyState, ErrorBlock, LoadingBlock, Panel } from "../components/Ui";
+import { AgrarianRecordModal } from "../components/AgrarianRecordModal";
+import { AgrarianGradeCellContent } from "../components/AgrarianGradeCellContent";
 import { formatMonthLabel, toMonthValue } from "../lib/format";
 import { navigateTo } from "../lib/router";
 import { useResource } from "../lib/useResource";
@@ -38,6 +40,7 @@ function StudentGradebookEditor({ api, data, month, onNotice, setData }) {
   const [draftGrades, setDraftGrades] = useState(() => buildGradeMap(data.rows));
   const [saving, setSaving] = useState(false);
   const [dirty, setDirty] = useState(false);
+  const [agrarianTarget, setAgrarianTarget] = useState(null);
 
   function updateGrade(groupId, date, grade) {
     setDraftGrades((current) => ({ ...current, [cellKey(groupId, date)]: grade }));
@@ -129,7 +132,7 @@ function StudentGradebookEditor({ api, data, month, onNotice, setData }) {
               </button>
             </div>
           </div>
-          <div ref={scrollContainerRef} className="college-gradebook__scroll college-gradebook__scroll--admin" tabIndex="0" aria-label="Персональный табель с горизонтальной прокруткой">
+          <div ref={scrollContainerRef} className="college-gradebook__scroll college-gradebook__scroll--admin" tabIndex="0" role="region" aria-label="Персональный табель с горизонтальной прокруткой">
             <table className="college-gradebook student-gradebook__table">
               <thead>
                 <tr>
@@ -154,7 +157,25 @@ function StudentGradebookEditor({ api, data, month, onNotice, setData }) {
                       const tone = gradeTone(value);
                       return (
                         <td key={day.date} className={`gradebook-table__cell gradebook-table__cell--${tone} ${day.is_weekend ? "is-weekend" : ""}`.trim()}>
-                          <select
+                          {data.agrarian_features ? (
+                            <button
+                              type="button"
+                              className="agrarian-cell-button"
+                              onClick={() => setAgrarianTarget({
+                                student: data.student,
+                                groupId: row.group_id,
+                                date: day.date,
+                                entries: row.grade_entries?.[day.date] || [],
+                              })}
+                              aria-label={`Оценки и достижения: ${row.subject}, ${day.date}`}
+                            >
+                              <AgrarianGradeCellContent
+                                entries={row.grade_entries?.[day.date]}
+                                bestGrade={value}
+                                count={row.grade_counts?.[day.date]}
+                              />
+                            </button>
+                          ) : <select
                             className={`grade-select grade-select--${tone} ${value ? "grade-select--filled" : "grade-select--empty"}`}
                             value={value}
                             onChange={(event) => updateGrade(row.group_id, day.date, event.target.value)}
@@ -162,7 +183,7 @@ function StudentGradebookEditor({ api, data, month, onNotice, setData }) {
                           >
                             <option value=""></option>
                             {data.grade_choices.map((choice) => <option key={choice.value} value={choice.value}>{choice.label}</option>)}
-                          </select>
+                          </select>}
                         </td>
                       );
                     })}
@@ -175,11 +196,22 @@ function StudentGradebookEditor({ api, data, month, onNotice, setData }) {
         ) : (
           <EmptyState title="Группы не назначены" description="Добавьте студенту хотя бы одну группу, чтобы открыть персональный табель." />
         )}
-        <div className="student-gradebook__savebar">
+        {!data.agrarian_features ? <div className="student-gradebook__savebar">
           <span>{dirty ? "Есть несохранённые изменения" : "Все изменения сохранены"}</span>
           <Button onClick={saveGrades} disabled={!dirty || saving}>{saving ? "Сохраняем..." : "Сохранить табель"}</Button>
-        </div>
+        </div> : null}
       </Panel>
+      <AgrarianRecordModal
+        api={api}
+        target={agrarianTarget}
+        gradeChoices={data.grade_choices}
+        onClose={() => setAgrarianTarget(null)}
+        onChanged={async () => {
+          const payload = await api(`/api/students/${data.student.id}/gradebook/?month=${month}`);
+          setData(payload);
+        }}
+        onNotice={onNotice}
+      />
     </div>
   );
 }

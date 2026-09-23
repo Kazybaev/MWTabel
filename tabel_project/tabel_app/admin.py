@@ -2,6 +2,7 @@ from django.contrib import admin
 from django.contrib.auth.admin import UserAdmin as DjangoUserAdmin
 
 from .models import (
+    Badge,
     Group,
     ImportedGradeCell,
     Lesson,
@@ -9,6 +10,7 @@ from .models import (
     MentorProfile,
     MonthlyStudentReportDispatch,
     StudentProfile,
+    StudentBadge,
     User,
 )
 
@@ -54,9 +56,23 @@ class LessonAdmin(admin.ModelAdmin):
 
 @admin.register(LessonRecord)
 class LessonRecordAdmin(admin.ModelAdmin):
-    list_display = ("lesson", "student", "grade")
+    list_display = ("lesson", "student", "grade", "sequence", "author", "created_at")
     search_fields = ("student__user__full_name", "lesson__group__course_name", "grade")
     list_filter = ("grade",)
+
+
+@admin.register(Badge)
+class BadgeAdmin(admin.ModelAdmin):
+    list_display = ("icon", "name", "is_active", "sort_order")
+    list_filter = ("is_active",)
+    search_fields = ("name", "description")
+
+
+@admin.register(StudentBadge)
+class StudentBadgeAdmin(admin.ModelAdmin):
+    list_display = ("student", "badge", "group", "teacher", "created_at")
+    list_filter = ("badge", "group")
+    search_fields = ("student__user__full_name", "comment", "teacher__full_name")
 
 
 @admin.register(MonthlyStudentReportDispatch)

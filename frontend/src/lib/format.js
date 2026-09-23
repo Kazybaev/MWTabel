@@ -49,6 +49,16 @@ export function toMonthValue(dateInput = new Date()) {
   return `${year}-${month}`;
 }
 
+export function formatGradeCount(count = 0) {
+  const value = Number(count) || 0;
+  const lastTwo = value % 100;
+  const lastOne = value % 10;
+  if (lastTwo >= 11 && lastTwo <= 14) return `${value} оценок`;
+  if (lastOne === 1) return `${value} оценка`;
+  if (lastOne >= 2 && lastOne <= 4) return `${value} оценки`;
+  return `${value} оценок`;
+}
+
 export function buildGradeMap(rows = []) {
   const entries = {};
 

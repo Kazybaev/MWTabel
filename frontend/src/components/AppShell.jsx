@@ -165,7 +165,33 @@ function LogoutButton({ onLogout }) {
   );
 }
 
-function MentorSidebar({ currentPath, mentorGroups, user, onLogout, organization, onOrganizationChange, onNavigate }) {
+function CollegeBranchSwitcher({ collegeBranch, onCollegeBranchChange }) {
+  return (
+    <div className="college-branch-switcher">
+      <span className="college-branch-switcher__label">Колледж</span>
+      <div className="organization-switcher" role="group" aria-label="Выбор колледжа">
+        <button
+          type="button"
+          className={collegeBranch === "kuwait" ? "organization-switcher__button organization-switcher__button--active" : "organization-switcher__button"}
+          aria-pressed={collegeBranch === "kuwait"}
+          onClick={() => onCollegeBranchChange?.("kuwait")}
+        >
+          Кувейтский
+        </button>
+        <button
+          type="button"
+          className={collegeBranch === "agrarian" ? "organization-switcher__button organization-switcher__button--active" : "organization-switcher__button"}
+          aria-pressed={collegeBranch === "agrarian"}
+          onClick={() => onCollegeBranchChange?.("agrarian")}
+        >
+          Аграрный
+        </button>
+      </div>
+    </div>
+  );
+}
+
+function MentorSidebar({ currentPath, mentorGroups, user, onLogout, organization, onOrganizationChange, collegeBranch, onCollegeBranchChange, onNavigate }) {
   const currentGroupId = extractCurrentGroupId(currentPath);
 
   return (
@@ -196,6 +222,9 @@ function MentorSidebar({ currentPath, mentorGroups, user, onLogout, organization
               Колледж
             </button>
           </div>
+        ) : null}
+        {organization === "college" ? (
+          <CollegeBranchSwitcher collegeBranch={collegeBranch} onCollegeBranchChange={onCollegeBranchChange} />
         ) : null}
       </div>
 
@@ -241,6 +270,8 @@ export function AppShell({
   lockedContent = false,
   organization = "academy",
   onOrganizationChange,
+  collegeBranch = "kuwait",
+  onCollegeBranchChange,
   theme = "light",
   onThemeChange,
 }) {
@@ -248,12 +279,17 @@ export function AppShell({
   const isReportsPage = currentPath === "/reports";
   const navigation = buildNavigation(user.role);
   const intro = buildSidebarIntro(user.role, currentPath);
-  const topbarTitle = isMentor ? "Ментор" : formatRole(user.role);
-  const topbarEyebrow = isMentor ? "Табель групп" : "Платформа";
+  const collegeBranchLabel = collegeBranch === "agrarian" ? "Аграрный колледж" : "Кувейтский колледж";
+  const topbarTitle = organization === "college" ? collegeBranchLabel : isMentor ? "Ментор" : formatRole(user.role);
+  const topbarEyebrow = organization === "college" ? "Колледж" : isMentor ? "Табель групп" : "Платформа";
   const shellClassName = ["app-shell", lockedContent ? "app-shell--locked" : "", isMentor ? "app-shell--mentor" : ""]
     .filter(Boolean)
     .join(" ");
-  const sidebarClassName = ["sidebar", isMentor ? "sidebar--mentor" : ""].filter(Boolean).join(" ");
+  const sidebarClassName = [
+    "sidebar",
+    isMentor ? "sidebar--mentor" : "",
+    user.role === "STUDENT" ? "sidebar--student" : "",
+  ].filter(Boolean).join(" ");
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
 
   return (
@@ -282,6 +318,8 @@ export function AppShell({
             onLogout={onLogout}
             organization={organization}
             onOrganizationChange={onOrganizationChange}
+            collegeBranch={collegeBranch}
+            onCollegeBranchChange={onCollegeBranchChange}
             onNavigate={() => setMobileMenuOpen(false)}
           />
         ) : (
@@ -306,6 +344,9 @@ export function AppShell({
                     Колледж
                   </button>
                 </div>
+              ) : null}
+              {organization === "college" && user.role !== "STUDENT" ? (
+                <CollegeBranchSwitcher collegeBranch={collegeBranch} onCollegeBranchChange={onCollegeBranchChange} />
               ) : null}
             </SidebarIntro>
 

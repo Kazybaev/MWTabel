@@ -209,6 +209,20 @@
   outline-offset: 2px;
 }
 
+.college-branch-switcher {
+  display: grid;
+  gap: 7px;
+  margin-top: 10px;
+}
+
+.college-branch-switcher__label {
+  color: rgba(245, 242, 230, 0.72);
+  font-size: 0.72rem;
+  font-weight: 700;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+}
+
 .college-gradebook__month { display: inline-grid; gap: 6px; margin-bottom: 18px; font-weight: 700; }
 .college-gradebook__month input { padding: 9px 12px; border: 1px solid var(--line); border-radius: 10px; background: #fff; }
 .college-gradebook__scroll { overflow-x: auto; border: 1px solid var(--line); border-radius: 14px; }
@@ -254,6 +268,35 @@
   -webkit-overflow-scrolling: touch;
   scroll-behavior: smooth;
 }
+.college-gradebook__scroll--student-profile {
+  box-sizing: border-box;
+  width: 100%;
+  min-width: 0;
+  max-width: 100%;
+  padding-bottom: 10px;
+  overflow-x: scroll;
+  overflow-y: hidden;
+  overscroll-behavior-x: contain;
+  touch-action: pan-x pan-y;
+  -webkit-overflow-scrolling: touch;
+  scroll-behavior: smooth;
+}
+.college-gradebook__scroll--student-profile .college-gradebook {
+  width: max-content;
+  min-width: max-content;
+}
+.student-self-gradebook,
+.student-self-gradebook .panel,
+.student-self-gradebook .panel__body {
+  width: 100%;
+  min-width: 0;
+  max-width: 100%;
+}
+.student-self-gradebook .panel { overflow: hidden; }
+.college-gradebook__scroll--admin .agrarian-cell-button,
+.gradebook-scroll--matrix .agrarian-cell-button {
+  touch-action: pan-x pan-y;
+}
 .college-gradebook__scroll--admin::-webkit-scrollbar { height: 14px; }
 .college-gradebook__scroll--admin::-webkit-scrollbar-track { border-radius: 999px; background: #e2e8f0; }
 .college-gradebook__scroll--admin::-webkit-scrollbar-thumb { border: 3px solid #e2e8f0; border-radius: 999px; background: #64748b; }
@@ -272,6 +315,18 @@
 @media (max-width: 720px) {
   .student-gradebook__hint { align-items: flex-start; flex-direction: column; gap: 4px; }
   .student-gradebook__savebar { align-items: stretch; flex-direction: column; }
+  .college-gradebook__scroll--student-profile .college-gradebook th:first-child,
+  .college-gradebook__scroll--admin .student-gradebook__table th:first-child {
+    min-width: 138px;
+    max-width: 138px;
+    white-space: normal;
+  }
+  .college-gradebook__scroll--student-profile .college-gradebook th:not(:first-child),
+  .college-gradebook__scroll--student-profile .college-gradebook td,
+  .college-gradebook__scroll--admin .student-gradebook__table th:not(:first-child),
+  .college-gradebook__scroll--admin .student-gradebook__table td {
+    min-width: 72px;
+  }
 }
 .login-portal-picker { display: grid; gap: 12px; }
 .login-portal-picker p { margin: 0 0 4px; font-weight: 700; color: var(--ink-strong); }
@@ -2960,6 +3015,199 @@
   color: inherit;
 }
 
+.agrarian-cell-button {
+  width: 100%;
+  min-width: 48px;
+  min-height: 44px;
+  display: grid;
+  place-items: center;
+  gap: 1px;
+  padding: 4px;
+  border: 0;
+  border-radius: 10px;
+  background: rgba(255, 255, 255, 0.72);
+  color: inherit;
+  cursor: pointer;
+  font: inherit;
+  font-weight: 800;
+}
+
+.agrarian-cell-button:hover,
+.agrarian-cell-button:focus-visible {
+  background: #fff;
+  box-shadow: inset 0 0 0 2px rgba(72, 159, 232, 0.58);
+  outline: none;
+}
+
+.agrarian-cell-button small {
+  padding: 1px 5px;
+  border-radius: 999px;
+  background: rgba(18, 57, 45, 0.09);
+  font-size: 0.58rem;
+  line-height: 1.35;
+  white-space: nowrap;
+  opacity: 0.78;
+}
+
+.agrarian-cell-values {
+  display: flex;
+  max-width: 116px;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: center;
+  gap: 3px;
+}
+
+.agrarian-cell-values strong {
+  min-width: 23px;
+  min-height: 23px;
+  display: inline-grid;
+  place-items: center;
+  padding: 1px 4px;
+  border: 1px solid rgba(18, 57, 45, 0.14);
+  border-radius: 7px;
+  background: rgba(255, 255, 255, 0.8);
+  font-size: 0.78rem;
+  font-variant-numeric: tabular-nums;
+  line-height: 1;
+}
+
+.agrarian-cell-values strong.is-best {
+  border-color: rgba(18, 57, 45, 0.42);
+  background: #d8efe7;
+  color: #12392d;
+  box-shadow: 0 0 0 1px rgba(18, 57, 45, 0.08);
+}
+
+.agrarian-cell-values strong.is-absence {
+  border-color: #a82f36;
+  background: #c83d44;
+  color: #fff;
+}
+
+.agrarian-cell-values strong.is-empty {
+  border-color: transparent;
+  background: transparent;
+  font-size: 1rem;
+}
+
+.agrarian-records {
+  display: grid;
+  gap: 24px;
+}
+
+.agrarian-records__section {
+  display: grid;
+  gap: 16px;
+}
+
+.agrarian-records__section + .agrarian-records__section {
+  padding-top: 24px;
+  border-top: 1px solid var(--line);
+}
+
+.agrarian-records__heading > div {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 16px;
+}
+
+.agrarian-records__heading span,
+.agrarian-records__empty {
+  color: var(--muted);
+  font-size: 0.84rem;
+}
+
+.agrarian-records__list,
+.agrarian-badges,
+.student-badge-history {
+  display: grid;
+  gap: 10px;
+}
+
+.agrarian-record-card,
+.agrarian-badge-card {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 12px;
+  padding: 12px;
+  border: 1px solid var(--line);
+  border-radius: 16px;
+  background: var(--paper-deep);
+}
+
+.agrarian-record-card p,
+.agrarian-badge-card p {
+  margin: 0 0 3px;
+  line-height: 1.45;
+}
+
+.agrarian-record-card small,
+.agrarian-badge-card small {
+  color: var(--muted);
+}
+
+.agrarian-record-card__score,
+.agrarian-badge-card__icon {
+  min-width: 44px;
+  min-height: 44px;
+  display: grid;
+  place-items: center;
+  border-radius: 13px;
+  background: #d8efe7;
+  color: #12392d;
+  font-size: 1.15rem;
+  font-weight: 800;
+}
+
+.agrarian-record-card__score--4 { background: #f5bf72; color: #553510; }
+.agrarian-record-card__score--3 { background: #ef8d63; color: #4c2118; }
+.agrarian-record-card__score--2,
+.agrarian-record-card__score--absence { background: #c83d44; color: #fff; }
+.agrarian-badge-card__icon { font-size: 1.45rem; }
+
+.agrarian-record-card__actions,
+.agrarian-records__form-actions {
+  display: flex;
+  justify-content: flex-end;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.agrarian-records__form {
+  display: grid;
+  gap: 12px;
+  padding: 16px;
+  border-radius: 18px;
+  background: rgba(72, 159, 232, 0.07);
+}
+
+.agrarian-cell-summary {
+  display: grid;
+  place-items: center;
+  gap: 3px;
+  min-width: 72px;
+  padding: 5px 3px;
+}
+
+.agrarian-cell-summary small {
+  color: var(--muted);
+  font-size: 0.64rem;
+  line-height: 1.2;
+  white-space: nowrap;
+}
+
+@media (max-width: 640px) {
+  .agrarian-record-card,
+  .agrarian-badge-card { grid-template-columns: auto minmax(0, 1fr); }
+  .agrarian-record-card__actions,
+  .agrarian-badge-card > .button { grid-column: 1 / -1; }
+  .agrarian-record-card__actions .button,
+  .agrarian-badge-card > .button { flex: 1; }
+}
+
 .grade-select--excellent,
 .grade-select--good,
 .grade-select--warning {
@@ -4408,7 +4656,7 @@ summary {
 }
 
 .organization-switcher__button {
-  min-height: 40px;
+  min-height: 44px;
   position: relative;
   border-radius: 14px;
 }
@@ -6846,5 +7094,13 @@ summary {
 @media (max-width: 720px) {
   .sidebar__logout-zone {
     padding-bottom: max(4px, env(safe-area-inset-bottom));
+  }
+
+  .sidebar--student .sidebar__logout-zone {
+    margin-bottom: 56px;
+  }
+
+  .sidebar--student .sidebar__logout-zone .logout-control {
+    top: 0;
   }
 }

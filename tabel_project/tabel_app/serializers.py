@@ -4,6 +4,7 @@ from rest_framework import serializers
 from rest_framework_simplejwt.tokens import RefreshToken
 
 from .models import (
+    Badge,
     CollegeGroup,
     Group,
     Lesson,
@@ -11,10 +12,11 @@ from .models import (
     MentorProfile,
     ORGANIZATION_CHOICES,
     StudentProfile,
+    StudentBadge,
     User,
     UserOrganizationAccess,
 )
-from .organization import allowed_organizations_for_user, organization_for_request
+from .organization import allowed_organizations_for_user, college_branch_for_request, organization_for_request, require_agrarian_college
 
 
 class LoginSerializer(serializers.Serializer):
@@ -68,9 +70,11 @@ def move_student_records_to_group(student, old_group, new_group):
         target_record, _ = LessonRecord.objects.update_or_create(
             student=student,
             lesson=target_lesson,
+            sequence=record.sequence,
             defaults={
                 "grade": record.grade,
                 "comment": record.comment,
+                "author": record.author,
             },
         )
         if target_record.pk != record.pk:
@@ -115,6 +119,7 @@ class UserSerializer(serializers.ModelSerializer):
     student_profile_id = serializers.SerializerMethodField()
     group_id = serializers.SerializerMethodField()
     organizations = serializers.SerializerMethodField()
+    college_branch = serializers.SerializerMethodField()
 
     class Meta:
         model = User
@@ -128,6 +133,7 @@ class UserSerializer(serializers.ModelSerializer):
             "student_profile_id",
             "group_id",
             "organizations",
+            "college_branch",
         ]
 
     def get_mentor_profile_id(self, obj):
@@ -144,6 +150,10 @@ class UserSerializer(serializers.ModelSerializer):
 
     def get_organizations(self, obj):
         return allowed_organizations_for_user(obj)
+
+    def get_college_branch(self, obj):
+        student_profile = getattr(obj, "student_profile", None)
+        return student_profile.college_branch if student_profile and student_profile.organization_type == "college" else None
 
 
 class MentorProfileSerializer(serializers.ModelSerializer):
@@ -251,7 +261,19 @@ class MentorProfileSerializer(serializers.ModelSerializer):
 class CollegeGroupSerializer(serializers.ModelSerializer):
     class Meta:
         model = CollegeGroup
-        fields = ["id", "name"]
+        fields = ["id", "name", "college_branch"]
+        read_only_fields = ["college_branch"]
+        validators = []
+
+    def validate_name(self, value):
+        request = self.context.get("request")
+        branch = college_branch_for_request(request) if request else "kuwait"
+        queryset = CollegeGroup.objects.filter(college_branch=branch, name=value)
+        if self.instance:
+            queryset = queryset.exclude(pk=self.instance.pk)
+        if queryset.exists():
+            raise serializers.ValidationError("Основная группа с таким названием уже существует в этом колледже.")
+        return value
 
 
 class StudentProfileSerializer(serializers.ModelSerializer):
@@ -285,9 +307,10 @@ class StudentProfileSerializer(serializers.ModelSerializer):
             "is_archived",
             "organization_type",
             "college_course",
+            "college_branch",
             "college_groups",
         ]
-        read_only_fields = ["archived_at", "organization_type"]
+        read_only_fields = ["archived_at", "organization_type", "college_branch"]
 
     def get_is_archived(self, obj):
         return obj.archived_at is not None
@@ -305,6 +328,7 @@ class StudentProfileSerializer(serializers.ModelSerializer):
             raise serializers.ValidationError({"password": "Пароль обязателен для нового студента."})
         request = self.context.get("request")
         organization = organization_for_request(request) if request else "academy"
+        college_branch = college_branch_for_request(request) if request and organization == "college" else None
         group = attrs.get("group", self.instance.group if self.instance else None)
         if group and group.organization_type != organization:
             raise serializers.ValidationError({"group": "Группа относится к другой организации."})
@@ -318,6 +342,8 @@ class StudentProfileSerializer(serializers.ModelSerializer):
         if any(item.archived_at is not None for item in college_groups):
             raise serializers.ValidationError({"college_groups": "Нельзя выбрать архивную группу."})
         if organization == "college" and college_groups:
+            if any(item.college_branch != college_branch for item in college_groups):
+                raise serializers.ValidationError({"college_groups": "Все группы должны относиться к выбранному колледжу."})
             if len({item.main_group_id for item in college_groups}) > 1:
                 raise serializers.ValidationError({"college_groups": "Подгруппы должны принадлежать одной основной группе."})
             if group not in college_groups:
@@ -372,10 +398,106 @@ class StudentProfileSerializer(serializers.ModelSerializer):
 
 class LessonRecordSerializer(serializers.ModelSerializer):
     student_name = serializers.CharField(source="student.user.full_name", read_only=True)
+    author_name = serializers.CharField(source="author.full_name", read_only=True, default="")
 
     class Meta:
         model = LessonRecord
-        fields = ["id", "student", "student_name", "grade", "comment"]
+        fields = ["id", "student", "student_name", "grade", "comment", "author", "author_name", "sequence", "created_at", "updated_at"]
+
+
+class AgrarianGradeRecordSerializer(serializers.Serializer):
+    id = serializers.IntegerField(read_only=True)
+    student = serializers.PrimaryKeyRelatedField(queryset=StudentProfile.objects.all(), required=False)
+    student_name = serializers.CharField(source="student.user.full_name", read_only=True)
+    group = serializers.PrimaryKeyRelatedField(queryset=Group.objects.all(), required=False)
+    group_name = serializers.CharField(source="lesson.group.course_name", read_only=True)
+    date = serializers.DateField(required=False)
+    score = serializers.ChoiceField(choices=LessonRecord.GRADE_CHOICES, source="grade", required=False)
+    comment = serializers.CharField(max_length=255, allow_blank=True, required=False, default="")
+    teacher = serializers.IntegerField(source="author_id", read_only=True)
+    teacher_name = serializers.CharField(source="author.full_name", read_only=True, default="")
+    sequence = serializers.IntegerField(read_only=True)
+    created_at = serializers.DateTimeField(read_only=True)
+    updated_at = serializers.DateTimeField(read_only=True)
+
+    def to_representation(self, instance):
+        data = super().to_representation(instance)
+        data["group"] = instance.lesson.group_id
+        data["date"] = instance.lesson.lesson_date.isoformat()
+        return data
+
+    def validate(self, attrs):
+        request = self.context["request"]
+        require_agrarian_college(request)
+        if self.instance:
+            forbidden = {"student", "group", "date"}.intersection(self.initial_data)
+            if forbidden:
+                raise serializers.ValidationError("Студента, группу и дату существующей оценки изменять нельзя.")
+            return attrs
+
+        missing = [field for field in ("student", "group", "date", "grade") if field not in attrs]
+        if missing:
+            raise serializers.ValidationError("Укажите студента, группу, дату и оценку.")
+        student = attrs["student"]
+        group = attrs["group"]
+        if group.organization_type != "college" or group.college_branch != "agrarian" or group.archived_at is not None:
+            raise serializers.ValidationError({"group": "Группа должна относиться к активному Аграрному колледжу."})
+        if student.organization_type != "college" or student.college_branch != "agrarian" or student.archived_at is not None:
+            raise serializers.ValidationError({"student": "Студент должен относиться к активному Аграрному колледжу."})
+        if not student.college_groups.filter(pk=group.pk).exists() and student.group_id != group.pk:
+            raise serializers.ValidationError({"student": "Студент не состоит в выбранной группе."})
+        if request.user.role == User.ROLE_MENTOR and group.mentor.user_id != request.user.id:
+            raise serializers.ValidationError({"group": "Ментор может работать только со своими группами."})
+        return attrs
+
+
+class BadgeSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = Badge
+        fields = ["id", "name", "description", "icon", "is_active", "sort_order", "created_at", "updated_at"]
+        read_only_fields = ["created_at", "updated_at"]
+
+
+class StudentBadgeSerializer(serializers.ModelSerializer):
+    student_name = serializers.CharField(source="student.user.full_name", read_only=True)
+    badge_name = serializers.CharField(source="badge.name", read_only=True)
+    badge_icon = serializers.CharField(source="badge.icon", read_only=True)
+    group_name = serializers.CharField(source="group.course_name", read_only=True)
+    teacher_name = serializers.CharField(source="teacher.full_name", read_only=True, default="")
+
+    class Meta:
+        model = StudentBadge
+        fields = [
+            "id", "student", "student_name", "badge", "badge_name", "badge_icon",
+            "group", "group_name", "teacher", "teacher_name", "comment", "created_at", "updated_at",
+        ]
+        read_only_fields = ["teacher", "created_at", "updated_at"]
+
+    def validate(self, attrs):
+        request = self.context["request"]
+        require_agrarian_college(request)
+        if self.instance:
+            forbidden = {"student", "badge", "group"}.intersection(self.initial_data)
+            if forbidden:
+                raise serializers.ValidationError("Студента, значок и группу существующей выдачи изменять нельзя.")
+            return attrs
+
+        student = attrs.get("student")
+        badge = attrs.get("badge")
+        group = attrs.get("group")
+        if not student or not badge or not group:
+            raise serializers.ValidationError("Укажите студента, значок и группу.")
+        if not badge.is_active:
+            raise serializers.ValidationError({"badge": "Этот значок больше не используется."})
+        if group.organization_type != "college" or group.college_branch != "agrarian" or group.archived_at is not None:
+            raise serializers.ValidationError({"group": "Группа должна относиться к активному Аграрному колледжу."})
+        if student.organization_type != "college" or student.college_branch != "agrarian" or student.archived_at is not None:
+            raise serializers.ValidationError({"student": "Студент должен относиться к активному Аграрному колледжу."})
+        if not student.college_groups.filter(pk=group.pk).exists() and student.group_id != group.pk:
+            raise serializers.ValidationError({"student": "Студент не состоит в выбранной группе."})
+        if request.user.role == User.ROLE_MENTOR and group.mentor.user_id != request.user.id:
+            raise serializers.ValidationError({"group": "Ментор может работать только со своими группами."})
+        return attrs
 
 
 class LessonSerializer(serializers.ModelSerializer):
@@ -397,6 +519,8 @@ class LessonSerializer(serializers.ModelSerializer):
         request = self.context.get("request")
         if request and group.organization_type != organization_for_request(request):
             raise serializers.ValidationError("Группа относится к другой организации.")
+        if request and group.organization_type == "college" and group.college_branch != college_branch_for_request(request):
+            raise serializers.ValidationError("Группа относится к другому колледжу.")
         if group.archived_at is not None:
             raise serializers.ValidationError("Нельзя назначить студента в архивную группу.")
         return group
@@ -424,6 +548,7 @@ class GroupListSerializer(serializers.ModelSerializer):
             "students_count",
             "organization_type",
             "college_course",
+            "college_branch",
             "archived_at",
             "is_archived",
         ]
@@ -445,8 +570,8 @@ class GroupListSerializer(serializers.ModelSerializer):
 class GroupWriteSerializer(serializers.ModelSerializer):
     class Meta:
         model = Group
-        fields = ["id", "course_name", "mentor", "study_days", "description", "organization_type", "college_course", "main_group"]
-        read_only_fields = ["organization_type"]
+        fields = ["id", "course_name", "mentor", "study_days", "description", "organization_type", "college_course", "college_branch", "main_group"]
+        read_only_fields = ["organization_type", "college_branch"]
 
     def validate(self, attrs):
         request = self.context.get("request")
@@ -454,6 +579,8 @@ class GroupWriteSerializer(serializers.ModelSerializer):
         main_group = attrs.get("main_group", self.instance.main_group if self.instance else None)
         if main_group and organization != "college":
             raise serializers.ValidationError({"main_group": "Основные группы доступны только в колледже."})
+        if main_group and main_group.college_branch != college_branch_for_request(request):
+            raise serializers.ValidationError({"main_group": "Основная группа относится к другому колледжу."})
         if self.instance and main_group != self.instance.main_group:
             students = self.instance.college_students.all()
             if Group.objects.filter(college_students__in=students).exclude(pk=self.instance.pk).exclude(main_group__isnull=True).exclude(main_group=main_group).exists():
@@ -494,6 +621,7 @@ class GroupDetailSerializer(serializers.ModelSerializer):
             "lessons",
             "organization_type",
             "college_course",
+            "college_branch",
             "archived_at",
             "is_archived",
         ]

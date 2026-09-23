@@ -15,7 +15,7 @@ import {
   TextField,
 } from "../components/Ui";
 
-function createEmptyStudent(organization = "academy") {
+function createEmptyStudent(organization = "academy", collegeBranch = "kuwait") {
   return {
     full_name: "",
     username: "",
@@ -26,7 +26,7 @@ function createEmptyStudent(organization = "academy") {
     organization_type: organization,
     college_groups: [],
     main_group: "",
-    college_course: "",
+    college_course: organization === "college" ? (collegeBranch === "agrarian" ? "1" : "2") : "",
   };
 }
 
@@ -34,7 +34,7 @@ function normalizePhoneSearch(value) {
   return String(value || "").replace(/\D/g, "");
 }
 
-export function StudentsPage({ api, sessionToken, user, onNotice, organization = "academy" }) {
+export function StudentsPage({ api, sessionToken, user, onNotice, organization = "academy", collegeBranch = "kuwait" }) {
   const { data, error, loading, reload } = useResource(() => api("/api/students/"), [sessionToken]);
   const { data: groups } = useResource(
     () => (user.role === "ADMIN" ? api("/api/groups/") : Promise.resolve([])),
@@ -46,7 +46,7 @@ export function StudentsPage({ api, sessionToken, user, onNotice, organization =
   );
   const [search, setSearch] = useState("");
   const [editorOpen, setEditorOpen] = useState(false);
-  const [draft, setDraft] = useState(createEmptyStudent(organization));
+  const [draft, setDraft] = useState(createEmptyStudent(organization, collegeBranch));
   const [editingId, setEditingId] = useState(null);
   const [saving, setSaving] = useState(false);
   const [archiveTarget, setArchiveTarget] = useState(null);
@@ -63,7 +63,7 @@ export function StudentsPage({ api, sessionToken, user, onNotice, organization =
 
   function openCreate() {
     setEditingId(null);
-    setDraft(createEmptyStudent(organization));
+    setDraft(createEmptyStudent(organization, collegeBranch));
     setEditorOpen(true);
   }
 

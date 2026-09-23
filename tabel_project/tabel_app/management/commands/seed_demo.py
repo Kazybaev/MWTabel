@@ -86,6 +86,7 @@ class Command(BaseCommand):
             LessonRecord.objects.update_or_create(
                 lesson=lesson,
                 student=student,
+                sequence=1,
                 defaults={
                     "grade": "5" if index == 1 else "4",
                     "comment": "Стабильная работа на уроке",
@@ -128,6 +129,7 @@ class Command(BaseCommand):
                     "study_days": Group.MON_FRI,
                     "description": "Тестовая группа колледжа для общего отчёта.",
                     "college_course": "1",
+                    "college_branch": "agrarian",
                 },
             )
             college_groups.append(college_group)
@@ -140,6 +142,7 @@ class Command(BaseCommand):
                 "parent_phone": "+996700123456",
                 "organization_type": ORGANIZATION_COLLEGE,
                 "college_course": "1",
+                "college_branch": "agrarian",
             },
         )
         college_student.college_groups.set(college_groups)
@@ -155,6 +158,7 @@ class Command(BaseCommand):
                 LessonRecord.objects.update_or_create(
                     lesson=lesson,
                     student=college_student,
+                    sequence=1,
                     defaults={
                         "grade": grade,
                         "comment": "Тестовая отметка для общего отчёта",
