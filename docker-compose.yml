@@ -27,9 +27,15 @@ services:
       DB_HOST: db
       DB_PORT: 5432
       USE_X_FORWARDED_HOST: "True"
+      AUTO_MONTHLY_REPORTS: "false"
+      REPORT_SCHEDULER_RUN_ON_START: "false"
+      DIFY_API_KEY: ${DIFY_API_KEY:?DIFY_API_KEY must be configured}
     depends_on:
       db:
         condition: service_healthy
+    networks:
+      - default
+      - dify_internal
     healthcheck:
       test: ["CMD", "curl", "-fsS", "http://localhost:8000/api-info/"]
       interval: 15s
@@ -39,6 +45,32 @@ services:
     volumes:
       - static_volume:/app/tabel_project/staticfiles
       - frontend_dist:/vol/frontend
+
+  report-worker:
+    profiles: ["reports"]
+    build:
+      context: .
+      dockerfile: Dockerfile
+    restart: "no"
+    entrypoint: ["/report-worker-entrypoint.sh"]
+    command: ["python", "manage.py", "process_report_queue"]
+    env_file:
+      - ${ENV_FILE:-.env}
+    environment:
+      DEBUG: "False"
+      DB_ENGINE: postgresql
+      DB_HOST: db
+      DB_PORT: 5432
+      AUTO_MONTHLY_REPORTS: "false"
+      REPORT_SCHEDULER_RUN_ON_START: "false"
+      REPORT_WORKER_ENABLED: ${REPORT_WORKER_ENABLED:-false}
+      DIFY_API_KEY: ${DIFY_API_KEY:?DIFY_API_KEY must be configured}
+    depends_on:
+      db:
+        condition: service_healthy
+    networks:
+      - default
+      - dify_internal
 
   nginx:
     image: nginx:1.27-alpine
@@ -59,3 +91,8 @@ volumes:
   postgres_data:
   static_volume:
   frontend_dist:
+
+networks:
+  dify_internal:
+    external: true
+    name: docker_default

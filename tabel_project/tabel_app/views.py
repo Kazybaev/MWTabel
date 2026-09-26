@@ -3,6 +3,7 @@ import hmac
 from mimetypes import guess_type
 from pathlib import Path
 import os
+import re
 
 from django.core.exceptions import PermissionDenied
 from django.db import transaction
@@ -27,14 +28,22 @@ from .models import (
     LessonRecord,
     MentorProfile,
     MonthlyStudentReportAttempt,
+    MonthlyStudentReportBatch,
+    MonthlyStudentReportBatchItem,
     MonthlyStudentReportDispatch,
     StudentProfile,
     StudentBadge,
     User,
 )
 from .report_delivery import build_report_conversations, record_meta_delivery_callback, serialize_report_attempt
+<<<<<<< HEAD
 from .report import force_send_all_monthly_reports, is_absence_grade, send_student_month_report
 from .organization import college_branch_for_request, organization_for_request, require_agrarian_college
+=======
+from .report import is_absence_grade, send_student_month_report
+from .report_queue import enqueue_monthly_report_batch, serialize_report_batch
+from .organization import organization_for_request
+>>>>>>> 8a3570d (updated for college)
 from .serializers import (
     AgrarianGradeRecordSerializer,
     BadgeSerializer,
@@ -48,6 +57,7 @@ from .serializers import (
     ReportDispatchRequestSerializer,
     ReportBulkDispatchRequestSerializer,
     ReportDeliveryCallbackSerializer,
+    ReportResendRequestSerializer,
     StudentProfileSerializer,
     StudentBadgeSerializer,
     UserSerializer,
@@ -56,6 +66,26 @@ from .serializers import (
 
 
 FRONTEND_DIST_DIR = Path(__file__).resolve().parents[2] / "frontend" / "dist"
+
+
+def summarize_report_failure(result):
+    reason = str(result.get("reason") or "").strip()
+    if reason in {
+        "DIFY_API_KEY must be configured.",
+        "BACKEND_REPORT_CALLBACK_TOKEN must be configured with at least 32 characters.",
+    }:
+        return reason
+
+    match = re.match(r"Dify returned HTTP (\d{3})", reason)
+    if match:
+        return f"Dify returned HTTP {match.group(1)}."
+    if reason.startswith("Could not reach Dify:"):
+        return "Could not reach Dify."
+    if reason.startswith("Dify workflow finished with status "):
+        return reason.split(".", 1)[0] + "."
+    if reason.startswith("Meta returned HTTP "):
+        return reason.split(".", 1)[0] + "."
+    return "Report delivery failed. See the per-student attempt history for details."
 
 
 def groups_for_user(user):
@@ -806,6 +836,7 @@ class ApiRootAPIView(APIView):
                 "reports": {
                     "dispatch": "/api/reports/send/",
                     "force_send_all": "/api/reports/send-all/",
+                    "explicit_resend": "/api/reports/resend/",
                     "delivery_callback": "/api/report-logs/",
                     "admin_conversations": "/api/reports/conversations/",
                 },
@@ -975,6 +1006,58 @@ class ReportDispatchAPIView(APIView):
             dry_run=serializer.validated_data.get("dry_run", False),
             force=serializer.validated_data.get("force", True),
             bypass_schedule=True,
+            resend_succeeded=False,
+            retry_failed_confirmed=serializer.validated_data.get("confirm_retry_failed", False),
+        )
+        response_status = status.HTTP_502_BAD_GATEWAY if result.get("status") == "failed" else status.HTTP_200_OK
+        return Response(result, status=response_status)
+
+
+class ReportResendAPIView(APIView):
+    permission_classes = [permissions.IsAuthenticated]
+
+    @extend_schema(
+        summary="Explicitly resend one previously successful monthly report",
+        request=ReportResendRequestSerializer,
+        responses={
+            200: OpenApiResponse(description="Successful report explicitly resent."),
+            409: OpenApiResponse(description="No successful report exists for this student and month."),
+            502: OpenApiResponse(description="Dify rejected the report or delivery failed."),
+        },
+    )
+    def post(self, request, *args, **kwargs):
+        if request.user.role != User.ROLE_ADMIN:
+            raise PermissionDenied
+
+        serializer = ReportResendRequestSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        student = get_object_or_404(
+            students_for_user(request.user)
+            .filter(organization_type=organization_for_request(request))
+            .select_related("user", "group", "group__mentor__user"),
+            pk=serializer.validated_data["student_id"],
+        )
+        month_start = parse_month_value(serializer.validated_data["month"])
+        if month_start is None:
+            raise ValidationError({"month": "Use YYYY-MM format for the report month."})
+
+        has_successful_dispatch = MonthlyStudentReportDispatch.objects.filter(
+            student=student,
+            month=month_start,
+            status__in=MonthlyStudentReportDispatch.SUCCESSFUL_STATUSES,
+        ).exists()
+        if not has_successful_dispatch:
+            return Response(
+                {"detail": "No successful report exists for this student and month."},
+                status=status.HTTP_409_CONFLICT,
+            )
+
+        result = send_student_month_report(
+            student,
+            run_date=timezone.localdate(),
+            month_start=month_start,
+            force=True,
+            bypass_schedule=True,
             resend_succeeded=True,
         )
         response_status = status.HTTP_502_BAD_GATEWAY if result.get("status") == "failed" else status.HTTP_200_OK
@@ -1003,7 +1086,13 @@ class ReportDeliveryCallbackAPIView(APIView):
         serializer.is_valid(raise_exception=True)
         try:
             dispatch, duplicate = record_meta_delivery_callback(**serializer.validated_data)
-        except (MonthlyStudentReportDispatch.DoesNotExist, ValueError, TypeError):
+        except (
+            MonthlyStudentReportDispatch.DoesNotExist,
+            MonthlyStudentReportAttempt.DoesNotExist,
+            MonthlyStudentReportBatchItem.DoesNotExist,
+            ValueError,
+            TypeError,
+        ):
             return Response(
                 {"detail": "Matching monthly report dispatch was not found."},
                 status=status.HTTP_404_NOT_FOUND,
@@ -1072,28 +1161,30 @@ class ForceSendAllReportsAPIView(APIView):
         if organization == "college" and (serializer.validated_data.get("group_ids") or serializer.validated_data.get("student_ids")):
             raise ValidationError("Для колледжа доступна только отправка всем студентам.")
         month_start = parse_month_value(serializer.validated_data.get("month")) or timezone.localdate().replace(day=1)
-        results = force_send_all_monthly_reports(
-            run_date=timezone.localdate(),
-            month_start=month_start,
+        batch = enqueue_monthly_report_batch(
+            created_by=request.user,
+            month=month_start,
             organization_type=organization,
             college_branch=college_branch_for_request(request) if organization == "college" else None,
             group_ids=serializer.validated_data.get("group_ids"),
             student_ids=serializer.validated_data.get("student_ids"),
+            confirm_retry_failed=serializer.validated_data.get("confirm_retry_failed", False),
         )
-        sent_count = sum(result.get("status") == "sent" for result in results)
-        failed_count = sum(result.get("status") == "failed" for result in results)
-        skipped_count = len(results) - sent_count - failed_count
-        return Response(
-            {
-                "month": month_start.strftime("%Y-%m"),
-                "total": len(results),
-                "sent": sent_count,
-                "failed": failed_count,
-                "skipped": skipped_count,
-                "results": results,
-            },
-            status=status.HTTP_200_OK,
+        return Response(serialize_report_batch(batch), status=status.HTTP_202_ACCEPTED)
+
+
+class ReportBatchDetailAPIView(APIView):
+    permission_classes = [permissions.IsAuthenticated]
+
+    def get(self, request, batch_id, *args, **kwargs):
+        if request.user.role != User.ROLE_ADMIN:
+            raise PermissionDenied
+        batch = get_object_or_404(
+            MonthlyStudentReportBatch,
+            pk=batch_id,
+            organization_type=organization_for_request(request),
         )
+        return Response(serialize_report_batch(batch))
 
 
 class ReportConversationDetailAPIView(APIView):

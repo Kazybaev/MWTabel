@@ -1,12 +1,15 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useEffectEvent, useMemo, useRef, useState } from "react";
 
 import { Badge, Button, EmptyState, ErrorBlock, LoadingBlock, Modal } from "../components/Ui";
 import { formatMonthLabel, toMonthValue } from "../lib/format";
+import { getBulkDispatchPresentation } from "../lib/reportDispatchResult";
 import { useResource } from "../lib/useResource";
 import "./ReportConversationsPage.css";
 
 const STATUS = {
   pending: { label: "В очереди", tone: "blue" },
+  accepted: { label: "Принято Meta", tone: "teal" },
+  delivered: { label: "Доставлено", tone: "teal" },
   succeeded: { label: "Отправлено", tone: "teal" },
   failed: { label: "Ошибка", tone: "sand" },
   not_sent: { label: "Не отправлялся", tone: "neutral" },
@@ -80,6 +83,7 @@ export function ReportConversationsPage({ api, sessionToken, user, organization 
   const [selectedGroupIds, setSelectedGroupIds] = useState([]);
   const [selectedStudentIds, setSelectedStudentIds] = useState([]);
   const [sendingAll, setSendingAll] = useState(false);
+  const [confirmRetryFailed, setConfirmRetryFailed] = useState(false);
   const [sendAllResult, setSendAllResult] = useState(null);
   const [sendAllError, setSendAllError] = useState("");
   const messagesRef = useRef(null);
@@ -90,6 +94,26 @@ export function ReportConversationsPage({ api, sessionToken, user, organization 
     () => activeStudentId ? api(`/api/reports/conversations/${activeStudentId}/`) : Promise.resolve(null),
     [sessionToken, activeStudentId],
   );
+  const sendAllPresentation = sendAllResult ? getBulkDispatchPresentation(sendAllResult) : null;
+
+  const pollBatch = useEffectEvent(async (statusUrl) => {
+    try {
+      const next = await api(statusUrl);
+      setSendAllResult(next);
+      if (!next.remaining) {
+        conversations.reload();
+        if (activeStudentId) detail.reload();
+      }
+    } catch (error) {
+      setSendAllError(error.message || "Не удалось обновить состояние пакета.");
+    }
+  });
+
+  useEffect(() => {
+    if (!sendAllResult?.status_url || !sendAllResult.remaining) return undefined;
+    const timer = window.setTimeout(() => pollBatch(sendAllResult.status_url), 2000);
+    return () => window.clearTimeout(timer);
+  }, [sendAllResult?.status_url, sendAllResult?.remaining]);
 
   const filtered = useMemo(() => {
     const normalized = query.trim().toLocaleLowerCase("ru-RU");
@@ -115,6 +139,7 @@ export function ReportConversationsPage({ api, sessionToken, user, organization 
     setSendAllError("");
     try {
       const body = { month: sendMonth };
+      body.confirm_retry_failed = confirmRetryFailed;
       if (sendMode === "groups") body.group_ids = selectedGroupIds;
       if (sendMode === "students") body.student_ids = selectedStudentIds;
       const result = await api("/api/reports/send-all/", { method: "POST", body });
@@ -123,7 +148,14 @@ export function ReportConversationsPage({ api, sessionToken, user, organization 
       conversations.reload();
       if (activeStudentId) detail.reload();
     } catch (error) {
-      setSendAllError(error.message || "Не удалось отправить отчёты. Попробуйте ещё раз.");
+      if (error.payload && typeof error.payload === "object" && "total" in error.payload) {
+        setSendAllResult(error.payload);
+        setConfirmSendAll(false);
+        conversations.reload();
+        if (activeStudentId) detail.reload();
+      } else {
+        setSendAllError(error.message || "Не удалось отправить отчёты. Попробуйте ещё раз.");
+      }
     } finally {
       setSendingAll(false);
     }
@@ -134,6 +166,7 @@ export function ReportConversationsPage({ api, sessionToken, user, organization 
     setSendMonth(toMonthValue());
     setSelectedGroupIds([]);
     setSelectedStudentIds([]);
+    setConfirmRetryFailed(false);
     setSendAllError("");
     setConfirmSendAll(true);
   }
@@ -168,9 +201,23 @@ export function ReportConversationsPage({ api, sessionToken, user, organization 
         </div>
       </header>
 
-      {sendAllResult ? (
-        <div className="report-chat__bulk-result" role="status">
-          Отправка завершена: отправлено — <strong>{sendAllResult.sent}</strong>, ошибок — <strong>{sendAllResult.failed}</strong>, всего — <strong>{sendAllResult.total}</strong>.
+      {sendAllPresentation ? (
+        <div className={`report-chat__bulk-result report-chat__bulk-result--${sendAllPresentation.tone}`} role={sendAllPresentation.role}>
+          <strong>{sendAllPresentation.title}.</strong>
+          {sendAllPresentation.isBatch ? (
+            <span>
+              В очереди — <strong>{sendAllPresentation.queued}</strong>, обрабатывается — <strong>{sendAllPresentation.processing}</strong>,
+              принято Meta — <strong>{sendAllPresentation.accepted}</strong>, доставлено — <strong>{sendAllPresentation.delivered}</strong>,
+              ошибок — <strong>{sendAllPresentation.failed}</strong>, пропущено — <strong>{sendAllPresentation.skipped}</strong>,
+              осталось — <strong>{sendAllPresentation.remaining}</strong>, всего — <strong>{sendAllPresentation.total}</strong>.
+            </span>
+          ) : (
+            <span>
+              Успешно — <strong>{sendAllPresentation.succeeded}</strong>, ошибок — <strong>{sendAllPresentation.failed}</strong>,
+              пропущено — <strong>{sendAllPresentation.skipped}</strong>, всего — <strong>{sendAllPresentation.total}</strong>.
+            </span>
+          )}
+          {sendAllPresentation.firstError ? <span>Первая причина: {sendAllPresentation.firstError}</span> : null}
           <button type="button" onClick={() => setSendAllResult(null)}>Закрыть</button>
         </div>
       ) : null}
@@ -188,6 +235,8 @@ export function ReportConversationsPage({ api, sessionToken, user, organization 
                 <option value="">Все</option>
                 <option value="pending">В очереди</option>
                 <option value="succeeded">Отправлено</option>
+                <option value="accepted">Принято Meta</option>
+                <option value="delivered">Доставлено</option>
                 <option value="failed">Ошибка</option>
               </select>
             </label>
@@ -267,7 +316,11 @@ export function ReportConversationsPage({ api, sessionToken, user, organization 
               {!dispatchOptions.data?.students?.length ? <p>Нет доступных студентов.</p> : dispatchOptions.data.students.map((student) => <label key={student.id}><input type="checkbox" checked={selectedStudentIds.includes(student.id)} onChange={() => toggleSelection(setSelectedStudentIds, student.id)} /><span>{student.name}<small>{student.group_name}</small></span></label>)}
             </div>
           ) : null}
-          <p>Отчёты будут отправлены родителям выбранных активных студентов. Повторная ручная отправка разрешена.</p>
+          <p>Отчёты будут отправлены родителям выбранных активных студентов. Уже успешно отправленные отчёты будут пропущены.</p>
+          <label className="report-chat__retry-confirm">
+            <input type="checkbox" checked={confirmRetryFailed} onChange={(event) => setConfirmRetryFailed(event.target.checked)} />
+            <span>Я явно подтверждаю повторную отправку ранее неуспешных (`failed`) попыток.</span>
+          </label>
           {sendAllError ? <p className="report-chat__bulk-error" role="alert">{sendAllError}</p> : null}
         </div>
       </Modal>

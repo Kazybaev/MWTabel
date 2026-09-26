@@ -87,12 +87,25 @@ class ReportDispatchRequestSerializer(serializers.Serializer):
     run_date = serializers.DateField(required=False)
     dry_run = serializers.BooleanField(required=False, default=False)
     force = serializers.BooleanField(required=False, default=False)
+    confirm_retry_failed = serializers.BooleanField(required=False, default=False)
 
 
 class ReportBulkDispatchRequestSerializer(serializers.Serializer):
     month = serializers.RegexField(regex=r"^\d{4}-\d{2}$", required=False)
     group_ids = serializers.ListField(child=serializers.IntegerField(min_value=1), required=False, allow_empty=False)
     student_ids = serializers.ListField(child=serializers.IntegerField(min_value=1), required=False, allow_empty=False)
+    confirm_retry_failed = serializers.BooleanField(required=False, default=False)
+
+
+class ReportResendRequestSerializer(serializers.Serializer):
+    student_id = serializers.IntegerField()
+    month = serializers.RegexField(regex=r"^\d{4}-\d{2}$")
+    confirm_resend = serializers.BooleanField()
+
+    def validate_confirm_resend(self, value):
+        if value is not True:
+            raise serializers.ValidationError("Explicit confirmation is required to resend a successful report.")
+        return value
 
 
 class ReportDeliveryCallbackSerializer(serializers.Serializer):
@@ -111,7 +124,30 @@ class ReportDeliveryCallbackSerializer(serializers.Serializer):
             raise serializers.ValidationError("delivery.report.student.id is required.")
         if not isinstance(period, dict) or not period.get("month"):
             raise serializers.ValidationError("delivery.report.period.month is required.")
+        correlation = report.get("correlation")
+        if not isinstance(correlation, dict):
+            raise serializers.ValidationError("delivery.report.correlation is required.")
+        for field in ("dispatch_id", "attempt_id"):
+            if not isinstance(correlation.get(field), int) or correlation[field] < 1:
+                raise serializers.ValidationError(f"delivery.report.correlation.{field} must be a positive integer.")
+        batch_item_id = correlation.get("batch_item_id")
+        if batch_item_id is not None and (not isinstance(batch_item_id, int) or batch_item_id < 1):
+            raise serializers.ValidationError("delivery.report.correlation.batch_item_id must be null or a positive integer.")
         return value
+
+    def validate_meta_response(self, value):
+        if not isinstance(value, dict):
+            raise serializers.ValidationError("meta_response must be a JSON object.")
+        return value
+
+    def validate(self, attrs):
+        if 200 <= attrs["meta_status_code"] < 300:
+            messages = attrs["meta_response"].get("messages")
+            if not isinstance(messages, list) or not messages or not isinstance(messages[0], dict):
+                raise serializers.ValidationError("meta_response.messages[0] is required for HTTP success.")
+            if not messages[0].get("id") or not messages[0].get("message_status"):
+                raise serializers.ValidationError("Meta message id and message_status are required for HTTP success.")
+        return attrs
 
 
 class UserSerializer(serializers.ModelSerializer):

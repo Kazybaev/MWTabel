@@ -22,6 +22,8 @@ from .views import (
     ReportConversationDetailAPIView,
     ReportConversationListAPIView,
     ReportDispatchOptionsAPIView,
+    ReportBatchDetailAPIView,
+    ReportResendAPIView,
     StudentProfileViewSet,
     StudentBadgeViewSet,
 )
@@ -48,7 +50,9 @@ urlpatterns = [
     path("api/dashboard/", DashboardAPIView.as_view(), name="api-dashboard"),
     path("api/meta/", AppMetaAPIView.as_view(), name="api-meta"),
     path("api/reports/send/", ReportDispatchAPIView.as_view(), name="api-report-dispatch"),
+    path("api/reports/resend/", ReportResendAPIView.as_view(), name="api-report-resend"),
     path("api/reports/send-all/", ForceSendAllReportsAPIView.as_view(), name="api-report-send-all"),
+    path("api/reports/batches/<int:batch_id>/", ReportBatchDetailAPIView.as_view(), name="api-report-batch-detail"),
     path("api/report-logs/", ReportDeliveryCallbackAPIView.as_view(), name="api-report-delivery-callback"),
     path("api/reports/conversations/", ReportConversationListAPIView.as_view(), name="api-report-conversations"),
     path("api/reports/options/", ReportDispatchOptionsAPIView.as_view(), name="api-report-options"),

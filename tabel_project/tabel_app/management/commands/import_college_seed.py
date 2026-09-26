@@ -1,4 +1,4 @@
-"""Conservative, insert-only import of college seed schema 2.0."""
+"""Conservative, insert-only import of supported college seed schemas."""
 import hashlib
 import json
 import os
@@ -11,19 +11,32 @@ from pathlib import Path
 from django.core.exceptions import ValidationError
 from django.core.management.base import BaseCommand, CommandError
 from django.db import connection, transaction
+from django.db.models import Q
 from tabel_app.models import (
-    User, MentorProfile, StudentProfile, Group, UserOrganizationAccess,
+    User, MentorProfile, StudentProfile, CollegeGroup, Group, UserOrganizationAccess,
     Lesson, LessonRecord, ImportedGradeCell,
 )
 
 
-def normalize_phone(value):
+# Owner-reviewed exceptions are deliberately scoped by source, student and
+# canonical phone.  The decisions file must also opt in explicitly, so neither
+# the allowlist nor a copied flag can weaken the general collision check alone.
+APPROVED_SHARED_PARENT_PHONES = frozenset({
+    ('college-2026-second-course', 'Mukhammadaziz-40', '+996508054080'),
+})
+
+
+def normalize_phone(value, allow_bare_international=False):
     if not isinstance(value, str):
         raise ValueError('invalid_parent_phone')
     cleaned = ''.join(c for c in value if not (c.isspace() or unicodedata.category(c) == 'Cf' or c in '-()./–—'))
+    if not cleaned:
+        raise ValueError('missing_parent_phone')
     if re.fullmatch(r'[0-9]{9}', cleaned):
         cleaned = '+996' + cleaned
     elif re.fullmatch(r'7[0-9]{10}', cleaned):
+        cleaned = '+' + cleaned
+    elif allow_bare_international and re.fullmatch(r'[1-9][0-9]{6,14}', cleaned):
         cleaned = '+' + cleaned
     elif not re.fullmatch(r'\+[1-9][0-9]{6,14}', cleaned):
         raise ValueError('unrecognized_parent_phone')
@@ -34,8 +47,10 @@ def normalize_phone(value):
     return phone
 
 
-def normalized_grade(value):
+def normalized_grade(value, nonempty_is_absence=False):
     value = '' if value is None else str(value).strip()
+    if nonempty_is_absence:
+        return value if value in {'2', '3', '4', '5'} else ('Н' if value else '')
     return {'н': 'Н', 'abs': 'Н', 'abs.': 'Н'}.get(value, value)
 
 
@@ -66,15 +81,81 @@ def unsupported_grade_reason(value):
     }.get(value, 'unrecognized_grade')
 
 
+def validate_synthetic_date_approval(data, decisions, source_id):
+    """Bind synthetic FULL dates to one owner-reviewed immutable proposal."""
+    metadata = data.get('metadata', {})
+    if metadata.get('synthetic_full_dates') is not True:
+        return
+    approval = decisions.get('synthetic_date_approvals', {}).get('FULL', {})
+    required = {
+        'approved': True,
+        'synthetic_dates': True,
+        'approved_by': 'data owner confirmation relayed by Alymbek Ibragimov',
+    }
+    if any(approval.get(key) != value for key, value in required.items()):
+        raise CommandError('Synthetic FULL dates lack the exact reviewed approval.')
+    proposal_path = approval.get('proposal_path')
+    proposal_sha256 = approval.get('proposal_sha256')
+    if not all(isinstance(value, str) and value for value in (
+        proposal_path, proposal_sha256, approval.get('approved_at'),
+        approval.get('algorithm_basis'),
+    )):
+        raise CommandError('Synthetic FULL approval is incomplete.')
+    if metadata.get('proposal_v2_sha256') != proposal_sha256:
+        raise CommandError('Corrected seed and reviewed FULL proposal hashes differ.')
+    try:
+        proposal_raw = Path(proposal_path).read_bytes()
+        proposal = json.loads(proposal_raw)
+    except (OSError, ValueError, TypeError):
+        raise CommandError('Reviewed FULL proposal is unreadable.') from None
+    if hashlib.sha256(proposal_raw).hexdigest() != proposal_sha256:
+        raise CommandError('Reviewed FULL proposal SHA-256 mismatch.')
+    if proposal.get('source_id') != source_id:
+        raise CommandError('Reviewed FULL proposal source-id mismatch.')
+    proposed = {
+        row['class_name']: {
+            item['source_column']: item['proposed_date']
+            for item in row.get('columns', [])
+        }
+        for row in proposal.get('classes', [])
+    }
+    for class_row in (row for row in data['classes'] if row.get('subject_name') == 'FULL'):
+        class_map = proposed.get(class_row['class_name'])
+        if class_map is None:
+            raise CommandError('Corrected seed contains an unreviewed FULL class.')
+        source_rows = class_row['students'] + class_row['unmatched_gradebook_students']
+        for student_row in source_rows:
+            for record in student_row['records']:
+                expected_iso = class_map.get(record.get('column'))
+                try:
+                    actual_iso = datetime.strptime(
+                        record.get('header_value', record.get('date_or_header')),
+                        '%d.%m.%Y',
+                    ).date().isoformat()
+                except (TypeError, ValueError):
+                    actual_iso = None
+                if record.get('synthetic') is not True or actual_iso != expected_iso:
+                    raise CommandError('Corrected seed FULL date is outside the reviewed proposal.')
+
+
 class Planner:
     def __init__(self, data, decisions, source_id="college-seed-2.0"):
         self.source_id = source_id
+        self.source_schema = data['schema_version']
         self.cells = Counter()
         self.data, self.decisions = data, decisions
         self.pending = []
         self.cache = {}
         self.issues = []
         self.counts = defaultdict(Counter)
+        self.phone_review = {
+            'students_total': 0,
+            'students_prepared': 0,
+            'missing_parent_phone': 0,
+            'unapproved_phone_conflicts': 0,
+            'explicitly_approved_shared_phones': 0,
+            'approved_shared_phone_details': [],
+        }
 
     def issue(self, kind, source, reason, **details):
         self.issues.append(dict(kind=kind, source=source, reason=reason, **details))
@@ -134,12 +215,44 @@ class Planner:
             return None
         return self.ensure(User, {'username': login}, {'full_name': name, 'role': role, 'is_active': True, 'is_staff': False, 'is_superuser': False}, source, row.get('password'))
 
+    def audit_user_identity(self, row, role, source):
+        """Check identity collisions without planning an orphan User."""
+        login, name = row.get('login'), row.get('full_name')
+        if not isinstance(login, str) or not login or not isinstance(name, str) or not name:
+            self.issue('blocked', source, 'missing_identity')
+            return False
+        existing = User.objects.filter(username=login).first()
+        if existing:
+            expected = {
+                'full_name': name, 'role': role, 'is_active': True,
+                'is_staff': False, 'is_superuser': False,
+            }
+            fields = [field for field, value in expected.items() if getattr(existing, field) != value]
+            if fields:
+                self.issue('conflict', source, 'existing_values_differ', model='User', fields=fields)
+                return False
+        elif User.objects.filter(full_name__iexact=name).exists():
+            self.issue('conflict', source, 'name_exists_with_different_login')
+            return False
+        if User.objects.filter(username__iexact=login).exclude(username=login).exists():
+            self.issue('conflict', source, 'case_insensitive_login_collision')
+            return False
+        return True
+
     def access(self, user, source):
         self.ensure(UserOrganizationAccess, {'user': user, 'organization_type': 'college'}, {}, source)
 
     def build(self):
         mentors, groups, students = {}, {}, {}
-        for row in self.data['mentors']:
+        cohorts = {}
+        for row in self.data['groups']:
+            name = row['group_name']
+            if not CollegeGroup.objects.filter(name=name).exists() and CollegeGroup.objects.filter(name__iexact=name).exists():
+                self.issue('conflict', 'cohort:' + name, 'case_insensitive_cohort_collision')
+                cohorts[name] = None
+                continue
+            cohorts[name] = self.ensure(CollegeGroup, {'name': name}, {}, 'cohort:' + name)
+        for row in self.data.get('mentors', []):
             src = 'mentor:' + row['login']
             user = self.user(row, 'MENTOR', src)
             if user:
@@ -150,15 +263,36 @@ class Planner:
         for row in self.data['classes']:
             name = row['class_name']
             src = 'class:' + name
-            mentor = mentors.get(row['mentor']['login'])
             decision = self.decisions.get('classes', {}).get(name, {})
+            if self.source_schema == '1.0':
+                mentor_login = decision.get('mentor_login')
+                mentor_rows = list(MentorProfile.objects.filter(
+                    user__username=mentor_login,
+                    user__role='MENTOR',
+                    user__is_active=True,
+                ).filter(
+                    Q(user__organization_accesses__organization_type='college')
+                    | Q(user__organization_accesses__isnull=True, organization_type='college')
+                ).distinct()[:2]) if isinstance(mentor_login, str) and mentor_login else []
+                mentor = mentor_rows[0] if len(mentor_rows) == 1 else None
+            else:
+                mentor = mentors.get(row['mentor']['login'])
             days = 'MON_FRI'
             if not days:
                 self.issue('blocked', src, 'missing_study_days')
             if mentor is None:
-                self.issue('blocked', src, 'mentor_unresolved')
+                reason = 'mentor_decision_unresolved' if self.source_schema == '1.0' else 'mentor_unresolved'
+                self.issue('blocked', src, reason)
+            if cohorts.get(row['group_name']) is None:
+                self.issue('blocked', src, 'cohort_unresolved')
+                continue
+            course = decision.get('college_course', self.decisions.get('college_course'))
+            if self.source_schema == '1.0' and course != '2':
+                self.issue('blocked', src, 'second_course_decision_required')
+                continue
             if not days or mentor is None:
                 continue
+<<<<<<< HEAD
             values = dict(mentor=mentor, study_days=days, archived_at=None)
             if 'college_course' in decision:
                 values['college_course'] = decision['college_course']
@@ -169,6 +303,15 @@ class Planner:
                 values,
                 src,
             )
+=======
+            values = dict(mentor=mentor, study_days=days, archived_at=None, main_group=cohorts[row['group_name']])
+            if course is not None:
+                values['college_course'] = course
+            if not Group.objects.filter(course_name=name, organization_type='college').exists() and Group.objects.filter(course_name__iexact=name, organization_type='college').exists():
+                self.issue('conflict', src, 'case_insensitive_class_collision')
+                continue
+            group = self.ensure(Group, {'course_name': name, 'organization_type': 'college'}, values, src)
+>>>>>>> 8a3570d (updated for college)
             if group:
                 groups[name] = group
         roster = {}
@@ -178,31 +321,74 @@ class Planner:
             for row in cohort['students']:
                 login = row['login']
                 src = 'student:' + login
+                self.phone_review['students_total'] += 1
                 roster[login] = row
                 decision = self.decisions.get('students', {}).get(login, {})
                 existing = StudentProfile.objects.filter(user__username=login).first()
                 parent_name = decision.get('parent_name', existing.parent_name if existing else '')
-                candidates = [n for n in class_names if n == cohort['group_name'] + '-Кибер']
+                if self.source_schema == '1.0':
+                    candidates = [c['class_name'] for c in self.data['classes']
+                                  if c['group_name'] == cohort['group_name'] and c.get('subject_name') == 'FULL']
+                else:
+                    candidates = [n for n in class_names if n == cohort['group_name'] + '-Кибер']
                 primary = candidates[0] if len(candidates) == 1 else None
                 reasons = []
+                if not self.audit_user_identity(row, 'STUDENT', src):
+                    reasons.append('user_identity_conflict')
                 if primary not in class_names:
-                    reasons.append('missing_or_ambiguous_cyber_class')
-                    self.issue('conflict', src, 'missing_or_ambiguous_cyber_class')
+                    primary_reason = 'missing_or_ambiguous_full_class' if self.source_schema == '1.0' else 'missing_or_ambiguous_cyber_class'
+                    reasons.append(primary_reason)
+                    self.issue('conflict', src, primary_reason)
                 if any(n not in groups for n in class_names):
                     reasons.append('classes_unresolved')
+                course = decision.get('college_course', self.decisions.get('college_course'))
+                if self.source_schema == '1.0' and course != '2':
+                    reasons.append('second_course_decision_required')
                 # Diagnose supplied fields even when unrelated dependencies are
                 # missing, so the report does not hide later validation failures.
                 try:
-                    phone = normalize_phone(decision.get('parent_phone', row['parent_phone']))
+                    phone = normalize_phone(
+                        decision.get('parent_phone', row['parent_phone']),
+                        allow_bare_international=self.source_schema == '1.0',
+                    )
+                    phone_valid = True
                 except ValueError as exc:
-                    reasons.append(str(exc))
+                    phone_error = str(exc)
+                    reasons.append(phone_error)
+                    if phone_error == 'missing_parent_phone':
+                        self.phone_review['missing_parent_phone'] += 1
                     phone = ''
+                    phone_valid = False
                 probe = StudentProfile(parent_name=parent_name, parent_phone=phone, organization_type='college')
-                excluded = ['user', 'group'] + ([] if parent_name else ['parent_name'])
+                excluded = ['user', 'group'] + ([] if parent_name else ['parent_name']) + ([] if phone_valid else ['parent_phone'])
                 try:
                     probe.full_clean(exclude=excluded, validate_unique=False, validate_constraints=False)
                 except ValidationError as exc:
                     reasons.extend('invalid_' + field for field in sorted(exc.message_dict))
+                phone_conflict = bool(
+                    phone and StudentProfile.objects.filter(parent_phone=phone)
+                    .exclude(user__username=login).exists()
+                )
+                approved_shared_phone = (
+                    phone_conflict
+                    and decision.get('allow_existing_parent_phone') is True
+                    and (self.source_id, login, str(phone)) in APPROVED_SHARED_PARENT_PHONES
+                )
+                if phone_conflict and not approved_shared_phone:
+                    self.issue('conflict', src, 'parent_phone_exists_for_different_student')
+                    reasons.append('parent_phone_exists_for_different_student')
+                    self.phone_review['unapproved_phone_conflicts'] += 1
+                elif approved_shared_phone:
+                    self.phone_review['explicitly_approved_shared_phones'] += 1
+                    self.phone_review['approved_shared_phone_details'].append({
+                        'login': login,
+                        'parent_phone': str(phone),
+                    })
+                if phone_valid and (not phone_conflict or approved_shared_phone):
+                    self.phone_review['students_prepared'] += 1
+                if existing and existing.college_groups.exclude(main_group=cohorts[cohort['group_name']]).exists():
+                    self.issue('conflict', src, 'existing_memberships_different_cohort')
+                    reasons.append('existing_memberships_different_cohort')
                 if reasons:
                     self.issue('blocked', src, 'student_dependencies', reasons=reasons)
                     continue
@@ -210,9 +396,14 @@ class Planner:
                 if not user:
                     continue
                 values = dict(parent_name=parent_name, parent_phone=probe.parent_phone, group=groups[primary], organization_type='college', archived_at=None)
+<<<<<<< HEAD
                 if 'college_course' in decision:
                     values['college_course'] = decision['college_course']
                 values['college_branch'] = 'agrarian' if decision.get('college_course') == '1' else 'kuwait'
+=======
+                if course is not None:
+                    values['college_course'] = course
+>>>>>>> 8a3570d (updated for college)
                 profile = self.ensure(StudentProfile, {'user': user}, values, src)
                 if profile:
                     students[login] = profile
@@ -222,7 +413,8 @@ class Planner:
         for row in self.data['classes']:
             name = row['class_name']
             for unmatched in row['unmatched_gradebook_students']:
-                self.issue('unresolved', name, 'gradebook_without_roster_identity', row=unmatched['source_row_gradebook'])
+                self.issue('unresolved', name, 'gradebook_without_roster_identity',
+                           row=unmatched.get('source_row_gradebook', unmatched.get('source_row')))
                 self.grade_cells(row, unmatched, None, groups.get(name), False)
             for student in row['students']:
                 src = name + ':' + student['login']
@@ -240,13 +432,15 @@ class Planner:
         records = student_row['records']
         parsed = []
         for record in records:
+            header = record.get('header_value', record.get('date_or_header'))
             try:
-                date = datetime.strptime(record['header_value'], '%d.%m.%Y').date()
+                date = datetime.strptime(header, '%d.%m.%Y').date()
             except (ValueError, TypeError):
                 date = None
-            parsed.append((record, date, normalized_grade(record['value'])))
-        dates = Counter(date for _, date, grade in parsed if date and grade in dict(LessonRecord.GRADE_CHOICES))
-        for record, date, grade in parsed:
+            parsed.append((record, header, date, normalized_grade(
+                record['value'], nonempty_is_absence=self.source_schema == '1.0')))
+        dates = Counter(date for _, _, date, grade in parsed if date and grade in dict(LessonRecord.GRADE_CHOICES))
+        for record, header, date, grade in parsed:
             self.cells['total'] += 1
             if date is None:
                 self.cells['without_date'] += 1
@@ -265,13 +459,13 @@ class Planner:
             elif grade in dict(LessonRecord.GRADE_CHOICES):
                 reason = 'multiple_records_same_student_date' if dates[date] > 1 else 'lesson_record'
             src = row['class_name']
-            source_row = student_row.get('source_row_gradebook')
+            source_row = student_row.get('source_row_gradebook', student_row.get('source_row'))
             if not isinstance(source_row, int) or source_row < 1 or not record.get('column'):
                 self.issue('conflict', src, 'missing_cell_coordinates')
                 self.cells['ambiguous'] += 1
                 continue
             key = dict(source_id=self.source_id, source_class=src, source_row=source_row, source_column=record['column'])
-            original = dict(original_value=record['value'], original_header=record['header_value'])
+            original = dict(original_value=record['value'], original_header=header)
             fingerprint = hashlib.sha256(json.dumps(original, ensure_ascii=False, sort_keys=True, separators=(',', ':')).encode()).hexdigest()
             # Check immutable evidence before even planning a derived LessonRecord.
             existing = ImportedGradeCell.objects.filter(**key).first()
@@ -311,7 +505,7 @@ class Planner:
 
 
 class Command(BaseCommand):
-    help = 'Insert-only college schema 2.0 import; defaults to a read-only dry-run.'
+    help = 'Insert-only college seed import; defaults to a read-only dry-run.'
     requires_system_checks = []
 
     def add_arguments(self, parser):
@@ -320,7 +514,7 @@ class Command(BaseCommand):
         mode = parser.add_mutually_exclusive_group()
         mode.add_argument('--dry-run', action='store_true')
         mode.add_argument('--apply', action='store_true')
-        parser.add_argument('--decisions', help='Reviewed JSON: classes/name/study_days; students/login/parent_name,primary_class; optional parent_phone,college_course.')
+        parser.add_argument('--decisions', help='Reviewed JSON: source_id, college_course; students/login/parent_name,parent_phone,college_course,allow_existing_parent_phone; classes/name/college_course,mentor_login. Schedule and primary subject follow fixed import rules.')
         parser.add_argument('--report', required=True)
         parser.add_argument('--allow-partial', action='store_true', help='Explicitly accept unresolved rows listed in this run report.')
         parser.add_argument('--expect-database', required=True)
@@ -338,36 +532,51 @@ class Command(BaseCommand):
             raw = source.read_bytes()
             data = json.loads(raw)
             decisions = json.loads(Path(options['decisions']).read_text()) if options['decisions'] else {}
-            if data['schema_version'] != '2.0':
+            if data['schema_version'] not in ('1.0', '2.0'):
                 raise ValueError
-            for section, key in [('mentors', 'login'), ('classes', 'class_name')]:
+            if decisions.get('source_id', options['source_id']) != options['source_id']:
+                raise ValueError
+            sections = [('classes', 'class_name')]
+            if data['schema_version'] == '2.0':
+                sections.append(('mentors', 'login'))
+            for section, key in sections:
                 keys = [r[key] for r in data[section]]
                 if len(keys) != len(set(keys)):
                     raise ValueError
-            logins = [s['login'] for g in data['groups'] for s in g['students']] + [m['login'] for m in data['mentors']]
+            logins = [s['login'] for g in data['groups'] for s in g['students']]
+            if data['schema_version'] == '2.0':
+                logins += [m['login'] for m in data['mentors']]
             if len(logins) != len(set(logins)):
                 raise ValueError
-            mentor_rows = {m['login']: m for m in data['mentors']}
+            mentor_rows = {m['login']: m for m in data.get('mentors', [])}
             cohort_names = [g['group_name'] for g in data['groups']]
             if len(cohort_names) != len(set(cohort_names)):
                 raise ValueError
             for row in data['classes']:
                 if row['group_name'] not in cohort_names:
                     raise ValueError
-                mentor = mentor_rows[row['mentor']['login']]
-                if any(mentor[k] != row['mentor'][k] for k in ('login', 'full_name', 'password')):
+                if data['schema_version'] == '2.0':
+                    mentor = mentor_rows[row['mentor']['login']]
+                    if any(mentor[k] != row['mentor'][k] for k in ('login', 'full_name', 'password')):
+                        raise ValueError
+                elif 'subject_name' not in row:
                     raise ValueError
                 class_logins = [s['login'] for s in row['students']]
                 if len(class_logins) != len(set(class_logins)):
                     raise ValueError
+            if data['schema_version'] == '1.0':
+                for cohort_name in cohort_names:
+                    if sum(c.get('subject_name') == 'FULL' and c['group_name'] == cohort_name for c in data['classes']) != 1:
+                        raise ValueError
         except (ValueError, KeyError, TypeError, OSError):
             raise CommandError('Invalid input structure, duplicate source identities or unreadable file.') from None
+        validate_synthetic_date_approval(data, decisions, options['source_id'])
         with transaction.atomic():
             if connection.vendor == 'postgresql':
                 with connection.cursor() as cursor:
                     if options['apply']:
                         cursor.execute("SET LOCAL lock_timeout = '5s'")
-                        models = [User, MentorProfile, Group, StudentProfile, UserOrganizationAccess, Lesson, LessonRecord, ImportedGradeCell, StudentProfile.college_groups.through]
+                        models = [User, MentorProfile, CollegeGroup, Group, StudentProfile, UserOrganizationAccess, Lesson, LessonRecord, ImportedGradeCell, StudentProfile.college_groups.through]
                         tables = ', '.join(connection.ops.quote_name(m._meta.db_table) for m in models)
                         cursor.execute('LOCK TABLE ' + tables + ' IN SHARE ROW EXCLUSIVE MODE')
                     else:
@@ -376,7 +585,7 @@ class Command(BaseCommand):
                     if cursor.fetchall():
                         raise CommandError('Database has triggers; review them before importing.')
             planner = Planner(data, decisions, options['source_id']).build()
-            result = dict(mode='apply' if options['apply'] else 'dry-run', applied=False, database=options['expect_database'], source_sha256=hashlib.sha256(raw).hexdigest(), counts=planner.counts, cells=planner.cells, source_id=options['source_id'], issues_summary=Counter(i['kind'] for i in planner.issues), issue_reasons=Counter(i.get('detail_reason', i['reason']) for i in planner.issues), dependency_reasons=Counter(reason for i in planner.issues for reason in i.get('reasons', [])), issues=planner.issues)
+            result = dict(mode='apply' if options['apply'] else 'dry-run', applied=False, database=options['expect_database'], source_schema=data['schema_version'], source_sha256=hashlib.sha256(raw).hexdigest(), counts=planner.counts, cells=planner.cells, phone_review=planner.phone_review, source_id=options['source_id'], issues_summary=Counter(i['kind'] for i in planner.issues), issue_reasons=Counter(i.get('detail_reason', i['reason']) for i in planner.issues), dependency_reasons=Counter(reason for i in planner.issues for reason in i.get('reasons', [])), issues=planner.issues)
             # Report creation is exclusive and private; never replaces previous evidence.
             with report_path.open('x', encoding='utf-8') as report:
                 os.chmod(report_path, 0o600)

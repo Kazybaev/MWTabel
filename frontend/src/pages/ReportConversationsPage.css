@@ -11,6 +11,9 @@
 .report-chat-page__header span { display: block; margin-top: 4px; color: var(--ink-soft); }
 .report-chat-page__actions { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
 .report-chat__bulk-result { padding: 12px 14px; display: flex; align-items: center; gap: 6px; flex-wrap: wrap; border: 1px solid rgba(23,107,91,.2); border-radius: 12px; background: #eaf4f0; color: #183c34; }
+.report-chat__bulk-result--warning { border-color: rgba(158,105,13,.28); background: #fff4d6; color: #69470d; }
+.report-chat__bulk-result--danger { border-color: rgba(145,49,35,.28); background: #fbe7e4; color: #7b281c; }
+.report-chat__bulk-result--neutral { border-color: rgba(15,54,47,.14); background: #f2f0ea; color: var(--ink-soft); }
 .report-chat__bulk-result button { margin-left: auto; min-height: 44px; border: 0; background: transparent; color: #176b5b; font-weight: 800; cursor: pointer; }
 .report-chat__bulk-warning { display: grid; gap: 10px; color: var(--ink-strong); line-height: 1.55; }
 .report-chat__bulk-warning p { margin: 0; }
@@ -26,6 +29,8 @@
 .report-chat__dispatch-list label span { display: grid; gap: 2px; }
 .report-chat__dispatch-list small { color: var(--ink-soft); font-size: .76rem; }
 .report-chat__bulk-error { padding: 10px 12px; border-radius: 10px; background: #fbe7e4; color: #7b281c; }
+.report-chat__retry-confirm { display: flex; align-items: flex-start; gap: 10px; }
+.report-chat__retry-confirm input { width: 18px; height: 18px; margin-top: 2px; accent-color: #176b5b; }
 .report-chat { min-height: 0; display: grid; grid-template-columns: minmax(0, 1fr) minmax(300px, 360px); grid-template-areas: "thread sidebar"; overflow: hidden; border: 1px solid rgba(15,54,47,.1); border-radius: 20px; background: rgba(255,251,243,.96); box-shadow: 0 14px 34px rgba(25,58,51,.08); }
 .report-chat__sidebar { grid-area: sidebar; min-width: 0; min-height: 0; display: grid; grid-template-rows: auto minmax(0,1fr); overflow: hidden; border-left: 1px solid rgba(15,54,47,.1); background: #fbf8f0; }
 .report-chat__filters { padding: 14px; display: grid; grid-template-columns: minmax(0,1fr) 120px; gap: 8px; border-bottom: 1px solid rgba(15,54,47,.08); }

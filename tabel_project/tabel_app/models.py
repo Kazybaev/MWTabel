@@ -242,13 +242,18 @@ class StudentBadge(models.Model):
 
 class MonthlyStudentReportDispatch(models.Model):
     STATUS_PENDING = "pending"
+    STATUS_ACCEPTED = "accepted"
+    STATUS_DELIVERED = "delivered"
     STATUS_SUCCEEDED = "succeeded"
     STATUS_FAILED = "failed"
     STATUS_CHOICES = (
         (STATUS_PENDING, "Pending"),
-        (STATUS_SUCCEEDED, "Succeeded"),
+        (STATUS_ACCEPTED, "Accepted by Meta"),
+        (STATUS_DELIVERED, "Delivered"),
+        (STATUS_SUCCEEDED, "Succeeded (legacy)"),
         (STATUS_FAILED, "Failed"),
     )
+    SUCCESSFUL_STATUSES = (STATUS_ACCEPTED, STATUS_DELIVERED, STATUS_SUCCEEDED)
 
     student = models.ForeignKey(
         StudentProfile,
@@ -295,6 +300,8 @@ class MonthlyStudentReportAttempt(models.Model):
     payload = models.JSONField(default=dict, blank=True)
     response_payload = models.JSONField(default=dict, blank=True)
     workflow_run_id = models.CharField(max_length=255, blank=True)
+    meta_message_id = models.CharField(max_length=512, null=True, blank=True, unique=True)
+    message_status = models.CharField(max_length=32, blank=True)
     error_message = models.TextField(blank=True)
     sent_at = models.DateTimeField(null=True, blank=True)
     created_at = models.DateTimeField(auto_now_add=True)
@@ -311,6 +318,97 @@ class MonthlyStudentReportAttempt(models.Model):
 
     def __str__(self):
         return f"{self.dispatch} / attempt {self.attempt_number}"
+
+
+class MonthlyStudentReportBatch(models.Model):
+    STATUS_QUEUED = "queued"
+    STATUS_PROCESSING = "processing"
+    STATUS_COMPLETED = "completed"
+    STATUS_CHOICES = (
+        (STATUS_QUEUED, "Queued"),
+        (STATUS_PROCESSING, "Processing"),
+        (STATUS_COMPLETED, "Completed"),
+    )
+
+    month = models.DateField(help_text="First day of the reporting month.")
+    organization_type = models.CharField(max_length=16, choices=ORGANIZATION_CHOICES, db_index=True)
+    status = models.CharField(max_length=16, choices=STATUS_CHOICES, default=STATUS_QUEUED)
+    confirm_retry_failed = models.BooleanField(default=False)
+    requested_filters = models.JSONField(default=dict, blank=True)
+    created_by = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.PROTECT,
+        related_name="monthly_report_batches",
+    )
+    started_at = models.DateTimeField(null=True, blank=True)
+    completed_at = models.DateTimeField(null=True, blank=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        ordering = ("-created_at", "-id")
+
+
+class MonthlyStudentReportBatchItem(models.Model):
+    STATUS_QUEUED = "queued"
+    STATUS_PROCESSING = "processing"
+    STATUS_PENDING = "pending"
+    STATUS_ACCEPTED = "accepted"
+    STATUS_DELIVERED = "delivered"
+    STATUS_FAILED = "failed"
+    STATUS_SKIPPED = "skipped"
+    STATUS_CHOICES = (
+        (STATUS_QUEUED, "Queued"),
+        (STATUS_PROCESSING, "Processing"),
+        (STATUS_PENDING, "Pending callback"),
+        (STATUS_ACCEPTED, "Accepted by Meta"),
+        (STATUS_DELIVERED, "Delivered"),
+        (STATUS_FAILED, "Failed"),
+        (STATUS_SKIPPED, "Skipped"),
+    )
+    TERMINAL_STATUSES = (STATUS_ACCEPTED, STATUS_DELIVERED, STATUS_FAILED, STATUS_SKIPPED)
+
+    batch = models.ForeignKey(
+        MonthlyStudentReportBatch,
+        on_delete=models.CASCADE,
+        related_name="items",
+    )
+    student = models.ForeignKey(
+        StudentProfile,
+        on_delete=models.PROTECT,
+        related_name="monthly_report_batch_items",
+    )
+    month = models.DateField(help_text="First day of the reporting month.")
+    status = models.CharField(max_length=16, choices=STATUS_CHOICES, default=STATUS_QUEUED, db_index=True)
+    dispatch = models.ForeignKey(
+        MonthlyStudentReportDispatch,
+        null=True,
+        blank=True,
+        on_delete=models.PROTECT,
+        related_name="batch_items",
+    )
+    attempt = models.OneToOneField(
+        MonthlyStudentReportAttempt,
+        null=True,
+        blank=True,
+        on_delete=models.PROTECT,
+        related_name="batch_item",
+    )
+    worker_token = models.UUIDField(null=True, blank=True)
+    claimed_at = models.DateTimeField(null=True, blank=True)
+    finished_at = models.DateTimeField(null=True, blank=True)
+    error_message = models.TextField(blank=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        ordering = ("batch_id", "id")
+        constraints = [
+            models.UniqueConstraint(
+                fields=("batch", "student", "month"),
+                name="unique_monthly_report_batch_student_month",
+            )
+        ]
 
 
 class ImportedGradeCell(models.Model):
