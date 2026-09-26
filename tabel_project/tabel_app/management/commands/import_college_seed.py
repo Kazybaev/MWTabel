@@ -292,7 +292,6 @@ class Planner:
                 continue
             if not days or mentor is None:
                 continue
-<<<<<<< HEAD
             values = dict(mentor=mentor, study_days=days, archived_at=None)
             if 'college_course' in decision:
                 values['college_course'] = decision['college_course']
@@ -303,15 +302,6 @@ class Planner:
                 values,
                 src,
             )
-=======
-            values = dict(mentor=mentor, study_days=days, archived_at=None, main_group=cohorts[row['group_name']])
-            if course is not None:
-                values['college_course'] = course
-            if not Group.objects.filter(course_name=name, organization_type='college').exists() and Group.objects.filter(course_name__iexact=name, organization_type='college').exists():
-                self.issue('conflict', src, 'case_insensitive_class_collision')
-                continue
-            group = self.ensure(Group, {'course_name': name, 'organization_type': 'college'}, values, src)
->>>>>>> 8a3570d (updated for college)
             if group:
                 groups[name] = group
         roster = {}
@@ -386,7 +376,12 @@ class Planner:
                     })
                 if phone_valid and (not phone_conflict or approved_shared_phone):
                     self.phone_review['students_prepared'] += 1
-                if existing and existing.college_groups.exclude(main_group=cohorts[cohort['group_name']]).exists():
+                cohort_groups = [groups[name] for name in class_names if name in groups]
+                if (
+                    existing
+                    and any(group.main_group_id is not None for group in cohort_groups)
+                    and existing.college_groups.exclude(main_group=cohorts[cohort['group_name']]).exists()
+                ):
                     self.issue('conflict', src, 'existing_memberships_different_cohort')
                     reasons.append('existing_memberships_different_cohort')
                 if reasons:
@@ -396,14 +391,9 @@ class Planner:
                 if not user:
                     continue
                 values = dict(parent_name=parent_name, parent_phone=probe.parent_phone, group=groups[primary], organization_type='college', archived_at=None)
-<<<<<<< HEAD
                 if 'college_course' in decision:
                     values['college_course'] = decision['college_course']
                 values['college_branch'] = 'agrarian' if decision.get('college_course') == '1' else 'kuwait'
-=======
-                if course is not None:
-                    values['college_course'] = course
->>>>>>> 8a3570d (updated for college)
                 profile = self.ensure(StudentProfile, {'user': user}, values, src)
                 if profile:
                     students[login] = profile

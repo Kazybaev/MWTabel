@@ -69,6 +69,11 @@ def split_existing_college_data(apps, schema_editor):
 
 
 class Migration(migrations.Migration):
+    # The data split updates foreign keys before the unique constraint is
+    # created. PostgreSQL must flush those deferred trigger events before the
+    # following ALTER TABLE/CREATE INDEX operations.
+    atomic = False
+
     dependencies = [("tabel_app", "0012_merge_college_and_import")]
 
     operations = [

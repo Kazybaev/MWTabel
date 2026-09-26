@@ -22,6 +22,7 @@ def enqueue_monthly_report_batch(
     created_by: User,
     month: date,
     organization_type: str,
+    college_branch: str | None = None,
     group_ids: list[int] | None = None,
     student_ids: list[int] | None = None,
     confirm_retry_failed: bool = False,
@@ -31,6 +32,8 @@ def enqueue_monthly_report_batch(
         group__archived_at__isnull=True,
         organization_type=organization_type,
     )
+    if college_branch is not None:
+        students = students.filter(college_branch=college_branch)
     if group_ids:
         students = students.filter(group_id__in=group_ids)
     if student_ids:
@@ -73,6 +76,7 @@ def enqueue_monthly_report_batch(
             created_by=created_by,
             confirm_retry_failed=confirm_retry_failed,
             requested_filters={
+                "college_branch": college_branch,
                 "group_ids": group_ids or [],
                 "student_ids": student_ids or [],
             },

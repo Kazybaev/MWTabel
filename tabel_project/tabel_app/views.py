@@ -36,14 +36,9 @@ from .models import (
     User,
 )
 from .report_delivery import build_report_conversations, record_meta_delivery_callback, serialize_report_attempt
-<<<<<<< HEAD
 from .report import force_send_all_monthly_reports, is_absence_grade, send_student_month_report
 from .organization import college_branch_for_request, organization_for_request, require_agrarian_college
-=======
-from .report import is_absence_grade, send_student_month_report
 from .report_queue import enqueue_monthly_report_batch, serialize_report_batch
-from .organization import organization_for_request
->>>>>>> 8a3570d (updated for college)
 from .serializers import (
     AgrarianGradeRecordSerializer,
     BadgeSerializer,
