@@ -19,8 +19,8 @@ class CollegeImportTests(TransactionTestCase):
     def setUp(self):
         self.mentor = dict(login='mentor-seed', full_name='Mentor Seed', password='private-password')
         self.student = dict(login='student-seed', full_name='Student Seed', password='private-password', parent_phone='+996555123456')
-        self.data = dict(schema_version='2.0', mentors=[self.mentor], groups=[dict(group_name='cohort', students=[self.student])], classes=[dict(class_name='cohort-Кибер', group_name='cohort', mentor=self.mentor, unmatched_gradebook_students=[], students=[dict(self.student, exact_gradebook_match=True, source_row_gradebook=3, records=[dict(column='C', header_value='03.08.2025', value='5')])])])
-        self.decisions = dict(classes={'cohort-Кибер': dict(study_days='MON_FRI')}, students={'student-seed': dict(parent_name='Parent', primary_class='cohort-Кибер')})
+        self.data = dict(schema_version='2.0', mentors=[self.mentor], groups=[dict(group_name='ИИ1', students=[self.student])], classes=[dict(class_name='ИИ1-Кибер', group_name='ИИ1', mentor=self.mentor, unmatched_gradebook_students=[], students=[dict(self.student, exact_gradebook_match=True, source_row_gradebook=3, records=[dict(column='C', header_value='03.08.2025', value='5')])])])
+        self.decisions = dict(classes={'ИИ1-Кибер': dict(study_days='MON_FRI')}, students={'student-seed': dict(parent_name='Parent', primary_class='ИИ1-Кибер')})
 
     def second_course_data(self, values=None):
         data = copy.deepcopy(self.data)
@@ -29,7 +29,7 @@ class CollegeImportTests(TransactionTestCase):
         row = data['classes'][0]
         row.pop('mentor')
         row['subject_name'] = 'FULL'
-        row['class_name'] = 'cohort-FULL'
+        row['class_name'] = 'ИИ1-FULL'
         for student in row['students'] + row['unmatched_gradebook_students']:
             if 'source_row_gradebook' in student:
                 student['source_row'] = student.pop('source_row_gradebook')
@@ -43,7 +43,7 @@ class CollegeImportTests(TransactionTestCase):
         decisions = {
             'source_id': 'college-2026-second-course',
             'college_course': '2',
-            'classes': {'cohort-FULL': {'college_course': '2', 'mentor_login': self.mentor['login']}},
+            'classes': {'ИИ1-FULL': {'college_course': '2', 'mentor_login': self.mentor['login']}},
             'students': {'student-seed': {'college_course': '2'}},
         }
         return data, decisions
@@ -270,7 +270,7 @@ class CollegeImportTests(TransactionTestCase):
         student = StudentProfile.objects.get(user__username='student-seed')
         self.assertEqual(student.college_course, '2')
         self.assertEqual(student.group.college_course, '2')
-        self.assertEqual(student.group.course_name, 'cohort-FULL')
+        self.assertEqual(student.group.course_name, 'ИИ1-FULL')
 
     def test_second_course_membership_survives_missing_gradebook_row(self):
         data, decisions = self.second_course_data()
@@ -291,7 +291,7 @@ class CollegeImportTests(TransactionTestCase):
 
     def test_second_course_requires_exact_existing_mentor_decision(self):
         data, decisions = self.second_course_data()
-        decisions['classes']['cohort-FULL']['mentor_login'] = ''
+        decisions['classes']['ИИ1-FULL']['mentor_login'] = ''
         plan = Planner(data, decisions, source_id=decisions['source_id']).build()
         self.assertTrue(any(i['reason'] == 'mentor_decision_unresolved' for i in plan.issues))
         self.assertEqual(plan.counts['Group']['new'], 0)
@@ -429,7 +429,7 @@ class CollegeImportTests(TransactionTestCase):
             proposal = {
                 'source_id': decisions['source_id'],
                 'classes': [{
-                    'class_name': 'cohort-FULL',
+                    'class_name': 'ИИ1-FULL',
                     'columns': [{
                         'source_column': 'C',
                         'proposed_date': '2025-08-03',
@@ -465,7 +465,7 @@ class CollegeImportTests(TransactionTestCase):
             proposal = {
                 'source_id': decisions['source_id'],
                 'classes': [{
-                    'class_name': 'cohort-FULL',
+                    'class_name': 'ИИ1-FULL',
                     'columns': [{'source_column': 'C', 'proposed_date': '2025-08-04'}],
                 }],
             }
@@ -532,7 +532,11 @@ class CollegeImportTests(TransactionTestCase):
         Planner(self.data, self.decisions).build().apply()
         student = StudentProfile.objects.get()
         from django.test import RequestFactory
-        request = RequestFactory().patch('/', HTTP_X_ORGANIZATION_TYPE='college')
+        request = RequestFactory().patch(
+            '/',
+            HTTP_X_ORGANIZATION_TYPE='college',
+            HTTP_X_COLLEGE_BRANCH='agrarian',
+        )
         request.user = student.user
         serializer = StudentProfileSerializer(student, data={}, partial=True, context={'request': request})
         self.assertTrue(serializer.is_valid(), serializer.errors)
@@ -561,30 +565,31 @@ class CollegeImportTests(TransactionTestCase):
             self.assertFalse(admin.has_delete_permission(request))
 
     def test_college_branch_and_primary_subject_are_distinct(self):
-        self.decisions['classes']['cohort-Кибер']['college_course'] = '1'
-        self.decisions['students']['student-seed']['college_course'] = '1'
+        self.decisions['classes']['ИИ1-Кибер']['college_course'] = '2'
+        self.decisions['students']['student-seed']['college_course'] = '2'
         Planner(self.data, self.decisions).build().apply()
         student = StudentProfile.objects.get()
-        self.assertEqual(student.group.course_name, 'cohort-Кибер')
+        self.assertEqual(student.group.course_name, 'ИИ1-Кибер')
         self.assertEqual(student.college_branch, 'agrarian')
         self.assertEqual(student.group.college_branch, 'agrarian')
-        self.assertIsNone(student.group.main_group)
+        self.assertEqual(student.group.main_group.name, 'ИИ1')
+        self.assertEqual(student.college_course, '2')
+        self.assertEqual(student.group.college_course, '2')
         self.assertEqual(list(student.college_groups.all()), [student.group])
 
-    def test_existing_membership_in_other_branch_does_not_reclassify_import(self):
+    def test_existing_membership_in_other_branch_is_conflict(self):
         from .models import CollegeGroup, Group
         Planner(self.data, self.decisions).build().apply()
         student = StudentProfile.objects.get()
         extra = Group.objects.create(course_name='other', mentor=student.group.mentor,
-            study_days='MON_FRI', organization_type='college', college_branch='agrarian',
-            main_group=CollegeGroup.objects.create(name='other', college_branch='agrarian'))
+            study_days='MON_FRI', organization_type='college', college_branch='kuwait',
+            main_group=CollegeGroup.objects.create(name='other', college_branch='kuwait'))
         student.college_groups.add(extra)
         plan = Planner(self.data, self.decisions).build()
-        self.assertFalse(any(i['reason'] == 'existing_memberships_different_cohort' for i in plan.issues))
-        self.assertEqual(plan.pending, [])
+        self.assertTrue(any(i['reason'] == 'existing_memberships_different_cohort' for i in plan.issues))
         student.refresh_from_db()
-        self.assertEqual(student.college_branch, 'kuwait')
-        self.assertEqual(student.group.college_branch, 'kuwait')
+        self.assertEqual(student.college_branch, 'agrarian')
+        self.assertEqual(student.group.college_branch, 'agrarian')
         self.assertEqual(
             set(student.college_groups.values_list('college_branch', flat=True)),
             {'agrarian', 'kuwait'},

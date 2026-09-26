@@ -1,82 +1,71 @@
+import json
+from pathlib import Path
+
 from django.db import migrations, models
 
 
 KUWAIT = "kuwait"
 AGRARIAN = "agrarian"
+DECISIONS_PATH = Path(__file__).with_name("college_branch_decisions.json")
 
 
-def split_existing_college_data(apps, schema_editor):
+def validate_approved_college_structure(apps, schema_editor):
     CollegeGroup = apps.get_model("tabel_app", "CollegeGroup")
     Group = apps.get_model("tabel_app", "Group")
     StudentProfile = apps.get_model("tabel_app", "StudentProfile")
+    Membership = StudentProfile.college_groups.through
 
-    # The production convention requested for the initial split is:
-    # first-year data belongs to the Agrarian college; second-year (and old
-    # rows without a course) belongs to the Kuwait college.
-    StudentProfile.objects.filter(organization_type="college").exclude(
-        college_course="1"
-    ).update(college_branch=KUWAIT)
-    StudentProfile.objects.filter(
-        organization_type="college", college_course="1"
-    ).update(college_branch=AGRARIAN)
-    Group.objects.filter(organization_type="college").exclude(
-        college_course="1"
-    ).update(college_branch=KUWAIT)
-    Group.objects.filter(
-        organization_type="college", college_course="1"
-    ).update(college_branch=AGRARIAN)
+    actual_groups = set(CollegeGroup.objects.values_list("id", "name"))
+    if not actual_groups:
+        return
+    data = json.loads(DECISIONS_PATH.read_text(encoding="utf-8"))
+    rows = data.get("college_groups", [])
+    approved_groups = {(row.get("id"), row.get("name")) for row in rows}
+    if (
+        data.get("schema_version") != "1.0"
+        or len(approved_groups) != len(rows)
+        or any(row.get("college_branch") not in {AGRARIAN, KUWAIT} for row in rows)
+        or actual_groups != approved_groups
+    ):
+        raise RuntimeError("Production CollegeGroup ids/names do not match approved decisions.")
 
-    for main_group in CollegeGroup.objects.all().iterator():
-        subgroups = Group.objects.filter(main_group_id=main_group.pk)
-        first_year_groups = subgroups.filter(college_course="1")
-        other_groups = subgroups.exclude(college_course="1")
-        has_first_year = first_year_groups.exists()
-        has_other_year = other_groups.exists()
-        if not has_first_year:
-            has_first_year = StudentProfile.objects.filter(
-                college_groups__main_group_id=main_group.pk,
-                organization_type="college",
-                college_course="1",
-            ).exists()
-        if not has_other_year:
-            has_other_year = StudentProfile.objects.filter(
-                college_groups__main_group_id=main_group.pk,
-                organization_type="college",
-            ).exclude(
-                college_course="1",
-            ).exists()
+    approved_ids = {group_id for group_id, _ in approved_groups}
+    subject_groups = dict(
+        Group.objects.filter(organization_type="college")
+        .values_list("id", "main_group_id")
+    )
+    if any(main_group_id not in approved_ids for main_group_id in subject_groups.values()):
+        raise RuntimeError("A college subject group has no approved CollegeGroup mapping.")
+    if Group.objects.exclude(organization_type="college").filter(main_group_id__in=approved_ids).exists():
+        raise RuntimeError("A non-college subject group points at an approved CollegeGroup.")
 
-        if has_first_year and has_other_year:
-            CollegeGroup.objects.filter(pk=main_group.pk).update(college_branch=KUWAIT)
-            agrarian_main_group = CollegeGroup.objects.filter(
-                name=main_group.name,
-                college_branch=AGRARIAN,
-            ).first()
-            if agrarian_main_group is None:
-                agrarian_main_group = CollegeGroup.objects.create(
-                    name=main_group.name,
-                    college_branch=AGRARIAN,
-                )
-            first_year_groups.update(
-                college_branch=AGRARIAN,
-                main_group_id=agrarian_main_group.pk,
-            )
-            other_groups.update(college_branch=KUWAIT)
-        else:
-            branch = AGRARIAN if has_first_year else KUWAIT
-            CollegeGroup.objects.filter(pk=main_group.pk).update(college_branch=branch)
-            subgroups.update(college_branch=branch)
+    students = list(
+        StudentProfile.objects.filter(organization_type="college")
+        .values_list("id", "group_id")
+    )
+    memberships = {}
+    for student_id, group_id in Membership.objects.filter(
+        studentprofile_id__in=[student_id for student_id, _ in students]
+    ).values_list("studentprofile_id", "group_id"):
+        memberships.setdefault(student_id, set()).add(group_id)
+    for student_id, primary_group_id in students:
+        primary_main_id = subject_groups.get(primary_group_id)
+        linked_main_ids = {
+            subject_groups.get(group_id)
+            for group_id in memberships.get(student_id, set())
+        }
+        if primary_main_id not in approved_ids or linked_main_ids != {primary_main_id}:
+            raise RuntimeError(f"College student {student_id} has inconsistent group links.")
 
 
 class Migration(migrations.Migration):
-    # The data split updates foreign keys before the unique constraint is
-    # created. PostgreSQL must flush those deferred trigger events before the
-    # following ALTER TABLE/CREATE INDEX operations.
-    atomic = False
-
     dependencies = [("tabel_app", "0012_merge_college_and_import")]
 
     operations = [
+        migrations.RunPython(
+            validate_approved_college_structure,
+            migrations.RunPython.noop,
+        ),
         migrations.AddField(
             model_name="collegegroup",
             name="college_branch",
@@ -86,8 +75,8 @@ class Migration(migrations.Migration):
                     (AGRARIAN, "Аграрный колледж"),
                 ],
                 db_index=True,
-                default=KUWAIT,
                 max_length=16,
+                null=True,
             ),
         ),
         migrations.AddField(
@@ -99,8 +88,8 @@ class Migration(migrations.Migration):
                     (AGRARIAN, "Аграрный колледж"),
                 ],
                 db_index=True,
-                default=KUWAIT,
                 max_length=16,
+                null=True,
             ),
         ),
         migrations.AddField(
@@ -112,21 +101,13 @@ class Migration(migrations.Migration):
                     (AGRARIAN, "Аграрный колледж"),
                 ],
                 db_index=True,
-                default=KUWAIT,
                 max_length=16,
+                null=True,
             ),
         ),
         migrations.AlterField(
             model_name="collegegroup",
             name="name",
             field=models.CharField(max_length=100),
-        ),
-        migrations.RunPython(split_existing_college_data, migrations.RunPython.noop),
-        migrations.AddConstraint(
-            model_name="collegegroup",
-            constraint=models.UniqueConstraint(
-                fields=("college_branch", "name"),
-                name="unique_college_group_name_per_branch",
-            ),
         ),
     ]

@@ -1285,14 +1285,7 @@ class StudentProfileViewSet(viewsets.ModelViewSet):
         college_branch = college_branch_for_request(self.request) if organization == "college" else None
         serializer.save(
             organization_type=organization,
-            **(
-                {
-                    "college_branch": college_branch,
-                    "college_course": serializer.validated_data.get("college_course") or ("1" if college_branch == "agrarian" else "2"),
-                }
-                if organization == "college"
-                else {}
-            ),
+            **({"college_branch": college_branch} if organization == "college" else {}),
         )
 
     def update(self, request, *args, **kwargs):
@@ -1433,7 +1426,6 @@ class GroupViewSet(viewsets.ModelViewSet):
         if organization == "college":
             college_branch = college_branch_for_request(self.request)
             defaults["college_branch"] = college_branch
-            defaults["college_course"] = serializer.validated_data.get("college_course") or ("1" if college_branch == "agrarian" else "2")
         if organization == "college" and not serializer.validated_data.get("study_days"):
             defaults["study_days"] = Group.MON_FRI
         serializer.save(**defaults)

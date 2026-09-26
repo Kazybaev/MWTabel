@@ -24,6 +24,32 @@ from tabel_app.models import (
 APPROVED_SHARED_PARENT_PHONES = frozenset({
     ('college-2026-second-course', 'Mukhammadaziz-40', '+996508054080'),
 })
+COLLEGE_BRANCH_DECISIONS_PATH = (
+    Path(__file__).resolve().parents[2]
+    / 'migrations'
+    / 'college_branch_decisions.json'
+)
+
+
+def load_approved_college_branches():
+    try:
+        data = json.loads(COLLEGE_BRANCH_DECISIONS_PATH.read_text(encoding='utf-8'))
+        rows = data['college_groups']
+    except (OSError, ValueError, KeyError, TypeError):
+        raise CommandError('Approved college branch decisions are unreadable.') from None
+    mapping = {}
+    for row in rows:
+        name = row.get('name')
+        branch = row.get('college_branch')
+        if (
+            not isinstance(name, str)
+            or not name
+            or name in mapping
+            or branch not in {'agrarian', 'kuwait'}
+        ):
+            raise CommandError('Approved college branch decisions are invalid.')
+        mapping[name] = branch
+    return mapping
 
 
 def normalize_phone(value, allow_bare_international=False):
@@ -148,6 +174,7 @@ class Planner:
         self.cache = {}
         self.issues = []
         self.counts = defaultdict(Counter)
+        self.college_branches = load_approved_college_branches()
         self.phone_review = {
             'students_total': 0,
             'students_prepared': 0,
@@ -247,11 +274,22 @@ class Planner:
         cohorts = {}
         for row in self.data['groups']:
             name = row['group_name']
-            if not CollegeGroup.objects.filter(name=name).exists() and CollegeGroup.objects.filter(name__iexact=name).exists():
+            branch = self.college_branches.get(name)
+            if branch is None:
+                self.issue('blocked', 'cohort:' + name, 'college_branch_decision_missing')
+                cohorts[name] = None
+                continue
+            branch_groups = CollegeGroup.objects.filter(college_branch=branch)
+            if not branch_groups.filter(name=name).exists() and branch_groups.filter(name__iexact=name).exists():
                 self.issue('conflict', 'cohort:' + name, 'case_insensitive_cohort_collision')
                 cohorts[name] = None
                 continue
-            cohorts[name] = self.ensure(CollegeGroup, {'name': name}, {}, 'cohort:' + name)
+            cohorts[name] = self.ensure(
+                CollegeGroup,
+                {'name': name, 'college_branch': branch},
+                {},
+                'cohort:' + name,
+            )
         for row in self.data.get('mentors', []):
             src = 'mentor:' + row['login']
             user = self.user(row, 'MENTOR', src)
@@ -292,10 +330,15 @@ class Planner:
                 continue
             if not days or mentor is None:
                 continue
-            values = dict(mentor=mentor, study_days=days, archived_at=None)
+            college_branch = self.college_branches[row['group_name']]
+            values = dict(
+                mentor=mentor,
+                study_days=days,
+                archived_at=None,
+                main_group=cohorts[row['group_name']],
+            )
             if 'college_course' in decision:
                 values['college_course'] = decision['college_course']
-            college_branch = 'agrarian' if decision.get('college_course') == '1' else 'kuwait'
             group = self.ensure(
                 Group,
                 {'course_name': name, 'organization_type': 'college', 'college_branch': college_branch},
@@ -393,7 +436,7 @@ class Planner:
                 values = dict(parent_name=parent_name, parent_phone=probe.parent_phone, group=groups[primary], organization_type='college', archived_at=None)
                 if 'college_course' in decision:
                     values['college_course'] = decision['college_course']
-                values['college_branch'] = 'agrarian' if decision.get('college_course') == '1' else 'kuwait'
+                values['college_branch'] = self.college_branches[cohort['group_name']]
                 profile = self.ensure(StudentProfile, {'user': user}, values, src)
                 if profile:
                     students[login] = profile
