@@ -560,25 +560,32 @@ class CollegeImportTests(TransactionTestCase):
             self.assertFalse(admin.has_change_permission(request))
             self.assertFalse(admin.has_delete_permission(request))
 
-    def test_college_cohort_and_primary_subject_are_distinct(self):
-        from .models import CollegeGroup, Group
+    def test_college_branch_and_primary_subject_are_distinct(self):
+        self.decisions['classes']['cohort-Кибер']['college_course'] = '1'
+        self.decisions['students']['student-seed']['college_course'] = '1'
         Planner(self.data, self.decisions).build().apply()
-        cohort = CollegeGroup.objects.get(name='cohort')
         student = StudentProfile.objects.get()
         self.assertEqual(student.group.course_name, 'cohort-Кибер')
-        self.assertEqual(student.group.main_group, cohort)
+        self.assertEqual(student.college_branch, 'agrarian')
+        self.assertEqual(student.group.college_branch, 'agrarian')
+        self.assertIsNone(student.group.main_group)
         self.assertEqual(list(student.college_groups.all()), [student.group])
-        other = CollegeGroup.objects.create(name='other')
-        Group.objects.update(main_group=other)
-        plan = Planner(self.data, self.decisions).build()
-        self.assertTrue(any(i['kind'] == 'conflict' and 'main_group' in i.get('fields', []) for i in plan.issues))
 
-    def test_existing_memberships_in_other_cohort_conflict(self):
+    def test_existing_membership_in_other_branch_does_not_reclassify_import(self):
         from .models import CollegeGroup, Group
         Planner(self.data, self.decisions).build().apply()
         student = StudentProfile.objects.get()
         extra = Group.objects.create(course_name='other', mentor=student.group.mentor,
-            study_days='MON_FRI', organization_type='college', main_group=CollegeGroup.objects.create(name='other'))
+            study_days='MON_FRI', organization_type='college', college_branch='agrarian',
+            main_group=CollegeGroup.objects.create(name='other', college_branch='agrarian'))
         student.college_groups.add(extra)
         plan = Planner(self.data, self.decisions).build()
-        self.assertTrue(any(i['reason'] == 'existing_memberships_different_cohort' for i in plan.issues))
+        self.assertFalse(any(i['reason'] == 'existing_memberships_different_cohort' for i in plan.issues))
+        self.assertEqual(plan.pending, [])
+        student.refresh_from_db()
+        self.assertEqual(student.college_branch, 'kuwait')
+        self.assertEqual(student.group.college_branch, 'kuwait')
+        self.assertEqual(
+            set(student.college_groups.values_list('college_branch', flat=True)),
+            {'agrarian', 'kuwait'},
+        )
