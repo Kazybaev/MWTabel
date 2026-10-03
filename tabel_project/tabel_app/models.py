@@ -324,10 +324,12 @@ class MonthlyStudentReportBatch(models.Model):
     STATUS_QUEUED = "queued"
     STATUS_PROCESSING = "processing"
     STATUS_COMPLETED = "completed"
+    STATUS_CANCELLED = "cancelled"
     STATUS_CHOICES = (
         (STATUS_QUEUED, "Queued"),
         (STATUS_PROCESSING, "Processing"),
         (STATUS_COMPLETED, "Completed"),
+        (STATUS_CANCELLED, "Cancelled"),
     )
 
     month = models.DateField(help_text="First day of the reporting month.")
@@ -357,6 +359,7 @@ class MonthlyStudentReportBatchItem(models.Model):
     STATUS_DELIVERED = "delivered"
     STATUS_FAILED = "failed"
     STATUS_SKIPPED = "skipped"
+    STATUS_CANCELLED = "cancelled"
     STATUS_CHOICES = (
         (STATUS_QUEUED, "Queued"),
         (STATUS_PROCESSING, "Processing"),
@@ -365,8 +368,10 @@ class MonthlyStudentReportBatchItem(models.Model):
         (STATUS_DELIVERED, "Delivered"),
         (STATUS_FAILED, "Failed"),
         (STATUS_SKIPPED, "Skipped"),
+        (STATUS_CANCELLED, "Cancelled"),
     )
-    TERMINAL_STATUSES = (STATUS_ACCEPTED, STATUS_DELIVERED, STATUS_FAILED, STATUS_SKIPPED)
+    TERMINAL_STATUSES = (STATUS_ACCEPTED, STATUS_DELIVERED, STATUS_FAILED, STATUS_SKIPPED, STATUS_CANCELLED)
+    ACTIVE_STATUSES = (STATUS_QUEUED, STATUS_PROCESSING, STATUS_PENDING)
 
     batch = models.ForeignKey(
         MonthlyStudentReportBatch,
@@ -398,6 +403,8 @@ class MonthlyStudentReportBatchItem(models.Model):
     claimed_at = models.DateTimeField(null=True, blank=True)
     finished_at = models.DateTimeField(null=True, blank=True)
     error_message = models.TextField(blank=True)
+    dedupe_key = models.CharField(max_length=64, null=True, blank=True)
+    requires_operator_review = models.BooleanField(default=False, db_index=True)
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
 
@@ -407,7 +414,15 @@ class MonthlyStudentReportBatchItem(models.Model):
             models.UniqueConstraint(
                 fields=("batch", "student", "month"),
                 name="unique_monthly_report_batch_student_month",
-            )
+            ),
+            models.UniqueConstraint(
+                fields=("dedupe_key",),
+                condition=models.Q(
+                    dedupe_key__isnull=False,
+                    status__in=("queued", "processing", "pending"),
+                ),
+                name="unique_active_monthly_report_context",
+            ),
         ]
 
 

@@ -2,7 +2,7 @@ import { useEffect, useEffectEvent, useMemo, useRef, useState } from "react";
 
 import { Badge, Button, EmptyState, ErrorBlock, LoadingBlock, Modal } from "../components/Ui";
 import { formatMonthLabel, toMonthValue } from "../lib/format";
-import { getBulkDispatchPresentation } from "../lib/reportDispatchResult";
+import { getBulkDispatchPresentation, shouldPollReportBatch } from "../lib/reportDispatchResult";
 import { useResource } from "../lib/useResource";
 import "./ReportConversationsPage.css";
 
@@ -10,7 +10,7 @@ const STATUS = {
   pending: { label: "В очереди", tone: "blue" },
   accepted: { label: "Принято Meta", tone: "teal" },
   delivered: { label: "Доставлено", tone: "teal" },
-  succeeded: { label: "Отправлено", tone: "teal" },
+  succeeded: { label: "Завершено (legacy, доставка не подтверждена)", tone: "neutral" },
   failed: { label: "Ошибка", tone: "sand" },
   not_sent: { label: "Не отправлялся", tone: "neutral" },
 };
@@ -95,6 +95,8 @@ export function ReportConversationsPage({ api, sessionToken, user, organization 
     [sessionToken, activeStudentId],
   );
   const sendAllPresentation = sendAllResult ? getBulkDispatchPresentation(sendAllResult) : null;
+  const batchStatusUrl = sendAllResult?.status_url;
+  const batchPollingActive = shouldPollReportBatch(sendAllResult);
 
   const pollBatch = useEffectEvent(async (statusUrl) => {
     try {
@@ -110,10 +112,19 @@ export function ReportConversationsPage({ api, sessionToken, user, organization 
   });
 
   useEffect(() => {
-    if (!sendAllResult?.status_url || !sendAllResult.remaining) return undefined;
-    const timer = window.setTimeout(() => pollBatch(sendAllResult.status_url), 2000);
-    return () => window.clearTimeout(timer);
-  }, [sendAllResult?.status_url, sendAllResult?.remaining]);
+    if (!batchPollingActive) return undefined;
+    let stopped = false;
+    let timer;
+    const pollUntilTerminal = async () => {
+      await pollBatch(batchStatusUrl);
+      if (!stopped) timer = window.setTimeout(pollUntilTerminal, 2000);
+    };
+    timer = window.setTimeout(pollUntilTerminal, 2000);
+    return () => {
+      stopped = true;
+      window.clearTimeout(timer);
+    };
+  }, [batchPollingActive, batchStatusUrl]);
 
   const filtered = useMemo(() => {
     const normalized = query.trim().toLocaleLowerCase("ru-RU");
@@ -209,6 +220,7 @@ export function ReportConversationsPage({ api, sessionToken, user, organization 
               В очереди — <strong>{sendAllPresentation.queued}</strong>, обрабатывается — <strong>{sendAllPresentation.processing}</strong>,
               принято Meta — <strong>{sendAllPresentation.accepted}</strong>, доставлено — <strong>{sendAllPresentation.delivered}</strong>,
               ошибок — <strong>{sendAllPresentation.failed}</strong>, пропущено — <strong>{sendAllPresentation.skipped}</strong>,
+              отменено — <strong>{sendAllPresentation.cancelled}</strong>,
               осталось — <strong>{sendAllPresentation.remaining}</strong>, всего — <strong>{sendAllPresentation.total}</strong>.
             </span>
           ) : (
@@ -234,7 +246,7 @@ export function ReportConversationsPage({ api, sessionToken, user, organization 
               <select value={statusFilter} onChange={(event) => setStatusFilter(event.target.value)}>
                 <option value="">Все</option>
                 <option value="pending">В очереди</option>
-                <option value="succeeded">Отправлено</option>
+                <option value="succeeded">Завершено (legacy)</option>
                 <option value="accepted">Принято Meta</option>
                 <option value="delivered">Доставлено</option>
                 <option value="failed">Ошибка</option>

@@ -51,7 +51,7 @@ services:
     build:
       context: .
       dockerfile: Dockerfile
-    restart: "no"
+    restart: unless-stopped
     entrypoint: ["/report-worker-entrypoint.sh"]
     command: ["python", "manage.py", "process_report_queue"]
     env_file:
@@ -64,6 +64,36 @@ services:
       AUTO_MONTHLY_REPORTS: "false"
       REPORT_SCHEDULER_RUN_ON_START: "false"
       REPORT_WORKER_ENABLED: ${REPORT_WORKER_ENABLED:-false}
+      REPORT_WORKER_MODE: continuous
+      REPORT_LEGACY_QUEUE_REVIEWED: ${REPORT_LEGACY_QUEUE_REVIEWED:-false}
+      DIFY_API_KEY: ${DIFY_API_KEY:?DIFY_API_KEY must be configured}
+    depends_on:
+      db:
+        condition: service_healthy
+    networks:
+      - default
+      - dify_internal
+
+  report-recovery-worker:
+    profiles: ["report-recovery"]
+    build:
+      context: .
+      dockerfile: Dockerfile
+    restart: "no"
+    entrypoint: ["/report-worker-entrypoint.sh"]
+    command: ["python", "manage.py", "process_report_queue", "--once"]
+    env_file:
+      - ${ENV_FILE:-.env}
+    environment:
+      DEBUG: "False"
+      DB_ENGINE: postgresql
+      DB_HOST: db
+      DB_PORT: 5432
+      AUTO_MONTHLY_REPORTS: "false"
+      REPORT_SCHEDULER_RUN_ON_START: "false"
+      REPORT_WORKER_ENABLED: ${REPORT_WORKER_ENABLED:-false}
+      REPORT_WORKER_MODE: recovery
+      REPORT_RECOVERY_BATCH_IDS: ${REPORT_RECOVERY_BATCH_IDS:-}
       DIFY_API_KEY: ${DIFY_API_KEY:?DIFY_API_KEY must be configured}
     depends_on:
       db:

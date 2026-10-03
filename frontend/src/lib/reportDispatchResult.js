@@ -6,20 +6,40 @@ export function sanitizeBulkFailureReason(value) {
     .slice(0, 300);
 }
 
+export function shouldPollReportBatch(result) {
+  return Boolean(
+    result?.status_url
+    && !["completed", "cancelled"].includes(result.status)
+    && Number(result.remaining || 0) > 0,
+  );
+}
+
 export function getBulkDispatchPresentation(result) {
   if (result?.status_url) {
-    const complete = Number(result.remaining || 0) === 0;
+    const batchStatus = result.status || "queued";
+    const failed = Number(result.failed || 0);
+    const accepted = Number(result.accepted || 0);
+    const variants = {
+      queued: { title: "Пакет в очереди", tone: "neutral", role: "status" },
+      processing: { title: "Пакет обрабатывается", tone: "neutral", role: "status" },
+      completed: failed
+        ? { title: "Пакет завершён с ошибками", tone: "warning", role: "alert" }
+        : accepted
+          ? { title: "Пакет обработан, доставка ожидает подтверждения", tone: "warning", role: "status" }
+          : { title: "Пакет обработан", tone: "neutral", role: "status" },
+      cancelled: { title: "Пакет отменён", tone: "neutral", role: "status" },
+    };
+    const variant = variants[batchStatus] || variants.processing;
     return {
-      title: complete ? "Пакет обработан" : "Пакет поставлен в очередь",
-      tone: complete ? (result.failed ? "warning" : "success") : "neutral",
-      role: result.failed ? "alert" : "status",
+      ...variant,
       isBatch: true,
       queued: Number(result.queued || 0),
       processing: Number(result.processing || 0),
-      accepted: Number(result.accepted || 0),
+      accepted,
       delivered: Number(result.delivered || 0),
-      failed: Number(result.failed || 0),
+      failed,
       skipped: Number(result.skipped || 0),
+      cancelled: Number(result.cancelled || 0),
       remaining: Number(result.remaining || 0),
       total: Number(result.total || 0),
       firstError: "",
@@ -28,8 +48,8 @@ export function getBulkDispatchPresentation(result) {
   const outcome = result?.outcome || (result?.failed ? "partial" : "succeeded");
   const variants = {
     succeeded: {
-      title: "Отправка завершена",
-      tone: "success",
+      title: "Обработка завершена",
+      tone: "neutral",
       role: "status",
     },
     partial: {
