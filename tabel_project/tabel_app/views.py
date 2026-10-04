@@ -33,7 +33,12 @@ from .models import (
     User,
 )
 from .report_delivery import build_report_conversations, record_meta_delivery_callback, serialize_report_attempt
-from .report import force_send_all_monthly_reports, is_absence_grade, send_student_month_report
+from .report import (
+    calculate_average_grade,
+    force_send_all_monthly_reports,
+    is_absence_grade,
+    send_student_month_report,
+)
 from .organization import college_branch_for_request, organization_for_request, require_agrarian_college
 from .serializers import (
     AgrarianGradeRecordSerializer,
@@ -104,10 +109,7 @@ def get_manageable_group(user, group_id):
 
 
 def build_student_average(records):
-    numeric_grades = [int(record.grade) for record in records if record.grade.isdigit()]
-    if not numeric_grades:
-        return None
-    return round(sum(numeric_grades) / len(numeric_grades), 1)
+    return calculate_average_grade(record.grade for record in records)
 
 
 def parse_month_value(month_value):
@@ -202,6 +204,7 @@ def build_gradebook_rows(group, students, month_days, lessons_by_date):
 
     for index, student in enumerate(students, start=1):
         numeric_grades = []
+        marked_grades = []
         attendance_count = 0
         cells = []
         for day in month_days:
@@ -214,6 +217,7 @@ def build_gradebook_rows(group, students, month_days, lessons_by_date):
                 else record.grade if record else ""
             )
             numeric_grades.extend(int(item.grade) for item in day_records if item.grade.isdigit())
+            marked_grades.extend(item.grade for item in day_records)
             attendance_count += int(any(item.grade and not is_absence_grade(item.grade) for item in day_records))
             cells.append(
                 {
@@ -230,7 +234,7 @@ def build_gradebook_rows(group, students, month_days, lessons_by_date):
             )
 
         total_points = sum(numeric_grades) if numeric_grades else None
-        average_grade = round(total_points / len(numeric_grades), 1) if numeric_grades else None
+        average_grade = calculate_average_grade(marked_grades)
         rows.append(
             {
                 "index": index,
@@ -466,6 +470,7 @@ def build_student_monthly_stats(student_profile, *, organization_type=None, grou
     for month_number, month_name in enumerate(month_names, start=1):
         month_records = [record for record in records if record.lesson.lesson_date.month == month_number]
         numeric_grades = [int(record.grade) for record in month_records if record.grade.isdigit()]
+        absence_entries_count = sum(is_absence_grade(record.grade) for record in month_records)
         attendance_count = len({record.lesson_id for record in month_records if record.grade and not is_absence_grade(record.grade)})
         absence_count = len({record.lesson_id for record in month_records if is_absence_grade(record.grade)})
         grades_by_day = {}
@@ -478,9 +483,11 @@ def build_student_monthly_stats(student_profile, *, organization_type=None, grou
                 "name": month_name,
                 "tone": month_tones[month_number - 1],
                 "grades_count": len(numeric_grades),
+                "grade_points_total": sum(numeric_grades),
+                "average_entries_count": len(numeric_grades) + absence_entries_count,
                 "attendance_count": attendance_count,
                 "absence_count": absence_count,
-                "average_grade": round(sum(numeric_grades) / len(numeric_grades), 1) if numeric_grades else None,
+                "average_grade": calculate_average_grade(record.grade for record in month_records),
                 "daily_points": [
                     {"day": day, "grade": round(sum(day_grades) / len(day_grades), 2)}
                     for day, day_grades in sorted(grades_by_day.items())
@@ -571,7 +578,7 @@ def build_admin_student_gradebook_payload(student, organization_type, selected_m
                 "grades_count": len(numeric_grades),
                 "attendance_count": len({record.lesson_id for record in records if record.grade and not is_absence_grade(record.grade)}),
                 "absence_count": len({record.lesson_id for record in records if is_absence_grade(record.grade)}),
-                "average_grade": round(sum(numeric_grades) / len(numeric_grades), 1) if numeric_grades else None,
+                "average_grade": calculate_average_grade(record.grade for record in records),
             }
         )
 
@@ -717,7 +724,8 @@ def build_dashboard_payload(user, organization_type=None, college_branch=None):
         records = records.filter(lesson__group__college_branch=college_branch)
     grades_count = records.count()
     attendance_count = records.exclude(grade="Н").exclude(grade="н").count()
-    average_grade = build_student_average(records) or "—"
+    calculated_average = build_student_average(records)
+    average_grade = calculated_average if calculated_average is not None else "—"
     group_names = list(student_groups.values_list("course_name", flat=True))
     mentor_names = list(dict.fromkeys(student_groups.values_list("mentor__user__full_name", flat=True)))
     group_name = ", ".join(group_names) if group_names else "Не назначена"

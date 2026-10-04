@@ -264,8 +264,10 @@ class OrganizationScopeApiTests(APITestCase):
         today = timezone.localdate()
         math_lesson = Lesson.objects.create(group=self.college_group, lesson_date=today.replace(day=1), topic="Math lesson")
         english_lesson = Lesson.objects.create(group=second_group, lesson_date=today.replace(day=2), topic="English lesson")
+        missed_lesson = Lesson.objects.create(group=second_group, lesson_date=today.replace(day=3), topic="Missed lesson")
         LessonRecord.objects.create(student=student, lesson=math_lesson, grade="5")
         LessonRecord.objects.create(student=student, lesson=english_lesson, grade="3")
+        LessonRecord.objects.create(student=student, lesson=missed_lesson, grade="Н")
 
         self.client.force_authenticate(student_user)
         response = self.client.get("/api/dashboard/", **self.headers(ORGANIZATION_COLLEGE))
@@ -278,9 +280,12 @@ class OrganizationScopeApiTests(APITestCase):
         math_month = next(month for month in scopes["Math"]["monthly_stats"] if month["value"] == month_value)
         english_month = next(month for month in scopes["English"]["monthly_stats"] if month["value"] == month_value)
         self.assertEqual(all_month["grades_count"], 2)
-        self.assertEqual(all_month["average_grade"], 4.0)
+        self.assertEqual(all_month["grade_points_total"], 8)
+        self.assertEqual(all_month["average_entries_count"], 3)
+        self.assertEqual(all_month["average_grade"], 2.7)
         self.assertEqual(math_month["grades_count"], 1)
         self.assertEqual(english_month["grades_count"], 1)
+        self.assertEqual(english_month["average_grade"], 1.5)
 
     def test_admin_can_view_and_edit_one_student_gradebook_across_all_groups(self):
         second_group = Group.objects.create(

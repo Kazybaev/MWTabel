@@ -92,6 +92,24 @@ def is_absence_grade(grade: str | None) -> bool:
     return normalized in ABSENCE_GRADE_VALUES
 
 
+def calculate_average_grade(grades, *, empty_value=None):
+    """Return the average where every absence counts as a zero grade."""
+    total_points = 0
+    marked_count = 0
+
+    for value in grades:
+        grade = (value or "").strip()
+        if grade.isdigit():
+            total_points += int(grade)
+            marked_count += 1
+        elif is_absence_grade(grade):
+            marked_count += 1
+
+    if not marked_count:
+        return empty_value
+    return round(total_points / marked_count, 1)
+
+
 def get_group_study_weekdays(group: Group) -> set[int]:
     if group.study_days == Group.MON_WED_SAT:
         return {0, 2, 5}
@@ -252,7 +270,10 @@ def build_student_month_report(
     total_lessons = len(lessons)
     marked_lessons_count = len(records_by_lesson_id)
     unmarked_count = max(total_lessons - marked_lessons_count, 0)
-    average_grade = round(sum(numeric_grades) / len(numeric_grades), 1) if numeric_grades else 0
+    average_grade = calculate_average_grade(
+        (record.grade for record in records),
+        empty_value=0,
+    )
     attendance_rate = round((attendance_count / total_lessons) * 100, 1) if total_lessons else  0
 
     mentor_user = student.group.mentor.user

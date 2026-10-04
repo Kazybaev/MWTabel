@@ -20,6 +20,7 @@ from .models import (
 from .report import (
     build_dify_inputs,
     build_student_month_report,
+    calculate_average_grade,
     force_send_all_monthly_reports,
     run_dify_workflow,
     send_due_monthly_reports,
@@ -33,6 +34,21 @@ SQLITE_TEST_DATABASES = {
         "NAME": ":memory:",
     }
 }
+
+
+class AverageGradeCalculationTests(APITestCase):
+    def test_absences_count_as_zero_for_every_organization(self):
+        grades = ["5", *(["Н"] * 12)]
+
+        for organization in ("academy", "college", "college-agrarian"):
+            with self.subTest(organization=organization):
+                self.assertEqual(calculate_average_grade(grades), 0.4)
+
+    def test_empty_cells_do_not_affect_average(self):
+        self.assertEqual(calculate_average_grade(["5", "", None, "Н"]), 2.5)
+
+    def test_only_absences_produce_zero_average(self):
+        self.assertEqual(calculate_average_grade(["Н", "н"]), 0.0)
 
 
 @override_settings(DATABASES=SQLITE_TEST_DATABASES)
@@ -178,7 +194,7 @@ class TabelApiTests(APITestCase):
 
         self.assertEqual(response.status_code, status.HTTP_200_OK)
         student_row = next(row for row in response.data["rows"] if row["student"]["id"] == self.student.pk)
-        self.assertEqual(student_row["average_grade"], 5.0)
+        self.assertEqual(student_row["average_grade"], 2.5)
         self.assertEqual(student_row["attendance_count"], 1)
 
     def test_student_transfer_moves_grades_to_new_group_lessons(self):
@@ -437,7 +453,7 @@ class MonthlyReportServiceTests(APITestCase):
         self.assertEqual(payload["summary"]["attendance_count"], 2)
         self.assertEqual(payload["summary"]["absence_count"], 1)
         self.assertEqual(payload["summary"]["unmarked_count"], 0)
-        self.assertEqual(payload["summary"]["average_grade"], 4.5)
+        self.assertEqual(payload["summary"]["average_grade"], 3.0)
         self.assertEqual(payload["summary"]["total_five"], 1)
         self.assertEqual(payload["summary"]["total_four"], 1)
         self.assertEqual(payload["summary"]["total_three"], 0)

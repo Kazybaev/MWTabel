@@ -154,7 +154,9 @@ function ChartJsMonthChart({ months = [], scopes = [], selectedScope = "all", on
   const [rangeMode, setRangeMode] = useState("last-1");
   const visibleMonths = useMemo(() => (rangeMode === "last-3" ? months : months.slice(-1)), [months, rangeMode]);
   const chartSeries = useMemo(() => {
-    const hasGrades = (month) => (month.daily_points || []).length > 0 || Number(month.grades_count) > 0;
+    const hasGrades = (month) => (month.daily_points || []).length > 0
+      || Number(month.grades_count) > 0
+      || Number(month.absence_count) > 0;
     if (selectedScope !== "all") {
       return visibleMonths.filter(hasGrades);
     }
@@ -330,7 +332,9 @@ function ChartJsMonthChart({ months = [], scopes = [], selectedScope = "all", on
 
 function getRecentMonthsWithGrades(stats = []) {
   return stats
-    .filter((month) => (month.daily_points || []).length || Number(month.grades_count) > 0)
+    .filter((month) => (month.daily_points || []).length
+      || Number(month.grades_count) > 0
+      || Number(month.absence_count) > 0)
     .slice(-3);
 }
 
@@ -352,13 +356,26 @@ function StudentSummaryStats({ stats = [] }) {
   const months = getRecentMonthsWithGrades(stats);
   const allGrades = months.flatMap(getMonthGrades);
   const totalGrades = months.reduce((sum, month) => sum + Number(month.grades_count || 0), 0);
-  const averageGrade = allGrades.length
-    ? allGrades.reduce((sum, grade) => sum + grade, 0) / allGrades.length
+  const totalMarkedEntries = months.reduce(
+    (sum, month) => sum + Number(
+      month.average_entries_count
+        ?? (Number(month.grades_count || 0) + Number(month.absence_count || 0)),
+    ),
+    0,
+  );
+  const averageGrade = totalMarkedEntries
+    ? months.reduce((sum, month) => sum + Number(
+      month.grade_points_total
+        ?? (Number(month.average_grade || 0) * Number(
+          month.average_entries_count
+            ?? (Number(month.grades_count || 0) + Number(month.absence_count || 0)),
+        )),
+    ), 0) / totalMarkedEntries
     : 0;
   const bestGrade = allGrades.length ? Math.max(...allGrades) : 0;
   const worstGrade = allGrades.length ? Math.min(...allGrades) : 0;
 
-  if (!allGrades.length) {
+  if (!totalMarkedEntries) {
     return (
       <section className="student-summary-stats" aria-label="Статистика студента">
         <EmptyState title="Оценок пока нет" description="Статистика появится после выставления первой оценки." />
@@ -417,9 +434,7 @@ function StudentSummaryStats({ stats = [] }) {
         <div className="student-month-breakdown__grid">
           {months.map((month) => {
             const grades = getMonthGrades(month);
-            const monthAverage = grades.length
-              ? grades.reduce((sum, grade) => sum + grade, 0) / grades.length
-              : 0;
+            const monthAverage = Number(month.average_grade || 0);
             const monthMax = grades.length ? Math.max(...grades) : 0;
             const monthMin = grades.length ? Math.min(...grades) : 0;
             const color = MONTH_LINE_COLORS[month.tone] || "#2563eb";
