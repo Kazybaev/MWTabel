@@ -35,6 +35,26 @@ def build_report_message_text(payload: dict[str, Any]) -> str:
     }
     month_value = str(period.get("month", ""))
     month_label = month_names.get(month_value[-2:], month_value or "Отчёттук")
+    if payload.get("organization_type") == "college":
+        subject_blocks = []
+        for subject in payload.get("subjects", []):
+            subject_summary = subject.get("summary", {})
+            grades = ", ".join(
+                f"{lesson.get('date', '')}: {lesson.get('grade') or '—'}"
+                for lesson in subject.get("lessons", [])
+            ) or "Баалар коюлган жок"
+            subject_blocks.append(
+                f"{subject.get('subject', '')}\n{grades}\n"
+                f"Орточо баа: {subject_summary.get('average_grade', 0)}; "
+                f"калтырган сабактар: {subject_summary.get('absence_count', 0)}"
+            )
+        return (
+            "Саламатсызбы!\n"
+            f"{student.get('full_name', '')} студентинин {month_label} айындагы окуусу тууралуу отчёт.\n\n"
+            + "\n\n".join(subject_blocks)
+            + f"\n\nЖалпы орточо баа: {summary.get('average_grade', 0)}. "
+            f"Калтырган сабактар: {summary.get('absence_count', 0)}."
+        )
     grade_lines = []
     for grade, key in (("5", "total_five"), ("4", "total_four"), ("3", "total_three"), ("2", "total_two")):
         count = int(summary.get(key, 0) or 0)
@@ -63,6 +83,7 @@ def record_meta_delivery_callback(
     delivery: dict[str, Any],
     meta_status_code: int,
     meta_response: Any,
+    expected_organization_type: str | None = None,
 ) -> tuple[MonthlyStudentReportDispatch, bool]:
     report_payload = delivery["report"]
     student_id = int(report_payload["student"]["id"])
@@ -75,12 +96,29 @@ def record_meta_delivery_callback(
             .select_related("student__user")
             .get(student_id=student_id, month=month)
         )
+        if expected_organization_type and dispatch.student.organization_type != expected_organization_type:
+            raise ValueError("Callback belongs to a different report destination.")
+        correlation = report_payload.get("dispatch")
+        if correlation is not None and (
+            not isinstance(correlation, dict)
+            or correlation.get("id") != dispatch.pk
+            or correlation.get("attempt_number") != dispatch.attempts
+        ):
+            raise ValueError("Callback does not match the current report attempt.")
+        if correlation is None and dispatch.attempts > 1:
+            # Kuwait retains the legacy report schema. Its original generated_at
+            # field identifies the attempt without adding fields to the old JSON.
+            original_timestamp = dispatch.payload.get("period", {}).get("generated_at")
+            if not original_timestamp or report_payload.get("period", {}).get("generated_at") != original_timestamp:
+                raise ValueError("Callback must identify the current report attempt after a retry.")
         stored_response = dispatch.response_payload if isinstance(dispatch.response_payload, dict) else {}
         previous_meta = stored_response.get("meta") if isinstance(stored_response.get("meta"), dict) else {}
         duplicate = (
             previous_meta.get("status_code") == meta_status_code
             and previous_meta.get("response") == meta_response
         )
+        if duplicate or dispatch.status == MonthlyStudentReportDispatch.STATUS_SUCCEEDED:
+            return dispatch, duplicate
 
         response_payload = dict(stored_response)
         response_payload["meta"] = {
@@ -93,16 +131,28 @@ def record_meta_delivery_callback(
             "received_at": received_at.isoformat(),
         }
 
-        succeeded = 200 <= meta_status_code < 300
+        messages = meta_response.get("messages") if isinstance(meta_response, dict) else None
+        succeeded = (
+            200 <= meta_status_code < 300
+            and isinstance(messages, list)
+            and any(isinstance(message, dict) and message.get("id") for message in messages)
+            and not meta_response.get("error")
+        )
         dispatch.response_payload = response_payload
         dispatch.status = (
             MonthlyStudentReportDispatch.STATUS_SUCCEEDED
             if succeeded
             else MonthlyStudentReportDispatch.STATUS_FAILED
         )
-        dispatch.error_message = "" if succeeded else f"Meta returned HTTP {meta_status_code}."
+        dispatch.error_message = "" if succeeded else (
+            f"Meta returned HTTP {meta_status_code}."
+            if not 200 <= meta_status_code < 300
+            else "Meta response did not confirm message acceptance."
+        )
         if succeeded and dispatch.sent_at is None:
             dispatch.sent_at = received_at
+        if not succeeded:
+            dispatch.sent_at = None
         dispatch.save(update_fields=["status", "response_payload", "error_message", "sent_at", "updated_at"])
         attempt = dispatch.delivery_attempts.order_by("-attempt_number", "-id").first()
         if attempt is not None:
@@ -140,6 +190,7 @@ def serialize_report_message(dispatch: MonthlyStudentReportDispatch) -> dict[str
         "error_message": dispatch.error_message,
         "summary": payload.get("summary", {}),
         "lessons": payload.get("lessons", []),
+        "subjects": payload.get("subjects", []),
         "rendered_text": meta.get("rendered_text") or build_report_message_text(payload),
         "meta": meta,
         "workflow_run_id": dispatch.workflow_run_id,
@@ -161,6 +212,7 @@ def serialize_report_attempt(attempt: MonthlyStudentReportAttempt) -> dict[str, 
         "error_message": attempt.error_message,
         "summary": payload.get("summary", {}),
         "lessons": payload.get("lessons", []),
+        "subjects": payload.get("subjects", []),
         "rendered_text": meta.get("rendered_text") or build_report_message_text(payload),
         "meta": meta,
         "workflow_run_id": attempt.workflow_run_id,

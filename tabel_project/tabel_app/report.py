@@ -8,6 +8,7 @@ from typing import Any
 from urllib import error, request
 
 from django.db import IntegrityError, transaction
+from django.db.models import Q
 from django.utils import timezone
 
 from .models import (
@@ -16,6 +17,8 @@ from .models import (
     LessonRecord,
     MonthlyStudentReportAttempt,
     MonthlyStudentReportDispatch,
+    ORGANIZATION_ACADEMY,
+    ORGANIZATION_COLLEGE,
     StudentProfile,
 )
 
@@ -33,7 +36,7 @@ logger.setLevel(getattr(logging, os.getenv("REPORT_LOG_LEVEL", "INFO").upper(), 
 logger.propagate = False
 
 REPORT_DISPATCH_DELAY_SECONDS = 10
-REPORT_DISPATCH_DELAY_STATUSES = {"sent", "failed"}
+REPORT_DISPATCH_DELAY_STATUSES = {"sent", "failed", "pending"}
 
 
 class ReportConfigurationError(Exception):
@@ -56,8 +59,35 @@ def get_dify_workflow_status(response_payload: dict[str, Any]) -> str:
     return str(response_payload.get("status", "")).strip().lower()
 
 
-def accepts_partial_dify_success() -> bool:
-    return os.getenv("DIFY_ACCEPT_PARTIAL_SUCCESS", "False").strip().lower() in {
+def get_report_destination(organization_type: str) -> str:
+    if organization_type == ORGANIZATION_ACADEMY:
+        return "kuwait"
+    if organization_type == ORGANIZATION_COLLEGE:
+        return "agrarian"
+    raise ReportConfigurationError("Unknown report organization.")
+
+
+def get_dify_setting(name: str, organization_type: str, default: str = "") -> str:
+    destination = get_report_destination(organization_type).upper()
+    scoped = os.getenv(f"DIFY_{destination}_{name}", "").strip()
+    if scoped:
+        return scoped
+    # Only Kuwait keeps the original integration. Agrarian must never use its key.
+    if organization_type == ORGANIZATION_ACADEMY:
+        return os.getenv(f"DIFY_{name}", default).strip()
+    return default
+
+
+def get_report_callback_token(organization_type: str) -> str:
+    destination = get_report_destination(organization_type).upper()
+    token = os.getenv(f"BACKEND_{destination}_REPORT_CALLBACK_TOKEN", "").strip()
+    if token or organization_type == ORGANIZATION_COLLEGE:
+        return token
+    return os.getenv("BACKEND_REPORT_CALLBACK_TOKEN", "").strip()
+
+
+def accepts_partial_dify_success(organization_type: str = ORGANIZATION_ACADEMY) -> bool:
+    return get_dify_setting("ACCEPT_PARTIAL_SUCCESS", organization_type, "False").lower() in {
         "1",
         "true",
         "yes",
@@ -92,25 +122,8 @@ def is_absence_grade(grade: str | None) -> bool:
     return normalized in ABSENCE_GRADE_VALUES
 
 
-def get_group_study_weekdays(group: Group) -> set[int]:
-    if group.study_days == Group.MON_WED_SAT:
-        return {0, 2, 5}
-    if group.study_days == Group.TUE_THU_SUN:
-        return {1, 3, 6}
-    return set()
-
-
 def get_group_last_lesson_date(group: Group, month_start: date) -> date | None:
     month_start, month_end = month_bounds(month_start)
-    study_weekdays = get_group_study_weekdays(group)
-    if study_weekdays:
-        current_date = month_end
-        while current_date >= month_start:
-            if current_date.weekday() in study_weekdays:
-                return current_date
-            current_date -= timedelta(days=1)
-        return None
-
     return (
         group.lessons.filter(lesson_date__gte=month_start, lesson_date__lte=month_end)
         .order_by("-lesson_date", "-id")
@@ -119,33 +132,42 @@ def get_group_last_lesson_date(group: Group, month_start: date) -> date | None:
     )
 
 
-def get_student_trigger_lesson(student: StudentProfile, month_start: date) -> Lesson | None:
-    trigger_date = get_group_last_lesson_date(student.group, month_start)
-    if trigger_date is None:
-        return None
+def get_student_report_groups(student: StudentProfile):
+    scope = Q(pk=student.group_id)
+    if student.organization_type == ORGANIZATION_COLLEGE:
+        scope |= Q(college_students=student)
+    return Group.objects.filter(
+        scope, organization_type=student.organization_type,
+    ).select_related("mentor__user").distinct().order_by("course_name", "pk")
 
+
+def get_student_trigger_lesson(student: StudentProfile, month_start: date) -> Lesson | None:
+    month_start, month_end = month_bounds(month_start)
     return (
         Lesson.objects.filter(
-            group=student.group,
-            lesson_date=trigger_date,
+            group__in=get_student_report_groups(student),
+            lesson_date__range=(month_start, month_end),
         )
-        .order_by("-id")
+        .order_by("-lesson_date", "-id")
         .first()
     )
 
 
 def has_student_trigger_lesson_record(student: StudentProfile, trigger_lesson: Lesson) -> bool:
-    return LessonRecord.objects.filter(student=student, lesson=trigger_lesson).exists()
+    return LessonRecord.objects.filter(
+        student=student, lesson=trigger_lesson,
+        grade__in=[grade for grade, _ in LessonRecord.GRADE_CHOICES],
+    ).exists()
 
 
 def get_month_lessons_for_student(student: StudentProfile, month_start: date) -> list[Lesson]:
     month_start, month_end = month_bounds(month_start)
     return list(
         Lesson.objects.filter(
-            group=student.group,
+            group__in=get_student_report_groups(student),
             lesson_date__gte=month_start,
             lesson_date__lte=month_end,
-        ).order_by("lesson_date", "id")
+        ).select_related("group__mentor__user").order_by("lesson_date", "id")
     )
 
 
@@ -154,7 +176,7 @@ def get_month_records_for_student(student: StudentProfile, month_start: date) ->
     return list(
         LessonRecord.objects.filter(
             student=student,
-            lesson__group=student.group,
+            lesson__group__in=get_student_report_groups(student),
             lesson__lesson_date__gte=month_start,
             lesson__lesson_date__lte=month_end,
         )
@@ -163,70 +185,69 @@ def get_month_records_for_student(student: StudentProfile, month_start: date) ->
     )
 
 
-def build_student_month_report(
+def summarize_report_lessons(lessons: list[dict[str, Any]]) -> dict[str, Any]:
+    numeric_grades = [int(row["grade"]) for row in lessons if row["grade"] in {"2", "3", "4", "5"}]
+    attendance_count = sum(row["status"] == "attended" for row in lessons)
+    absence_count = sum(row["status"] == "absent" for row in lessons)
+    marked_count = attendance_count + absence_count
+    return {
+        "total_lessons": len(lessons),
+        "marked_lessons_count": marked_count,
+        "attendance_count": attendance_count,
+        "absence_count": absence_count,
+        "unmarked_count": len(lessons) - marked_count,
+        "attendance_rate": round(attendance_count / len(lessons) * 100, 1) if lessons else 0,
+        "numeric_grades_count": len(numeric_grades),
+        "average_grade": round(sum(numeric_grades) / len(numeric_grades), 1) if numeric_grades else 0,
+        **{key: sum(row["grade"] == grade for row in lessons) for grade, key in (
+            ("5", "total_five"), ("4", "total_four"), ("3", "total_three"), ("2", "total_two"),
+        )},
+        "grades": [row["grade"] for row in lessons if row["grade"]],
+    }
+
+
+def build_multisubject_month_report(
     student: StudentProfile,
     month_start: date | datetime | None = None,
     trigger_date: date | None = None,
 ) -> dict[str, Any]:
-    month_start = normalize_month_start(month_start)
-    month_start, month_end = month_bounds(month_start)
+    month_start, month_end = month_bounds(normalize_month_start(month_start))
+    groups = list(get_student_report_groups(student))
     lessons = get_month_lessons_for_student(student, month_start)
-    records = get_month_records_for_student(student, month_start)
-    trigger_date = trigger_date or get_group_last_lesson_date(student.group, month_start)
-
-    records_by_lesson_id = {record.lesson_id: record for record in records}
-    numeric_grades: list[int] = []
-    attendance_count = 0
-    absence_count = 0
-    grade_totals = {
-        "5": 0,
-        "4": 0,
-        "3": 0,
-        "2": 0,
-        "Н": 0,
-    }
-    lesson_rows: list[dict[str, Any]] = []
-
+    records = {record.lesson_id: record for record in get_month_records_for_student(student, month_start)}
+    trigger_date = trigger_date or (lessons[-1].lesson_date if lessons else None)
+    valid_grades = {grade for grade, _ in LessonRecord.GRADE_CHOICES}
+    lesson_rows = []
     for lesson in lessons:
-        record = records_by_lesson_id.get(lesson.pk)
+        record = records.get(lesson.pk)
         grade = (record.grade or "").strip() if record else ""
-        if grade.isdigit():
-            numeric_grades.append(int(grade))
-            attendance_count += 1
-            if grade in grade_totals:
-                grade_totals[grade] += 1
-        elif grade:
-            if is_absence_grade(grade):
-                absence_count += 1
-                grade_totals["Н"] += 1
-            else:
-                attendance_count += 1
+        if grade not in valid_grades:
+            grade = ""
+        lesson_rows.append({
+            "lesson_id": lesson.pk,
+            "group_id": lesson.group_id,
+            "subject": lesson.group.course_name,
+            "date": lesson.lesson_date.isoformat(),
+            "topic": lesson.topic,
+            "grade": grade,
+            "comment": record.comment if record else "",
+            "status": "absent" if is_absence_grade(grade) else "attended" if grade else "unmarked",
+        })
 
-        lesson_rows.append(
-            {
-                "lesson_id": lesson.pk,
-                "date": lesson.lesson_date.isoformat(),
-                "topic": lesson.topic,
-                "grade": grade,
-                "comment": record.comment if record else "",
-                "status": (
-                    "absent"
-                    if is_absence_grade(grade)
-                    else "attended"
-                    if grade
-                    else "unmarked"
-                ),
-            }
-        )
-
-    total_lessons = len(lessons)
-    marked_lessons_count = len(records)
-    unmarked_count = max(total_lessons - marked_lessons_count, 0)
-    average_grade = round(sum(numeric_grades) / len(numeric_grades), 1) if numeric_grades else 0
-    attendance_rate = round((attendance_count / total_lessons) * 100, 1) if total_lessons else  0
-
+    subjects = []
+    for group in groups:
+        subject_lessons = [row for row in lesson_rows if row["group_id"] == group.pk]
+        subjects.append({
+            "group_id": group.pk,
+            "subject": group.course_name,
+            "mentor": {"id": group.mentor_id, "full_name": group.mentor.user.full_name},
+            "last_lesson_date": subject_lessons[-1]["date"] if subject_lessons else None,
+            "summary": summarize_report_lessons(subject_lessons),
+            "lessons": subject_lessons,
+        })
     mentor_user = student.group.mentor.user
     return {
+        "organization_type": student.organization_type,
         "student": {
             "id": student.pk,
             "user_id": student.user_id,
@@ -234,6 +255,7 @@ def build_student_month_report(
             "username": student.user.username,
             "parent_name": student.parent_name,
             "parent_phone": str(student.parent_phone),
+            "college_course": student.college_course,
         },
         "group": {
             "id": student.group_id,
@@ -255,26 +277,27 @@ def build_student_month_report(
             "last_lesson_date": trigger_date.isoformat() if trigger_date else None,
             "generated_at": timezone.now().isoformat(),
         },
-        "summary": {
-            "total_lessons": total_lessons,
-            "marked_lessons_count": marked_lessons_count,
-            "attendance_count": attendance_count,
-            "absence_count": absence_count,
-            "unmarked_count": unmarked_count,
-            "attendance_rate": attendance_rate,
-            "numeric_grades_count": len(numeric_grades),
-            "average_grade": average_grade,
-            "total_five": grade_totals["5"],
-            "total_four": grade_totals["4"],
-            "total_three": grade_totals["3"],
-            "total_two": grade_totals["2"],
-            "grades": [row["grade"] for row in lesson_rows if row["grade"]],
-        },
+        "summary": summarize_report_lessons(lesson_rows),
+        "subjects": subjects,
         "lessons": lesson_rows,
     }
 
 
-def build_dify_inputs(report_payload: dict[str, Any]) -> dict[str, Any]:
+def build_student_month_report(
+    student: StudentProfile,
+    month_start: date | datetime | None = None,
+    trigger_date: date | None = None,
+) -> dict[str, Any]:
+    if student.organization_type == ORGANIZATION_COLLEGE:
+        from .college_reports.payload import build_agrarian_month_report
+        return build_agrarian_month_report(student, month_start, trigger_date)
+    if student.organization_type == ORGANIZATION_ACADEMY:
+        from .kuwait_reports import build_kuwait_month_report
+        return build_kuwait_month_report(student, month_start, trigger_date)
+    raise ReportConfigurationError("Unknown report organization.")
+
+
+def build_legacy_dify_inputs(report_payload: dict[str, Any]) -> dict[str, Any]:
     summary = report_payload["summary"]
     return {
         "report": report_payload,
@@ -295,7 +318,27 @@ def build_dify_inputs(report_payload: dict[str, Any]) -> dict[str, Any]:
     }
 
 
-def get_dify_run_url() -> str:
+def build_dify_inputs(report_payload: dict[str, Any]) -> dict[str, Any]:
+    if report_payload.get("organization_type") == ORGANIZATION_COLLEGE:
+        from .college_reports.payload import build_agrarian_dify_inputs
+        return build_agrarian_dify_inputs(report_payload)
+    from .kuwait_reports import build_kuwait_dify_inputs
+    return build_kuwait_dify_inputs(report_payload)
+
+
+def get_dify_run_url(organization_type: str = ORGANIZATION_ACADEMY) -> str:
+    destination = get_report_destination(organization_type).upper()
+    scoped_url = (
+        os.getenv(f"DIFY_{destination}_WORKFLOW_RUN_URL", "").strip()
+        or os.getenv(f"DIFY_{destination}_API_URL", "").strip()
+    )
+    if scoped_url:
+        return scoped_url
+    scoped_base = os.getenv(f"DIFY_{destination}_BASE_URL", "").strip().rstrip("/")
+    if scoped_base:
+        return f"{scoped_base}/workflows/run"
+    if organization_type == ORGANIZATION_COLLEGE:
+        raise ReportConfigurationError("DIFY_AGRARIAN_BASE_URL or DIFY_AGRARIAN_WORKFLOW_RUN_URL must be configured.")
     explicit_url = os.getenv("DIFY_WORKFLOW_RUN_URL", "").strip()
     if explicit_url:
         return explicit_url
@@ -318,13 +361,15 @@ def get_dify_user_agent() -> str:
 
 
 def run_dify_workflow(inputs: dict[str, Any], user_key: str) -> dict[str, Any]:
-    api_key = os.getenv("DIFY_API_KEY", "").strip()
+    organization_type = inputs.get("report", {}).get("organization_type", ORGANIZATION_ACADEMY)
+    api_key = get_dify_setting("API_KEY", organization_type)
     if not api_key:
-        raise ReportConfigurationError("DIFY_API_KEY must be configured.")
+        key_name = "DIFY_AGRARIAN_API_KEY" if organization_type == ORGANIZATION_COLLEGE else "DIFY_KUWAIT_API_KEY or DIFY_API_KEY"
+        raise ReportConfigurationError(f"{key_name} must be configured.")
 
-    response_mode = os.getenv("DIFY_RESPONSE_MODE", "blocking").strip() or "blocking"
-    timeout_seconds = int(os.getenv("DIFY_TIMEOUT_SECONDS", "30"))
-    url = get_dify_run_url()
+    response_mode = get_dify_setting("RESPONSE_MODE", organization_type, "blocking") or "blocking"
+    timeout_seconds = int(get_dify_setting("TIMEOUT_SECONDS", organization_type, "30"))
+    url = get_dify_run_url(organization_type)
     payload = {
         "inputs": inputs,
         "response_mode": response_mode,
@@ -404,277 +449,112 @@ def send_student_month_report(
     month_start: date | datetime | None = None,
     dry_run: bool = False,
     force: bool = False,
-    bypass_schedule: bool = False,
-    resend_succeeded: bool = False,
 ) -> dict[str, Any]:
+    # The legacy force argument never bypasses schedule, success, or an active attempt.
     run_date = normalize_run_date(run_date)
     month_start = normalize_month_start(month_start or run_date)
-    trigger_date = get_group_last_lesson_date(student.group, month_start)
+    base_result = {"student_id": student.pk, "student_name": student.user.full_name}
+    if student.archived_at is not None or not student.user.is_active:
+        return {**base_result, "status": "skipped", "reason": "inactive_student"}
     trigger_lesson = get_student_trigger_lesson(student, month_start)
+    if trigger_lesson is None:
+        return {**base_result, "status": "skipped", "reason": "no_lessons_in_month"}
+    trigger_date = trigger_lesson.lesson_date
+    base_result["trigger_date"] = trigger_date.isoformat()
+    if run_date != trigger_date:
+        return {**base_result, "status": "skipped", "reason": "not_due_today"}
 
-    if trigger_date is None and not bypass_schedule:
-        logger.info(
-            "Skipping report for student='%s': no lessons in month='%s'",
-            student.user.full_name,
-            month_start.strftime("%Y-%m"),
-        )
-        return {
-            "student_id": student.pk,
-            "student_name": student.user.full_name,
-            "status": "skipped",
-            "reason": "no_lessons_in_month",
-        }
+    lessons = get_month_lessons_for_student(student, month_start)
+    last_by_group = {lesson.group_id: lesson for lesson in lessons}
+    missing_groups = [group_id for group_id, lesson in last_by_group.items()
+                      if not has_student_trigger_lesson_record(student, lesson)]
+    if missing_groups:
+        return {**base_result, "status": "skipped", "reason": "trigger_lesson_not_marked",
+                "unmarked_group_ids": missing_groups}
 
-    if not bypass_schedule and run_date != trigger_date:
-        return {
-            "student_id": student.pk,
-            "student_name": student.user.full_name,
-            "status": "skipped",
-            "reason": "not_due_today",
-            "trigger_date": trigger_date.isoformat(),
-        }
-
-    if not bypass_schedule and trigger_lesson is None:
-        return {
-            "student_id": student.pk,
-            "student_name": student.user.full_name,
-            "status": "skipped",
-            "reason": "trigger_lesson_not_created",
-            "trigger_date": trigger_date.isoformat(),
-        }
-
-    if not bypass_schedule and not has_student_trigger_lesson_record(student, trigger_lesson):
-        return {
-            "student_id": student.pk,
-            "student_name": student.user.full_name,
-            "status": "skipped",
-            "reason": "trigger_lesson_not_marked",
-            "trigger_date": trigger_date.isoformat(),
-        }
-
-    dispatch = MonthlyStudentReportDispatch.objects.filter(student=student, month=month_start).first()
-    if (
-        dispatch
-        and dispatch.status == MonthlyStudentReportDispatch.STATUS_SUCCEEDED
-        and not resend_succeeded
-    ):
-        logger.info(
-            "Skipping report for student='%s': already sent for month='%s'",
-            student.user.full_name,
-            month_start.strftime("%Y-%m"),
-        )
-        return {
-            "student_id": student.pk,
-            "student_name": student.user.full_name,
-            "status": "skipped",
-            "reason": "already_sent",
-            "dispatch_id": dispatch.pk,
-        }
-
-    effective_trigger_date = trigger_date or run_date
-    report_payload = build_student_month_report(
-        student,
-        month_start=month_start,
-        trigger_date=effective_trigger_date,
-    )
-
+    report_payload = build_student_month_report(student, month_start, trigger_date)
     if dry_run:
-        logger.info(
-            "Dry run report prepared for student='%s', month='%s'",
-            student.user.full_name,
-            month_start.strftime("%Y-%m"),
-        )
-        return {
-            "student_id": student.pk,
-            "student_name": student.user.full_name,
-            "status": "dry_run",
-            "trigger_date": trigger_date.isoformat(),
-            "payload": report_payload,
-        }
+        return {**base_result, "status": "dry_run", "payload": report_payload}
 
     try:
         with transaction.atomic():
+            # Serialize even the first dispatch for a student on PostgreSQL.
+            StudentProfile.objects.select_for_update().get(pk=student.pk)
             dispatch, _ = MonthlyStudentReportDispatch.objects.select_for_update().get_or_create(
-                student=student,
-                month=month_start,
-                defaults={"trigger_date": effective_trigger_date},
+                student=student, month=month_start, defaults={"trigger_date": trigger_date},
             )
-
-            if (
-                dispatch.status == MonthlyStudentReportDispatch.STATUS_SUCCEEDED
-                and not resend_succeeded
-            ):
-                return {
-                    "student_id": student.pk,
-                    "student_name": student.user.full_name,
-                    "status": "skipped",
-                    "reason": "already_sent",
-                    "dispatch_id": dispatch.pk,
-                }
-
-            if (
-                dispatch.status == MonthlyStudentReportDispatch.STATUS_PENDING
-                and dispatch.attempts > 0
-                and not force
-            ):
-                return {
-                    "student_id": student.pk,
-                    "student_name": student.user.full_name,
-                    "status": "skipped",
-                    "reason": "send_already_in_progress",
-                    "dispatch_id": dispatch.pk,
-                    "trigger_date": trigger_date.isoformat(),
-                }
-
-            dispatch.trigger_date = effective_trigger_date
+            if dispatch.status == MonthlyStudentReportDispatch.STATUS_SUCCEEDED:
+                return {**base_result, "status": "skipped", "reason": "already_sent", "dispatch_id": dispatch.pk}
+            if dispatch.status == MonthlyStudentReportDispatch.STATUS_PENDING and dispatch.attempts > 0:
+                return {**base_result, "status": "skipped", "reason": "send_already_in_progress", "dispatch_id": dispatch.pk}
+            dispatch.trigger_date = trigger_date
             dispatch.status = MonthlyStudentReportDispatch.STATUS_PENDING
+            dispatch.attempts += 1
+            report_payload["dispatch"] = {"id": dispatch.pk, "attempt_number": dispatch.attempts}
             dispatch.payload = report_payload
             dispatch.error_message = ""
             dispatch.response_payload = {}
             dispatch.workflow_run_id = ""
             dispatch.sent_at = None
-            dispatch.attempts += 1
             dispatch.save()
             delivery_attempt = MonthlyStudentReportAttempt.objects.create(
-                dispatch=dispatch,
-                attempt_number=dispatch.attempts,
-                status=MonthlyStudentReportDispatch.STATUS_PENDING,
-                payload=report_payload,
+                dispatch=dispatch, attempt_number=dispatch.attempts,
+                status=dispatch.status, payload=report_payload,
             )
     except IntegrityError:
         dispatch = MonthlyStudentReportDispatch.objects.get(student=student, month=month_start)
-        return {
-            "student_id": student.pk,
-            "student_name": student.user.full_name,
-            "status": "skipped",
-            "reason": "send_already_in_progress",
-            "dispatch_id": dispatch.pk,
-            "trigger_date": trigger_date.isoformat(),
-        }
+        return {**base_result, "status": "skipped", "reason": "send_already_in_progress", "dispatch_id": dispatch.pk}
 
+    delivery_error = ""
     try:
-        response_payload = run_dify_workflow(
-            build_dify_inputs(report_payload),
-            build_dispatch_user_key(student, month_start),
-        )
+        response_payload = run_dify_workflow(build_dify_inputs(report_payload), build_dispatch_user_key(student, month_start))
     except Exception as exc:
-        logger.error(
-            "Report delivery failed for student='%s', month='%s': %s",
-            student.user.full_name,
-            month_start.strftime("%Y-%m"),
-            exc,
-        )
-        dispatch.status = MonthlyStudentReportDispatch.STATUS_FAILED
-        dispatch.error_message = str(exc)
-        dispatch.save(
-            update_fields=[
-                "trigger_date",
-                "status",
-                "payload",
-                "error_message",
-                "response_payload",
-                "workflow_run_id",
-                "attempts",
-                "updated_at",
-            ]
-        )
-        delivery_attempt.status = dispatch.status
-        delivery_attempt.error_message = dispatch.error_message
-        delivery_attempt.save(update_fields=["status", "error_message", "updated_at"])
-        return {
-            "student_id": student.pk,
-            "student_name": student.user.full_name,
-            "status": "failed",
-            "reason": str(exc),
-            "dispatch_id": dispatch.pk,
-        }
+        logger.exception("Report attempt failed: student_id=%s month=%s", student.pk, month_start)
+        delivery_error = str(exc)
+        response_payload = {}
 
-    dispatch.refresh_from_db()
-    delivery_attempt.refresh_from_db()
-    stored_response = dict(dispatch.response_payload) if isinstance(dispatch.response_payload, dict) else {}
-    meta_result = stored_response.get("meta")
-    if isinstance(meta_result, dict) and meta_result.get("callback_received"):
-        stored_response["dify"] = response_payload
-        dispatch.response_payload = stored_response
-    else:
-        workflow_status = get_dify_workflow_status(response_payload)
-        workflow_failed = workflow_status in {"failed", "stopped"} or (
-            workflow_status == "partial-succeeded" and not accepts_partial_dify_success()
-        )
-        dispatch.status = (
-            MonthlyStudentReportDispatch.STATUS_FAILED
-            if workflow_failed
-            else MonthlyStudentReportDispatch.STATUS_SUCCEEDED
-        )
-        dispatch.response_payload = response_payload
-        dispatch.error_message = (
-            f"Dify workflow finished with status '{workflow_status}'."
-            if workflow_failed
-            else ""
-        )
-        dispatch.sent_at = None if workflow_failed else timezone.now()
-    dispatch.workflow_run_id = (
-        str(response_payload.get("workflow_run_id", ""))
-        or str(response_payload.get("data", {}).get("id", ""))
-    )
-    dispatch.save(
-        update_fields=[
-            "trigger_date",
-            "status",
-            "payload",
-            "response_payload",
-            "workflow_run_id",
-            "attempts",
-            "sent_at",
-            "error_message",
-            "updated_at",
-        ]
-    )
-    delivery_attempt.status = dispatch.status
-    delivery_attempt.response_payload = dispatch.response_payload
-    delivery_attempt.workflow_run_id = dispatch.workflow_run_id
-    delivery_attempt.error_message = dispatch.error_message
-    delivery_attempt.sent_at = dispatch.sent_at
-    delivery_attempt.save(
-        update_fields=[
-            "status",
-            "response_payload",
-            "workflow_run_id",
-            "error_message",
-            "sent_at",
-            "updated_at",
-        ]
-    )
+    # A callback can arrive while the HTTP request is running. Preserve its result
+    # and lock the dispatch until both the dispatch and attempt are updated.
+    with transaction.atomic():
+        dispatch = MonthlyStudentReportDispatch.objects.select_for_update().get(pk=dispatch.pk)
+        stored_response = dict(dispatch.response_payload) if isinstance(dispatch.response_payload, dict) else {}
+        meta = stored_response.get("meta")
+        if isinstance(meta, dict) and meta.get("callback_received"):
+            stored_response["dify"] = response_payload
+            if delivery_error:
+                stored_response["workflow_error"] = delivery_error
+            dispatch.response_payload = stored_response
+        else:
+            workflow_status = get_dify_workflow_status(response_payload)
+            workflow_failed = workflow_status in {"failed", "stopped"} or (
+                workflow_status == "partial-succeeded" and not accepts_partial_dify_success(student.organization_type)
+            )
+            dispatch.status = MonthlyStudentReportDispatch.STATUS_FAILED if delivery_error or workflow_failed else MonthlyStudentReportDispatch.STATUS_PENDING
+            dispatch.response_payload = response_payload
+            dispatch.error_message = delivery_error or (
+                f"Workflow finished with status '{workflow_status}'." if workflow_failed else ""
+            )
+            # Completion of the workflow alone does not confirm a message to the parent.
+            dispatch.sent_at = None
+        data = response_payload.get("data")
+        dispatch.workflow_run_id = str(response_payload.get("workflow_run_id") or (
+            data.get("id", "") if isinstance(data, dict) else ""
+        ))
+        dispatch.save(update_fields=["status", "response_payload", "workflow_run_id", "sent_at", "error_message", "updated_at"])
+        delivery_attempt.status = dispatch.status
+        delivery_attempt.response_payload = dispatch.response_payload
+        delivery_attempt.workflow_run_id = dispatch.workflow_run_id
+        delivery_attempt.error_message = dispatch.error_message
+        delivery_attempt.sent_at = dispatch.sent_at
+        delivery_attempt.save(update_fields=["status", "response_payload", "workflow_run_id", "error_message", "sent_at", "updated_at"])
+
+    result = {**base_result, "dispatch_id": dispatch.pk, "workflow_run_id": dispatch.workflow_run_id}
     if dispatch.status == MonthlyStudentReportDispatch.STATUS_FAILED:
-        logger.error(
-            "Dify finished but Meta delivery failed for student='%s', month='%s', dispatch_id=%s",
-            student.user.full_name,
-            month_start.strftime("%Y-%m"),
-            dispatch.pk,
-        )
-        return {
-            "student_id": student.pk,
-            "student_name": student.user.full_name,
-            "status": "failed",
-            "reason": dispatch.error_message,
-            "dispatch_id": dispatch.pk,
-            "workflow_run_id": dispatch.workflow_run_id,
-        }
-    logger.info(
-        "Report sent successfully for student='%s', month='%s', dispatch_id=%s, workflow_run_id='%s'",
-        student.user.full_name,
-        month_start.strftime("%Y-%m"),
-        dispatch.pk,
-        dispatch.workflow_run_id,
-    )
-    return {
-        "student_id": student.pk,
-        "student_name": student.user.full_name,
-        "status": "sent",
-        "dispatch_id": dispatch.pk,
-        "workflow_run_id": dispatch.workflow_run_id,
-        "trigger_date": effective_trigger_date.isoformat(),
-    }
+        return {**result, "status": "failed", "reason": dispatch.error_message}
+    if dispatch.status == MonthlyStudentReportDispatch.STATUS_PENDING:
+        return {**result, "status": "pending", "reason": "awaiting_delivery_confirmation"}
+    logger.info("Report confirmed: student_id=%s month=%s dispatch_id=%s", student.pk, month_start, dispatch.pk)
+    return {**result, "status": "sent"}
 
 
 def force_send_all_monthly_reports(
@@ -682,7 +562,7 @@ def force_send_all_monthly_reports(
     month_start: date | datetime | None = None,
     organization_type: str | None = None,
 ) -> list[dict[str, Any]]:
-    """Explicit admin action: send the selected month to every active student."""
+    """Admin action using the same schedule and duplicate protection as individual sends."""
     run_date = normalize_run_date(run_date)
     month_start = normalize_month_start(month_start or run_date)
     student_queryset = StudentProfile.objects.select_related("user", "group", "group__mentor__user").filter(archived_at__isnull=True)
@@ -699,9 +579,7 @@ def force_send_all_monthly_reports(
             student,
             run_date=run_date,
             month_start=month_start,
-            force=True,
-            bypass_schedule=True,
-            resend_succeeded=True,
+            force=False,
         )
         results.append(result)
     return results
@@ -718,7 +596,6 @@ def send_due_monthly_reports(
 ) -> list[dict[str, Any]]:
     run_date = normalize_run_date(run_date)
     month_start = normalize_month_start(month_start or run_date)
-    month_start, month_end = month_bounds(month_start)
 
     students = StudentProfile.objects.select_related(
         "user",
@@ -726,16 +603,14 @@ def send_due_monthly_reports(
         "group__mentor__user",
     ).filter(
         archived_at__isnull=True,
-        group__lessons__lesson_date__gte=month_start,
-        group__lessons__lesson_date__lte=month_end,
-    ).distinct()
+    ).filter(user__is_active=True).distinct()
     if organization_type:
         students = students.filter(organization_type=organization_type)
 
     if student_id is not None:
         students = students.filter(pk=student_id)
     if group_id is not None:
-        students = students.filter(group_id=group_id)
+        students = students.filter(Q(group_id=group_id) | Q(organization_type=ORGANIZATION_COLLEGE, college_groups__id=group_id)).distinct()
 
     results = []
     ordered_students = list(students.order_by("group__course_name", "user__full_name"))

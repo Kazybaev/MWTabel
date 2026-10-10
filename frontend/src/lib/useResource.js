@@ -1,6 +1,9 @@
-import { useEffect, useEffectEvent, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 
 export function useResource(loader, deps) {
+  const loaderRef = useRef(loader);
+  const requestRef = useRef(0);
+  const dependencyKey = JSON.stringify(deps);
   const [state, setState] = useState({
     data: null,
     error: "",
@@ -8,7 +11,12 @@ export function useResource(loader, deps) {
     refreshing: false,
   });
 
-  const load = useEffectEvent(async () => {
+  useEffect(() => {
+    loaderRef.current = loader;
+  });
+
+  const load = useCallback(async () => {
+    const requestId = ++requestRef.current;
     setState((currentState) => ({
       ...currentState,
       loading: currentState.data == null,
@@ -17,7 +25,8 @@ export function useResource(loader, deps) {
     }));
 
     try {
-      const data = await loader();
+      const data = await loaderRef.current();
+      if (requestId !== requestRef.current) return;
       setState({
         data,
         error: "",
@@ -25,6 +34,7 @@ export function useResource(loader, deps) {
         refreshing: false,
       });
     } catch (error) {
+      if (requestId !== requestRef.current) return;
       setState((currentState) => ({
         ...currentState,
         error: error.message,
@@ -32,11 +42,18 @@ export function useResource(loader, deps) {
         refreshing: false,
       }));
     }
-  });
+  }, []);
 
   useEffect(() => {
-    load();
-  }, deps);
+    let cancelled = false;
+    Promise.resolve().then(() => {
+      if (!cancelled) load();
+    });
+    return () => {
+      cancelled = true;
+      requestRef.current += 1;
+    };
+  }, [dependencyKey, load]);
 
   return {
     ...state,

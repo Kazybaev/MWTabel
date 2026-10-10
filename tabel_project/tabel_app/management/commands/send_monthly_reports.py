@@ -13,8 +13,9 @@ class Command(BaseCommand):
         parser.add_argument("--month", dest="month", help="Reporting month in YYYY-MM format.")
         parser.add_argument("--student-id", dest="student_id", type=int, help="Send only for one student.")
         parser.add_argument("--group-id", dest="group_id", type=int, help="Send only for one group.")
+        parser.add_argument("--destination", choices=["kuwait", "agrarian"], help="Check only Kuwait or only Agrarian reports.")
         parser.add_argument("--dry-run", action="store_true", help="Build reports without sending them.")
-        parser.add_argument("--force", action="store_true", help="Send even if today is not the trigger date.")
+        parser.add_argument("--force", action="store_true", help="Legacy option; schedule and duplicate protection always apply.")
 
     def handle(self, *args, **options):
         run_date = self._parse_date(options.get("run_date"))
@@ -26,6 +27,7 @@ class Command(BaseCommand):
             group_id=options.get("group_id"),
             dry_run=options.get("dry_run", False),
             force=options.get("force", False),
+            organization_type={"kuwait": "academy", "agrarian": "college"}.get(options.get("destination")),
         )
 
         if not results:
@@ -36,6 +38,7 @@ class Command(BaseCommand):
         failed_count = 0
         skipped_count = 0
         dry_run_count = 0
+        pending_count = 0
 
         for result in results:
             status = result["status"]
@@ -54,6 +57,9 @@ class Command(BaseCommand):
                         f"Failed report for {student_name}: {result['reason']}"
                     )
                 )
+            elif status == "pending":
+                pending_count += 1
+                self.stdout.write(f"Awaiting delivery confirmation for {student_name} (dispatch #{result['dispatch_id']}).")
             elif status == "dry_run":
                 dry_run_count += 1
                 self.stdout.write(
@@ -68,7 +74,7 @@ class Command(BaseCommand):
 
         self.stdout.write("")
         self.stdout.write(
-            f"Summary: sent={sent_count}, failed={failed_count}, dry_run={dry_run_count}, skipped={skipped_count}"
+            f"Summary: sent={sent_count}, pending={pending_count}, failed={failed_count}, dry_run={dry_run_count}, skipped={skipped_count}"
         )
 
         if failed_count:

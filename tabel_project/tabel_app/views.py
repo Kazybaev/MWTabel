@@ -30,7 +30,10 @@ from .models import (
     User,
 )
 from .report_delivery import build_report_conversations, record_meta_delivery_callback, serialize_report_attempt
-from .report import force_send_all_monthly_reports, is_absence_grade, send_student_month_report
+from .report import (
+    force_send_all_monthly_reports, get_report_callback_token, get_report_destination,
+    is_absence_grade, send_student_month_report,
+)
 from .organization import organization_for_request
 from .serializers import (
     GroupDetailSerializer,
@@ -378,11 +381,7 @@ def dispatch_due_reports_after_gradebook_save(students, selected_month):
             month_start=selected_month,
             force=False,
         )
-        if result["status"] != "skipped" or result.get("reason") in {
-            "already_sent",
-            "send_already_in_progress",
-        }:
-            results.append(result)
+        results.append(result)
     return results
 
 
@@ -563,7 +562,7 @@ def save_admin_student_gradebook(student, organization_type, selected_month, ent
         ]
         save_gradebook_entries(group, [student], month_days, lessons_by_date, group_entries)
 
-    dispatch_due_reports_after_gradebook_save([student], selected_month)
+    return dispatch_due_reports_after_gradebook_save([student], selected_month)
 
 
 def build_dashboard_payload(user, organization_type=None):
@@ -722,6 +721,16 @@ class ApiRootAPIView(APIView):
                     "force_send_all": "/api/reports/send-all/",
                     "delivery_callback": "/api/report-logs/",
                     "admin_conversations": "/api/reports/conversations/",
+                    "kuwait": {
+                        "dispatch": "/api/reports/kuwait/send/",
+                        "send_all": "/api/reports/kuwait/send-all/",
+                        "callback": "/api/reports/kuwait/callback/",
+                    },
+                    "agrarian": {
+                        "dispatch": "/api/reports/agrarian/send/",
+                        "send_all": "/api/reports/agrarian/send-all/",
+                        "callback": "/api/reports/agrarian/callback/",
+                    },
                 },
             }
         )
@@ -814,6 +823,7 @@ class AppMetaAPIView(APIView):
 
 class ReportDispatchAPIView(APIView):
     permission_classes = [permissions.IsAuthenticated]
+    report_organization = None
 
     @extend_schema(
         summary="Send one student monthly report to Dify",
@@ -830,8 +840,12 @@ class ReportDispatchAPIView(APIView):
         serializer = ReportDispatchRequestSerializer(data=request.data)
         serializer.is_valid(raise_exception=True)
 
+        organization = organization_for_request(request)
+        if self.report_organization and self.report_organization != organization:
+            raise ValidationError({"organization_type": "Выбран другой раздел отправки отчётов."})
+
         student = get_object_or_404(
-            students_for_user(request.user).filter(organization_type=organization_for_request(request)).select_related("user", "group", "group__mentor__user"),
+            students_for_user(request.user).filter(organization_type=organization).select_related("user", "group", "group__mentor__user"),
             pk=serializer.validated_data["student_id"],
         )
 
@@ -847,16 +861,30 @@ class ReportDispatchAPIView(APIView):
             dry_run=serializer.validated_data.get("dry_run", False),
             force=serializer.validated_data.get("force", True),
         )
-        response_status = status.HTTP_502_BAD_GATEWAY if result.get("status") == "failed" else status.HTTP_200_OK
+        result["destination"] = get_report_destination(organization)
+        response_status = (
+            status.HTTP_502_BAD_GATEWAY if result.get("status") == "failed"
+            else status.HTTP_202_ACCEPTED if result.get("status") == "pending"
+            else status.HTTP_200_OK
+        )
         return Response(result, status=response_status)
 
 
 class ReportDeliveryCallbackAPIView(APIView):
     permission_classes = [permissions.AllowAny]
     authentication_classes = []
+    report_organization = None
 
     def post(self, request, *args, **kwargs):
-        expected_token = os.getenv("BACKEND_REPORT_CALLBACK_TOKEN", "").strip()
+        serializer = ReportDeliveryCallbackSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        report = serializer.validated_data["delivery"]["report"]
+        organization = report.get("organization_type", "academy")
+        if organization not in {"academy", "college"} or (
+            self.report_organization and organization != self.report_organization
+        ):
+            return Response({"detail": "Callback belongs to a different report destination."}, status=status.HTTP_400_BAD_REQUEST)
+        expected_token = get_report_callback_token(organization)
         if len(expected_token) < 32:
             return Response(
                 {"detail": "Report callback is not configured."},
@@ -869,10 +897,10 @@ class ReportDeliveryCallbackAPIView(APIView):
         if not supplied_token or not hmac.compare_digest(supplied_token, expected_token):
             return Response({"detail": "Invalid callback token."}, status=status.HTTP_401_UNAUTHORIZED)
 
-        serializer = ReportDeliveryCallbackSerializer(data=request.data)
-        serializer.is_valid(raise_exception=True)
         try:
-            dispatch, duplicate = record_meta_delivery_callback(**serializer.validated_data)
+            dispatch, duplicate = record_meta_delivery_callback(
+                **serializer.validated_data, expected_organization_type=organization,
+            )
         except (MonthlyStudentReportDispatch.DoesNotExist, ValueError, TypeError):
             return Response(
                 {"detail": "Matching monthly report dispatch was not found."},
@@ -900,26 +928,34 @@ class ReportConversationListAPIView(APIView):
 
 class ForceSendAllReportsAPIView(APIView):
     permission_classes = [permissions.IsAuthenticated]
+    report_organization = None
 
     def post(self, request, *args, **kwargs):
         if request.user.role != User.ROLE_ADMIN:
             raise PermissionDenied
 
+        organization = organization_for_request(request)
+        if self.report_organization and self.report_organization != organization:
+            raise ValidationError({"organization_type": "Выбран другой раздел отправки отчётов."})
+
         month_start = timezone.localdate().replace(day=1)
         results = force_send_all_monthly_reports(
             run_date=timezone.localdate(),
             month_start=month_start,
-            organization_type=organization_for_request(request),
+            organization_type=organization,
         )
         sent_count = sum(result.get("status") == "sent" for result in results)
         failed_count = sum(result.get("status") == "failed" for result in results)
-        skipped_count = len(results) - sent_count - failed_count
+        pending_count = sum(result.get("status") == "pending" for result in results)
+        skipped_count = sum(result.get("status") == "skipped" for result in results)
         return Response(
             {
                 "month": month_start.strftime("%Y-%m"),
+                "destination": get_report_destination(organization),
                 "total": len(results),
                 "sent": sent_count,
                 "failed": failed_count,
+                "pending": pending_count,
                 "skipped": skipped_count,
                 "results": results,
             },
@@ -1053,13 +1089,15 @@ class StudentProfileViewSet(viewsets.ModelViewSet):
         selected_month = parse_month_value(request.data.get("month"))
         if selected_month is None:
             raise ValidationError({"month": "Неверный формат месяца. Используйте YYYY-MM."})
-        save_admin_student_gradebook(
+        report_results = save_admin_student_gradebook(
             student,
             organization,
             selected_month,
             request.data.get("entries", []),
         )
-        return Response(build_admin_student_gradebook_payload(student, organization, selected_month))
+        payload = build_admin_student_gradebook_payload(student, organization, selected_month)
+        payload["report_dispatch_results"] = report_results
+        return Response(payload)
 
     @action(detail=True, methods=["post"])
     def archive(self, request, pk=None):

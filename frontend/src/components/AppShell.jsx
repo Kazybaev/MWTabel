@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useState } from "react";
 
 import { Badge, Button, NoticeBanner } from "./Ui";
 import { formatRole } from "../lib/format";
@@ -215,11 +215,14 @@ export function AppShell({
     .filter(Boolean)
     .join(" ");
   const sidebarClassName = ["sidebar", isMentor ? "sidebar--mentor" : ""].filter(Boolean).join(" ");
-  const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
-
-  useEffect(() => {
-    setMobileMenuOpen(false);
-  }, [currentPath]);
+  const [mobileMenu, setMobileMenu] = useState({ path: currentPath, open: false });
+  if (mobileMenu.path !== currentPath) {
+    setMobileMenu({ path: currentPath, open: false });
+  }
+  const mobileMenuOpen = mobileMenu.path === currentPath && mobileMenu.open;
+  function setMobileMenuOpen(open) {
+    setMobileMenu({ path: currentPath, open });
+  }
 
   return (
     <div className={shellClassName}>

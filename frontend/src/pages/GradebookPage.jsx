@@ -1,6 +1,7 @@
 import { useEffect, useEffectEvent, useRef, useState } from "react";
 
 import { GradebookMatrix } from "../components/GradebookMatrix";
+import { ReportDispatchResults } from "../components/ReportDispatchResults";
 import { Button, EmptyState, ErrorBlock, LoadingBlock } from "../components/Ui";
 import { buildGradeMap, toMonthValue } from "../lib/format";
 import { navigateTo } from "../lib/router";
@@ -58,17 +59,16 @@ export function GradebookPage({ api, sessionToken, user, groupId, routeMonth, on
     [sessionToken, resolvedGroupId, monthValue],
   );
 
-  useEffect(() => {
-    if (!data?.rows) {
-      return;
+  const [previousData, setPreviousData] = useState(data);
+  if (data !== previousData) {
+    setPreviousData(data);
+    if (data?.rows) {
+      const nextGrades = buildGradeMap(data.rows);
+      setDraftGrades(nextGrades);
+      setPersistedGrades(nextGrades);
+      setSaveStatus("synced");
     }
-
-    const nextGrades = buildGradeMap(data.rows);
-    latestDraftSignatureRef.current = serializeGradeMap(nextGrades);
-    setDraftGrades(nextGrades);
-    setPersistedGrades(nextGrades);
-    setSaveStatus("synced");
-  }, [data]);
+  }
 
   useEffect(() => {
     latestDraftSignatureRef.current = serializeGradeMap(draftGrades);
@@ -87,6 +87,7 @@ export function GradebookPage({ api, sessionToken, user, groupId, routeMonth, on
   }
 
   function handleGradeChange(studentId, date, grade) {
+    setSaveStatus("pending");
     setDraftGrades((current) => ({
       ...current,
       [`${studentId}|${date}`]: grade,
@@ -139,11 +140,9 @@ export function GradebookPage({ api, sessionToken, user, groupId, routeMonth, on
     }
 
     if (!dirty) {
-      setSaveStatus((current) => (current === "error" ? current : "synced"));
       return undefined;
     }
 
-    setSaveStatus("pending");
     const snapshot = { ...draftGrades };
     const requestId = saveRequestIdRef.current + 1;
     saveRequestIdRef.current = requestId;
@@ -157,7 +156,7 @@ export function GradebookPage({ api, sessionToken, user, groupId, routeMonth, on
         saveTimerRef.current = null;
       }
     };
-  }, [data?.can_edit, dirty, draftGrades, monthValue, persistSnapshot, resolvedGroupId]);
+  }, [data?.can_edit, dirty, draftGrades, monthValue, resolvedGroupId]);
 
   if (!resolvedGroupId) {
     return (
@@ -181,11 +180,13 @@ export function GradebookPage({ api, sessionToken, user, groupId, routeMonth, on
   }
 
   return (
+    <>
+    <ReportDispatchResults results={data.report_dispatch_results} month={monthValue} />
     <GradebookMatrix
       data={data}
       draftGrades={draftGrades}
       onGradeChange={handleGradeChange}
-      saveStatus={saveStatus}
+      saveStatus={!dirty && saveStatus !== "error" ? "synced" : saveStatus}
       monthValue={monthValue}
       onMonthChange={handleMonthNavigation}
       onMonthStep={handleMonthNavigation}
@@ -195,5 +196,6 @@ export function GradebookPage({ api, sessionToken, user, groupId, routeMonth, on
       lockedMode={lockedGradebook}
       studentMode={mode === "student"}
     />
+    </>
   );
 }

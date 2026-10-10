@@ -73,13 +73,15 @@ def run_scheduled_report_check(trigger: str = "scheduler") -> list[dict]:
 
     sent = sum(1 for result in results if result["status"] == "sent")
     failed = sum(1 for result in results if result["status"] == "failed")
+    pending = sum(1 for result in results if result["status"] == "pending")
     dry_run = sum(1 for result in results if result["status"] == "dry_run")
     skipped = sum(1 for result in results if result["status"] == "skipped")
 
-    if sent or failed or dry_run:
+    if sent or pending or failed or dry_run:
         logger.info(
-            "Automatic report check finished: sent=%s, failed=%s, dry_run=%s, skipped=%s",
+            "Automatic report check finished: sent=%s, pending=%s, failed=%s, dry_run=%s, skipped=%s",
             sent,
+            pending,
             failed,
             dry_run,
             skipped,

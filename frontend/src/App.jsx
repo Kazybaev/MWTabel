@@ -1,4 +1,4 @@
-import { useEffect, useEffectEvent, useState, startTransition } from "react";
+import { useCallback, useEffect, useEffectEvent, useState, startTransition } from "react";
 
 import "./App.css";
 import { AppShell } from "./components/AppShell";
@@ -89,13 +89,13 @@ function App() {
     setSession(nextSession);
   }
 
-  const handleUnauthorized = useEffectEvent(() => {
+  const handleUnauthorized = useCallback(() => {
     clearStoredSession();
     setSession(null);
     setMeta(emptyMeta);
     setNotice(buildNotice("Сессия завершилась. Войдите снова.", "danger"));
     startTransition(() => navigateTo("/login"));
-  });
+  }, []);
 
   async function callApi(path, options = {}) {
     return apiRequest(path, {
@@ -188,10 +188,14 @@ function App() {
     });
   });
 
-  useEffect(() => {
+  const initializeRoute = useEffectEvent(() => {
     if (!window.location.hash) {
       navigateTo(session?.access ? defaultPathForUser(session.user) : "/login");
     }
+  });
+
+  useEffect(() => {
+    initializeRoute();
 
     window.addEventListener("hashchange", handleHashChange);
     return () => {
@@ -336,7 +340,7 @@ function App() {
     }
 
     if (route.path === "/reports") {
-      return <ReportConversationsPage api={callApi} sessionToken={session.access} user={session.user} />;
+      return <ReportConversationsPage api={callApi} sessionToken={session.access} user={session.user} organization={organization} />;
     }
 
     if (route.path === "/my-grades") {

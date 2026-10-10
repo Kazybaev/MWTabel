@@ -1,6 +1,7 @@
 import { useState } from "react";
 
 import { Badge, Button, EmptyState, ErrorBlock, LoadingBlock, Panel } from "../components/Ui";
+import { ReportDispatchResults } from "../components/ReportDispatchResults";
 import { formatMonthLabel, toMonthValue } from "../lib/format";
 import { navigateTo } from "../lib/router";
 import { useResource } from "../lib/useResource";
@@ -69,6 +70,7 @@ function StudentGradebookEditor({ api, data, month, onNotice, setData }) {
 
   return (
     <div className="page-stack student-admin-gradebook">
+      <ReportDispatchResults results={data.report_dispatch_results} month={month} />
       <section className="hero-band">
         <div>
           <p className="hero-band__eyebrow">ПЕРСОНАЛЬНЫЙ ТАБЕЛЬ</p>

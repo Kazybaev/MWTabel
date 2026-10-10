@@ -23,6 +23,7 @@ from .report import (
     force_send_all_monthly_reports,
     run_dify_workflow,
     send_due_monthly_reports,
+    send_student_month_report,
 )
 from .report_delivery import record_meta_delivery_callback
 
@@ -522,10 +523,13 @@ class MonthlyReportServiceTests(APITestCase):
     @patch("tabel_app.report.time.sleep")
     @patch("tabel_app.report.run_dify_workflow")
     def test_reports_are_sent_individually_on_last_lesson_day(self, mocked_run_dify_workflow, mocked_sleep):
-        mocked_run_dify_workflow.side_effect = [
-            {"workflow_run_id": "run-1", "data": {"status": "succeeded"}},
-            {"workflow_run_id": "run-2", "data": {"status": "succeeded"}},
-        ]
+        def confirm_message(inputs, user_key):
+            record_meta_delivery_callback(
+                {"report": inputs["report"]}, 200,
+                {"messages": [{"id": f"message-{inputs['report']['student']['id']}"}]},
+            )
+            return {"workflow_run_id": "run-confirmed", "data": {"status": "succeeded"}}
+        mocked_run_dify_workflow.side_effect = confirm_message
         LessonRecord.objects.create(student=self.student, lesson=self.first_lesson, grade="5")
         LessonRecord.objects.create(student=self.second_student, lesson=self.first_lesson, grade="4")
         LessonRecord.objects.create(student=self.student, lesson=self.third_lesson, grade="5")
@@ -560,7 +564,7 @@ class MonthlyReportServiceTests(APITestCase):
         self.assertEqual(MonthlyStudentReportDispatch.objects.count(), 0)
 
     @patch("tabel_app.report.run_dify_workflow")
-    def test_report_does_not_treat_earlier_created_lesson_as_month_end(self, mocked_run_dify_workflow):
+    def test_report_uses_last_actual_lesson_instead_of_calendar_schedule(self, mocked_run_dify_workflow):
         self.third_lesson.delete()
         LessonRecord.objects.create(student=self.student, lesson=self.first_lesson, grade="5")
         LessonRecord.objects.create(student=self.student, lesson=self.second_lesson, grade="4")
@@ -571,13 +575,19 @@ class MonthlyReportServiceTests(APITestCase):
         )
 
         self.assertEqual(results[0]["status"], "skipped")
-        self.assertEqual(results[0]["reason"], "trigger_lesson_not_created")
+        self.assertEqual(results[0]["reason"], "not_due_today")
+        self.assertEqual(results[0]["trigger_date"], "2026-04-13")
+        preview = send_due_monthly_reports(run_date=date(2026, 4, 13), student_id=self.student.pk, dry_run=True)
+        self.assertEqual(preview[0]["status"], "dry_run")
         mocked_run_dify_workflow.assert_not_called()
         self.assertEqual(MonthlyStudentReportDispatch.objects.count(), 0)
 
     @patch("tabel_app.report.run_dify_workflow")
     def test_successful_report_is_not_resent_even_with_force(self, mocked_run_dify_workflow):
-        mocked_run_dify_workflow.return_value = {"workflow_run_id": "run-1"}
+        def confirm_message(inputs, user_key):
+            record_meta_delivery_callback({"report": inputs["report"]}, 200, {"messages": [{"id": "confirmed"}]})
+            return {"workflow_run_id": "run-1"}
+        mocked_run_dify_workflow.side_effect = confirm_message
         LessonRecord.objects.create(student=self.student, lesson=self.third_lesson, grade="5")
 
         first_results = send_due_monthly_reports(
@@ -597,31 +607,20 @@ class MonthlyReportServiceTests(APITestCase):
         self.assertEqual(mocked_run_dify_workflow.call_count, 1)
 
     @patch("tabel_app.report.run_dify_workflow")
-    def test_admin_bulk_service_bypasses_schedule_marks_and_previous_success(
-        self,
-        mocked_run_dify_workflow,
-    ):
-        mocked_run_dify_workflow.return_value = {"workflow_run_id": "run-forced"}
+    def test_admin_bulk_service_preserves_schedule_marks_and_previous_success(self, mocked_workflow):
         existing = MonthlyStudentReportDispatch.objects.create(
-            student=self.student,
-            month=self.month_start,
-            trigger_date=date(2026, 4, 30),
-            status=MonthlyStudentReportDispatch.STATUS_SUCCEEDED,
-            attempts=1,
+            student=self.student, month=self.month_start, trigger_date=date(2026, 4, 30),
+            status=MonthlyStudentReportDispatch.STATUS_SUCCEEDED, attempts=1,
         )
-
-        results = force_send_all_monthly_reports(
-            run_date=date(2026, 4, 10),
-            month_start=self.month_start,
-        )
-
-        self.assertEqual([result["status"] for result in results], ["sent", "sent"])
-        self.assertEqual(mocked_run_dify_workflow.call_count, 2)
+        early = force_send_all_monthly_reports(run_date=date(2026, 4, 10), month_start=self.month_start)
+        self.assertTrue(all(result["reason"] == "not_due_today" for result in early))
+        LessonRecord.objects.create(student=self.student, lesson=self.third_lesson, grade="5")
+        due = force_send_all_monthly_reports(run_date=date(2026, 4, 30), month_start=self.month_start)
+        self.assertEqual([result["reason"] for result in due], ["already_sent", "trigger_lesson_not_marked"])
+        mocked_workflow.assert_not_called()
         existing.refresh_from_db()
-        self.assertEqual(existing.attempts, 2)
-        self.assertEqual(existing.workflow_run_id, "run-forced")
-        self.assertEqual(existing.delivery_attempts.count(), 1)
-        self.assertEqual(existing.delivery_attempts.get().attempt_number, 2)
+        self.assertEqual(existing.attempts, 1)
+        self.assertEqual(existing.delivery_attempts.count(), 0)
 
     @patch("tabel_app.report.run_dify_workflow")
     def test_failed_report_is_logged_for_retry(self, mocked_run_dify_workflow):
@@ -755,7 +754,7 @@ class MonthlyReportServiceTests(APITestCase):
 
     @patch.dict(os.environ, {"DIFY_ACCEPT_PARTIAL_SUCCESS": "True"}, clear=False)
     @patch("tabel_app.report.run_dify_workflow")
-    def test_local_mode_accepts_partial_dify_result_without_public_callback(
+    def test_partial_result_needs_delivery_confirmation_even_in_local_mode(
         self,
         mocked_run_dify_workflow,
     ):
@@ -774,10 +773,10 @@ class MonthlyReportServiceTests(APITestCase):
         )
 
         dispatch = MonthlyStudentReportDispatch.objects.get(student=self.student, month=self.month_start)
-        self.assertEqual(results[0]["status"], "sent")
-        self.assertEqual(dispatch.status, MonthlyStudentReportDispatch.STATUS_SUCCEEDED)
+        self.assertEqual(results[0]["status"], "pending")
+        self.assertEqual(dispatch.status, MonthlyStudentReportDispatch.STATUS_PENDING)
         self.assertEqual(dispatch.error_message, "")
-        self.assertIsNotNone(dispatch.sent_at)
+        self.assertIsNone(dispatch.sent_at)
 
     @patch("tabel_app.report.run_dify_workflow")
     def test_successful_meta_callback_wins_over_partial_dify_result(self, mocked_run_dify_workflow):
@@ -822,3 +821,119 @@ class MonthlyReportServiceTests(APITestCase):
         self.assertEqual(len(admin_detail.data["messages"]), 1)
         self.assertIn("Motion Web IT академиясынан", admin_detail.data["messages"][0]["rendered_text"])
         self.assertEqual(mentor_list.status_code, status.HTTP_403_FORBIDDEN)
+
+    @patch("tabel_app.report.run_dify_workflow")
+    def test_workflow_response_never_confirms_delivery_without_callback(self, mocked_workflow):
+        LessonRecord.objects.create(student=self.student, lesson=self.third_lesson, grade="5")
+        for payload in ({}, {"raw_response": "not json"}, {"data": {"status": "running"}}, {"data": {"status": "succeeded"}}):
+            with self.subTest(payload=payload):
+                MonthlyStudentReportDispatch.objects.all().delete()
+                mocked_workflow.return_value = payload
+                result = send_student_month_report(self.student, run_date=date(2026, 4, 30))
+                self.assertEqual(result["status"], "pending")
+                dispatch = MonthlyStudentReportDispatch.objects.get()
+                self.assertIsNone(dispatch.sent_at)
+                self.assertEqual(dispatch.delivery_attempts.get().status, "pending")
+
+    @patch("tabel_app.report.run_dify_workflow")
+    def test_force_cannot_restart_pending_attempt(self, mocked_workflow):
+        pending = self.create_pending_dispatch()
+        LessonRecord.objects.create(student=self.student, lesson=self.third_lesson, grade="\u041d")
+        result = send_student_month_report(self.student, run_date=date(2026, 4, 30), force=True)
+        self.assertEqual(result["reason"], "send_already_in_progress")
+        mocked_workflow.assert_not_called()
+        pending.refresh_from_db()
+        self.assertEqual(pending.attempts, 1)
+
+    @patch("tabel_app.report.run_dify_workflow")
+    def test_callback_success_survives_workflow_exception(self, mocked_workflow):
+        LessonRecord.objects.create(student=self.student, lesson=self.third_lesson, grade="\u041d")
+        def confirm_then_timeout(inputs, user_key):
+            record_meta_delivery_callback({"report": inputs["report"]}, 200, {"messages": [{"id": "accepted"}]})
+            raise TimeoutError("Response timed out after message acceptance")
+        mocked_workflow.side_effect = confirm_then_timeout
+        result = send_student_month_report(self.student, run_date=date(2026, 4, 30))
+        self.assertEqual(result["status"], "sent")
+        dispatch = MonthlyStudentReportDispatch.objects.get()
+        self.assertEqual(dispatch.status, "succeeded")
+        self.assertIsNotNone(dispatch.sent_at)
+        second = send_student_month_report(self.student, run_date=date(2026, 4, 30), force=True)
+        self.assertEqual(second["reason"], "already_sent")
+        self.assertEqual(mocked_workflow.call_count, 1)
+
+    def test_late_failure_callback_cannot_erase_confirmed_success(self):
+        dispatch = self.create_pending_dispatch()
+        callback = self.build_callback_payload()
+        record_meta_delivery_callback(**callback)
+        dispatch.refresh_from_db()
+        sent_at = dispatch.sent_at
+        record_meta_delivery_callback(**self.build_callback_payload(400, {"error": "late failure"}))
+        dispatch.refresh_from_db()
+        self.assertEqual(dispatch.status, "succeeded")
+        self.assertEqual(dispatch.sent_at, sent_at)
+        self.assertEqual(dispatch.response_payload["meta"]["status_code"], 200)
+
+    def test_callback_without_message_id_is_not_success(self):
+        dispatch = self.create_pending_dispatch()
+        record_meta_delivery_callback(**self.build_callback_payload(200, {}))
+        dispatch.refresh_from_db()
+        self.assertEqual(dispatch.status, "failed")
+        self.assertIsNone(dispatch.sent_at)
+
+    @patch("tabel_app.report.run_dify_workflow")
+    def test_retry_rejects_callback_from_old_attempt(self, mocked_workflow):
+        LessonRecord.objects.create(student=self.student, lesson=self.third_lesson, grade="5")
+        mocked_workflow.side_effect = RuntimeError("first attempt failed")
+        send_student_month_report(self.student, run_date=date(2026, 4, 30))
+        old_payload = MonthlyStudentReportDispatch.objects.get().payload
+        mocked_workflow.side_effect = None
+        mocked_workflow.return_value = {"data": {"status": "succeeded"}}
+        result = send_student_month_report(self.student, run_date=date(2026, 4, 30))
+        self.assertEqual(result["status"], "pending")
+        with self.assertRaises(ValueError):
+            record_meta_delivery_callback({"report": old_payload}, 200, {"messages": [{"id": "old"}]})
+        dispatch = MonthlyStudentReportDispatch.objects.get()
+        record_meta_delivery_callback({"report": dispatch.payload}, 200, {"messages": [{"id": "new"}]})
+        dispatch.refresh_from_db()
+        self.assertEqual(dispatch.status, "succeeded")
+        self.assertEqual(list(dispatch.delivery_attempts.order_by("attempt_number").values_list("status", flat=True)), ["failed", "succeeded"])
+
+    @patch("tabel_app.report.run_dify_workflow")
+    def test_blank_record_on_last_lesson_does_not_trigger_report(self, mocked_workflow):
+        LessonRecord.objects.create(student=self.student, lesson=self.third_lesson, grade="")
+        result = send_student_month_report(self.student, run_date=date(2026, 4, 30))
+        self.assertEqual(result["reason"], "trigger_lesson_not_marked")
+        mocked_workflow.assert_not_called()
+        report = build_student_month_report(self.student, self.month_start)
+        self.assertEqual(report["summary"]["unmarked_count"], 3)
+
+    @patch("tabel_app.report.run_dify_workflow")
+    def test_archived_student_cannot_send_report_directly(self, mocked_workflow):
+        from django.utils import timezone
+        self.student.archived_at = timezone.now()
+        result = send_student_month_report(self.student, run_date=date(2026, 4, 30))
+        self.assertEqual(result["reason"], "inactive_student")
+        mocked_workflow.assert_not_called()
+
+    @patch.dict(os.environ, {"AUTO_MONTHLY_REPORTS": "True"}, clear=False)
+    @patch("tabel_app.views.timezone.localdate", return_value=date(2026, 4, 29))
+    @patch("tabel_app.report.run_dify_workflow")
+    def test_gradebook_response_keeps_report_skip_reason(self, mocked_workflow, mocked_date):
+        from .views import dispatch_due_reports_after_gradebook_save
+        results = dispatch_due_reports_after_gradebook_save([self.student], self.month_start)
+        self.assertEqual(results[0]["reason"], "not_due_today")
+        mocked_workflow.assert_not_called()
+
+    @patch.dict(os.environ, {"AUTO_MONTHLY_REPORTS": "False"}, clear=False)
+    @patch("tabel_app.views.send_student_month_report")
+    def test_disabled_automatic_reports_remain_disabled(self, mocked_send):
+        from .views import dispatch_due_reports_after_gradebook_save
+        self.assertEqual(dispatch_due_reports_after_gradebook_save([self.student], self.month_start), [])
+        mocked_send.assert_not_called()
+
+    @patch("tabel_app.report.run_dify_workflow")
+    def test_previous_month_is_not_automatically_sent_in_next_month(self, mocked_workflow):
+        LessonRecord.objects.create(student=self.student, lesson=self.third_lesson, grade="\u041d")
+        results = send_due_monthly_reports(run_date=date(2026, 5, 1), month_start=self.month_start)
+        self.assertTrue(all(result["reason"] == "not_due_today" for result in results))
+        mocked_workflow.assert_not_called()

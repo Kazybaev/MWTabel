@@ -1,12 +1,13 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 
 import { Badge, Button, EmptyState, ErrorBlock, LoadingBlock, Modal } from "../components/Ui";
+import { ReportDispatchResults } from "../components/ReportDispatchResults";
 import { formatMonthLabel } from "../lib/format";
 import { useResource } from "../lib/useResource";
 import "./ReportConversationsPage.css";
 
 const STATUS = {
-  pending: { label: "В очереди", tone: "blue" },
+  pending: { label: "Ожидает подтверждения", tone: "blue" },
   succeeded: { label: "Отправлено", tone: "teal" },
   failed: { label: "Ошибка", tone: "sand" },
 };
@@ -41,9 +42,24 @@ function ReportMessage({ message }) {
         <StatusBadge value={message.status} />
       </header>
 
-      <div className="report-chat__text" aria-label="Текст, отправленный родителю">
+      <div className="report-chat__text" aria-label="Текст отчёта для родителя">
         {message.rendered_text}
       </div>
+
+      {message.subjects?.length ? (
+        <details className="report-chat__subjects">
+          <summary>Оценки по предметам ({message.subjects.length})</summary>
+          {message.subjects.map((subject) => (
+            <section key={subject.group_id}>
+              <strong>{subject.subject}</strong>
+              <p>Средний балл: {subject.summary.average_grade}; пропуски: {subject.summary.absence_count}</p>
+              <ul>{subject.lessons.map((lesson) => (
+                <li key={lesson.lesson_id}>{lesson.date}: {lesson.grade || "Без отметки"}{lesson.topic ? ` — ${lesson.topic}` : ""}</li>
+              ))}</ul>
+            </section>
+          ))}
+        </details>
+      ) : null}
 
       <div className="report-chat__summary" aria-label="Сводка отчёта">
         <span>Средний балл <strong>{message.summary.average_grade ?? "—"}</strong></span>
@@ -69,7 +85,9 @@ function ReportMessage({ message }) {
   );
 }
 
-export function ReportConversationsPage({ api, sessionToken, user }) {
+export function ReportConversationsPage({ api, sessionToken, user, organization = "academy" }) {
+  const destination = organization === "college" ? "agrarian" : "kuwait";
+  const destinationLabel = organization === "college" ? "Аграрный колледж" : "Кувейт";
   const [query, setQuery] = useState("");
   const [statusFilter, setStatusFilter] = useState("");
   const [selectedStudentId, setSelectedStudentId] = useState(null);
@@ -78,11 +96,11 @@ export function ReportConversationsPage({ api, sessionToken, user }) {
   const [sendAllResult, setSendAllResult] = useState(null);
   const [sendAllError, setSendAllError] = useState("");
   const messagesRef = useRef(null);
-  const conversations = useResource(() => api("/api/reports/conversations/"), [sessionToken]);
+  const conversations = useResource(() => api("/api/reports/conversations/"), [sessionToken, organization]);
   const activeStudentId = selectedStudentId || conversations.data?.[0]?.student_id || null;
   const detail = useResource(
     () => activeStudentId ? api(`/api/reports/conversations/${activeStudentId}/`) : Promise.resolve(null),
-    [sessionToken, activeStudentId],
+    [sessionToken, organization, activeStudentId],
   );
 
   const filtered = useMemo(() => {
@@ -108,7 +126,7 @@ export function ReportConversationsPage({ api, sessionToken, user }) {
     setSendingAll(true);
     setSendAllError("");
     try {
-      const result = await api("/api/reports/send-all/", { method: "POST" });
+      const result = await api(`/api/reports/${destination}/send-all/`, { method: "POST" });
       setSendAllResult(result);
       setConfirmSendAll(false);
       conversations.reload();
@@ -133,12 +151,13 @@ export function ReportConversationsPage({ api, sessionToken, user }) {
       <header className="report-chat-page__header">
         <div>
           <p>Мониторинг WhatsApp</p>
-          <h2 id="report-chat-title">Чат отчётов</h2>
+          <h2 id="report-chat-title">Отчёты: {destinationLabel}</h2>
           <span>Результаты отправок родителям через Dify и Meta</span>
+          <span>{organization === "college" ? "Все предметы и оценки в одном отчёте · отдельный workflow" : "Одна группа · прежний формат JSON"}</span>
         </div>
         <div className="report-chat-page__actions">
           <Button variant="danger" onClick={() => { setSendAllError(""); setConfirmSendAll(true); }}>
-            Отправить отчёт всем
+            Отправить отчёты: {destinationLabel}
           </Button>
           <Button variant="secondary" onClick={conversations.reload} disabled={conversations.refreshing}>
             {conversations.refreshing ? "Обновляем…" : "Обновить"}
@@ -148,7 +167,8 @@ export function ReportConversationsPage({ api, sessionToken, user }) {
 
       {sendAllResult ? (
         <div className="report-chat__bulk-result" role="status">
-          Отправка завершена: отправлено — <strong>{sendAllResult.sent}</strong>, ошибок — <strong>{sendAllResult.failed}</strong>, всего — <strong>{sendAllResult.total}</strong>.
+          Проверка завершена: отправлено — <strong>{sendAllResult.sent}</strong>, ожидают подтверждения — <strong>{sendAllResult.pending ?? 0}</strong>, ошибок — <strong>{sendAllResult.failed}</strong>, пропущено — <strong>{sendAllResult.skipped}</strong>, всего — <strong>{sendAllResult.total}</strong>.
+          <ReportDispatchResults results={sendAllResult.results} month={sendAllResult.month} />
           <button type="button" onClick={() => setSendAllResult(null)}>Закрыть</button>
         </div>
       ) : null}
@@ -164,7 +184,7 @@ export function ReportConversationsPage({ api, sessionToken, user }) {
               <span>Статус</span>
               <select value={statusFilter} onChange={(event) => setStatusFilter(event.target.value)}>
                 <option value="">Все</option>
-                <option value="pending">В очереди</option>
+                <option value="pending">Ожидает подтверждения</option>
                 <option value="succeeded">Отправлено</option>
                 <option value="failed">Ошибка</option>
               </select>
@@ -213,8 +233,8 @@ export function ReportConversationsPage({ api, sessionToken, user }) {
 
       <Modal
         open={confirmSendAll}
-        title="Отправить отчёт всем студентам?"
-        description="Это принудительная массовая отправка за текущий месяц."
+        title={`Отправить отчёты — ${destinationLabel}?`}
+        description="Проверка и отправка готовых отчётов за текущий месяц."
         onClose={() => { if (!sendingAll) setConfirmSendAll(false); }}
         footer={(
           <>
@@ -227,8 +247,8 @@ export function ReportConversationsPage({ api, sessionToken, user }) {
       >
         <div className="report-chat__bulk-warning">
           <strong>Вы точно хотите продолжить?</strong>
-          <p>Отчёт уйдёт родителям всех активных студентов, даже если сегодня не последний урок, оценка ещё не выставлена или отчёт за этот месяц уже отправлялся.</p>
-          <p>Повторное нажатие может повторно отправить сообщение каждому родителю.</p>
+          <p>Отчёт отправляется на номер родителя только в день последнего урока месяца, после выставления оценки или отметки о пропуске на последних уроках всех предметов.</p>
+          <p>Уже отправленные отчёты и отправки, ожидающие подтверждения, будут пропущены. Причины пропуска появятся в результатах проверки.</p>
           {sendAllError ? <p className="report-chat__bulk-error" role="alert">{sendAllError}</p> : null}
         </div>
       </Modal>
