@@ -9,20 +9,24 @@ import {
   ErrorBlock,
   LoadingBlock,
   Modal,
+  MultiSelectField,
   Panel,
   SelectField,
   TextField,
 } from "../components/Ui";
 
-function createEmptyStudent() {
+function createEmptyStudent(organization = "academy") {
   return {
     full_name: "",
     username: "",
-    email: "",
     password: "",
     parent_name: "",
     parent_phone: "",
     group: "",
+    organization_type: organization,
+    college_groups: [],
+    main_group: "",
+    college_course: "",
   };
 }
 
@@ -30,15 +34,19 @@ function normalizePhoneSearch(value) {
   return String(value || "").replace(/\D/g, "");
 }
 
-export function StudentsPage({ api, sessionToken, user, onNotice }) {
+export function StudentsPage({ api, sessionToken, user, onNotice, organization = "academy" }) {
   const { data, error, loading, reload } = useResource(() => api("/api/students/"), [sessionToken]);
   const { data: groups } = useResource(
     () => (user.role === "ADMIN" ? api("/api/groups/") : Promise.resolve([])),
     [sessionToken, user.role],
   );
+  const { data: mainGroups } = useResource(
+    () => organization === "college" && user.role === "ADMIN" ? api("/api/college-groups/") : Promise.resolve([]),
+    [sessionToken, organization, user.role],
+  );
   const [search, setSearch] = useState("");
   const [editorOpen, setEditorOpen] = useState(false);
-  const [draft, setDraft] = useState(createEmptyStudent());
+  const [draft, setDraft] = useState(createEmptyStudent(organization));
   const [editingId, setEditingId] = useState(null);
   const [saving, setSaving] = useState(false);
   const [archiveTarget, setArchiveTarget] = useState(null);
@@ -48,14 +56,14 @@ export function StudentsPage({ api, sessionToken, user, onNotice }) {
     return <EmptyState title="Раздел закрыт" description="У вас нет доступа к списку студентов." />;
   }
 
-  const groupOptions = sortGroupsByName(groups).map((group) => ({
+  const groupOptions = sortGroupsByName(groups).filter((group) => organization !== "college" || String(group.main_group || "") === draft.main_group).map((group) => ({
     value: `${group.id}`,
     label: `${group.course_name} · ${group.mentor_name}`,
   }));
 
   function openCreate() {
     setEditingId(null);
-    setDraft(createEmptyStudent());
+    setDraft(createEmptyStudent(organization));
     setEditorOpen(true);
   }
 
@@ -63,26 +71,37 @@ export function StudentsPage({ api, sessionToken, user, onNotice }) {
     setEditingId(student.id);
     setDraft({
       full_name: student.full_name,
+      main_group: student.main_group ? String(student.main_group) : "",
       username: student.username,
-      email: student.email || "",
       password: "",
       parent_name: student.parent_name,
       parent_phone: student.parent_phone,
       group: `${student.group}`,
+      organization_type: student.organization_type,
+      college_groups: (student.college_groups || []).map(String),
+      college_course: student.college_course || "",
     });
     setEditorOpen(true);
   }
 
   async function handleSave(event) {
     event.preventDefault();
+    if (draft.organization_type === "college" && !draft.college_groups.length) {
+      onNotice({ tone: "danger", message: "Выберите хотя бы одну группу." });
+      return;
+    }
     setSaving(true);
 
     try {
+      const studentData = { ...draft };
+      delete studentData.organization_type;
+      delete studentData.main_group;
       await api(editingId ? `/api/students/${editingId}/` : "/api/students/", {
         method: editingId ? "PATCH" : "POST",
         body: {
-          ...draft,
-          group: Number(draft.group),
+          ...studentData,
+          group: Number(draft.organization_type === "college" ? draft.college_groups[0] : draft.group),
+          college_groups: draft.organization_type === "college" ? draft.college_groups.map(Number) : [],
         },
       });
       setEditorOpen(false);
@@ -132,7 +151,7 @@ export function StudentsPage({ api, sessionToken, user, onNotice }) {
     const query = deferredSearch.trim().toLowerCase();
     const phoneQuery = normalizePhoneSearch(query);
     const haystack =
-      `${student.full_name} ${student.username} ${student.group_name} ${student.parent_name} ${student.parent_phone}`.toLowerCase();
+      `${student.full_name} ${student.username} ${student.main_group_name || ""} ${student.group_name} ${student.parent_name} ${student.parent_phone}`.toLowerCase();
     const phoneHaystack = normalizePhoneSearch(student.parent_phone);
 
     return haystack.includes(query) || (phoneQuery && phoneHaystack.includes(phoneQuery));
@@ -171,7 +190,7 @@ export function StudentsPage({ api, sessionToken, user, onNotice }) {
                 <div>
                   <strong>{student.full_name}</strong>
                   <p>
-                    {student.group_name} · {student.parent_name}
+                    {[student.main_group_name, student.group_name, student.parent_name].filter(Boolean).join(" · ")}
                   </p>
                 </div>
                 <div className="list-card__actions">
@@ -181,6 +200,9 @@ export function StudentsPage({ api, sessionToken, user, onNotice }) {
                   </a>
                   {user.role === "ADMIN" ? (
                     <>
+                      <a className="button button--primary" href={`#/students/${student.id}/gradebook`}>
+                        Табель студента
+                      </a>
                       <Button variant="ghost" onClick={() => openEdit(student)}>
                         Изменить
                       </Button>
@@ -215,6 +237,15 @@ export function StudentsPage({ api, sessionToken, user, onNotice }) {
         }
       >
         <form id="student-form" className="form-grid" onSubmit={handleSave} autoComplete="off" data-form-type="other">
+          {draft.organization_type === "college" ? (
+            <>
+              <SelectField label="Курс" value={draft.college_course} onChange={(value) => setDraft((current) => ({ ...current, college_course: value }))} options={[{ value: "1", label: "1 курс" }, { value: "2", label: "2 курс" }, { value: "3", label: "3 курс" }, { value: "4", label: "4 курс" }]} required />
+              <SelectField label="Основная группа" value={draft.main_group}
+                onChange={(value) => setDraft((current) => ({ ...current, main_group: value, college_groups: [] }))}
+                options={(mainGroups || []).map((main) => ({ value: String(main.id), label: main.name }))} required />
+              <MultiSelectField label="Подгруппы / предметы" values={draft.college_groups} onChange={(values) => setDraft((current) => ({ ...current, college_groups: values }))} options={groupOptions} required />
+            </>
+          ) : null}
           <input type="text" name="fake_user_field" autoComplete="username" tabIndex="-1" aria-hidden="true" className="autofill-trap" />
           <input type="password" name="fake_password_field" autoComplete="current-password" tabIndex="-1" aria-hidden="true" className="autofill-trap" />
           <TextField
@@ -236,15 +267,6 @@ export function StudentsPage({ api, sessionToken, user, onNotice }) {
             required
           />
           <TextField
-            label="Email"
-            name="student_profile_contact_value"
-            value={draft.email}
-            onChange={(value) => setDraft((current) => ({ ...current, email: value }))}
-            type="email"
-            autoComplete="off"
-            disableAutoFill
-          />
-          <TextField
             label="Пароль"
             name="student_profile_secret_value"
             value={draft.password}
@@ -256,13 +278,12 @@ export function StudentsPage({ api, sessionToken, user, onNotice }) {
             help={editingId ? "Оставьте пустым, если менять пароль не нужно." : "Задайте стартовый пароль."}
           />
           <TextField
-            label="Имя родителя"
+            label="Имя родителя (необязательно)"
             name="student_parent_name"
             value={draft.parent_name}
             onChange={(value) => setDraft((current) => ({ ...current, parent_name: value }))}
             autoComplete="off"
             disableAutoFill
-            required
           />
           <TextField
             label="Телефон родителя"
@@ -273,13 +294,15 @@ export function StudentsPage({ api, sessionToken, user, onNotice }) {
             disableAutoFill
             required
           />
-          <SelectField
-            label="Группа"
-            value={draft.group}
-            onChange={(value) => setDraft((current) => ({ ...current, group: value }))}
-            options={groupOptions}
-            required
-          />
+          {draft.organization_type === "academy" ? (
+            <SelectField
+              label="Группа"
+              value={draft.group}
+              onChange={(value) => setDraft((current) => ({ ...current, group: value }))}
+              options={groupOptions}
+              required
+            />
+          ) : null}
         </form>
       </Modal>
 

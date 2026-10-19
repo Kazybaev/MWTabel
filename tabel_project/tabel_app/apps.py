@@ -7,6 +7,3 @@ class TabelAppConfig(AppConfig):
 
     def ready(self):
         from . import checks  # noqa: F401
-        from .scheduler import start_report_scheduler
-
-        start_report_scheduler()

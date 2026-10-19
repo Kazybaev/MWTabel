@@ -3,7 +3,7 @@ from datetime import date
 from pathlib import Path
 from unittest.mock import patch
 
-from django.test import override_settings
+from django.test import SimpleTestCase, override_settings
 from rest_framework import status
 from rest_framework.test import APIClient, APITestCase
 
@@ -13,15 +13,19 @@ from .models import (
     LessonRecord,
     MentorProfile,
     MonthlyStudentReportAttempt,
+    MonthlyStudentReportBatch,
     MonthlyStudentReportDispatch,
     StudentProfile,
     User,
 )
+from .checks import report_integration_deployment_check
 from .report import (
+    ReportConfigurationError,
     build_dify_inputs,
     build_student_month_report,
     force_send_all_monthly_reports,
     run_dify_workflow,
+    send_student_month_report,
     send_due_monthly_reports,
 )
 from .report_delivery import record_meta_delivery_callback
@@ -33,6 +37,39 @@ SQLITE_TEST_DATABASES = {
         "NAME": ":memory:",
     }
 }
+
+
+@override_settings(DEBUG=False)
+class ReportConfigurationTests(SimpleTestCase):
+    def test_configured_environment_passes_dify_and_callback_checks(self):
+        with patch.dict(
+            os.environ,
+            {
+                "DIFY_API_KEY": "configured-test-key",
+                "DIFY_API_URL": "https://dify.invalid/v1/workflows/run",
+                "BACKEND_REPORT_CALLBACK_TOKEN": "callback-token-at-least-32-characters",
+            },
+            clear=False,
+        ):
+            messages = report_integration_deployment_check(None)
+
+        report_error_ids = {message.id for message in messages if message.id.startswith("tabel.E")}
+        self.assertNotIn("tabel.E003", report_error_ids)
+        self.assertNotIn("tabel.E004", report_error_ids)
+
+    def test_empty_dify_key_fails_configuration_validation(self):
+        with patch.dict(
+            os.environ,
+            {
+                "DIFY_API_KEY": "",
+                "DIFY_API_URL": "https://dify.invalid/v1/workflows/run",
+                "BACKEND_REPORT_CALLBACK_TOKEN": "callback-token-at-least-32-characters",
+            },
+            clear=False,
+        ):
+            messages = report_integration_deployment_check(None)
+
+        self.assertIn("tabel.E003", {message.id for message in messages})
 
 
 @override_settings(DATABASES=SQLITE_TEST_DATABASES)
@@ -305,7 +342,30 @@ class TabelApiTests(APITestCase):
         self.assertEqual(mocked_send_student_month_report.call_args.kwargs["run_date"], date(2026, 4, 30))
         self.assertFalse(mocked_send_student_month_report.call_args.kwargs["dry_run"])
         self.assertFalse(mocked_send_student_month_report.call_args.kwargs["force"])
+        self.assertFalse(mocked_send_student_month_report.call_args.kwargs["resend_succeeded"])
         self.assertEqual(response.data["workflow_run_id"], "run-007")
+
+    @patch.dict(
+        os.environ,
+        {"AUTO_MONTHLY_REPORTS": "false", "REPORT_SCHEDULER_RUN_ON_START": "false"},
+        clear=False,
+    )
+    @patch("tabel_app.views.send_student_month_report")
+    def test_disabled_scheduler_flags_do_not_block_manual_endpoint(self, mocked_send_student_month_report):
+        mocked_send_student_month_report.return_value = {
+            "student_id": self.student.pk,
+            "status": "sent",
+            "dispatch_id": 8,
+        }
+
+        response = self.auth_client("mentor", "mentor-pass-123").post(
+            "/api/reports/send/",
+            {"student_id": self.student.pk},
+            format="json",
+        )
+
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        mocked_send_student_month_report.assert_called_once()
 
     def test_student_cannot_trigger_report_dispatch_endpoint(self):
         client = self.auth_client("student", "student-pass-123")
@@ -317,13 +377,7 @@ class TabelApiTests(APITestCase):
 
         self.assertEqual(response.status_code, status.HTTP_403_FORBIDDEN)
 
-    @patch("tabel_app.views.force_send_all_monthly_reports")
-    def test_only_admin_can_force_send_reports_to_all_students(self, mocked_send_all):
-        mocked_send_all.return_value = [
-            {"student_id": self.student.pk, "status": "sent"},
-            {"student_id": 999, "status": "failed"},
-        ]
-
+    def test_only_admin_can_queue_reports_for_all_students(self):
         admin_response = self.auth_client("admin", "admin-pass-123").post(
             "/api/reports/send-all/",
             {},
@@ -335,12 +389,63 @@ class TabelApiTests(APITestCase):
             format="json",
         )
 
-        self.assertEqual(admin_response.status_code, status.HTTP_200_OK)
+        self.assertEqual(admin_response.status_code, status.HTTP_202_ACCEPTED)
+        self.assertEqual(admin_response.data["status"], "queued")
         self.assertEqual(admin_response.data["total"], 2)
-        self.assertEqual(admin_response.data["sent"], 1)
-        self.assertEqual(admin_response.data["failed"], 1)
+        self.assertEqual(admin_response.data["queued"], 2)
+        self.assertEqual(admin_response.data["remaining"], 2)
         self.assertEqual(mentor_response.status_code, status.HTTP_403_FORBIDDEN)
-        mocked_send_all.assert_called_once()
+        self.assertEqual(MonthlyStudentReportBatch.objects.count(), 1)
+
+    @patch("tabel_app.report.run_dify_workflow")
+    def test_queue_endpoint_never_calls_dify(self, mocked_run_dify):
+        response = self.auth_client("admin", "admin-pass-123").post(
+            "/api/reports/send-all/",
+            {"month": "2026-04"},
+            format="json",
+        )
+
+        self.assertEqual(response.status_code, status.HTTP_202_ACCEPTED)
+        mocked_run_dify.assert_not_called()
+
+    @patch("tabel_app.views.send_student_month_report")
+    def test_explicit_successful_resend_requires_admin_confirmation(self, mocked_send_student_month_report):
+        month_start = date(2026, 4, 1)
+        MonthlyStudentReportDispatch.objects.create(
+            student=self.student,
+            month=month_start,
+            trigger_date=self.lesson.lesson_date,
+            status=MonthlyStudentReportDispatch.STATUS_SUCCEEDED,
+            attempts=1,
+        )
+        mocked_send_student_month_report.return_value = {
+            "student_id": self.student.pk,
+            "status": "sent",
+            "dispatch_id": 1,
+        }
+        admin_client = self.auth_client("admin", "admin-pass-123")
+
+        missing_confirmation = admin_client.post(
+            "/api/reports/resend/",
+            {"student_id": self.student.pk, "month": "2026-04"},
+            format="json",
+        )
+        mentor_response = self.auth_client("mentor", "mentor-pass-123").post(
+            "/api/reports/resend/",
+            {"student_id": self.student.pk, "month": "2026-04", "confirm_resend": True},
+            format="json",
+        )
+        confirmed = admin_client.post(
+            "/api/reports/resend/",
+            {"student_id": self.student.pk, "month": "2026-04", "confirm_resend": True},
+            format="json",
+        )
+
+        self.assertEqual(missing_confirmation.status_code, status.HTTP_400_BAD_REQUEST)
+        self.assertEqual(mentor_response.status_code, status.HTTP_403_FORBIDDEN)
+        self.assertEqual(confirmed.status_code, status.HTTP_200_OK)
+        mocked_send_student_month_report.assert_called_once()
+        self.assertTrue(mocked_send_student_month_report.call_args.kwargs["resend_succeeded"])
 
     def test_mentor_cannot_trigger_report_dispatch_for_foreign_student(self):
         foreign_mentor_user = User.objects.create_user(
@@ -507,6 +612,7 @@ class MonthlyReportServiceTests(APITestCase):
             {
                 "DIFY_API_KEY": "app-test-key",
                 "DIFY_API_URL": "https://api.dify.ai/v1/workflows/run",
+                "BACKEND_REPORT_CALLBACK_TOKEN": "callback-token-at-least-32-characters",
             },
             clear=False,
         ):
@@ -560,7 +666,7 @@ class MonthlyReportServiceTests(APITestCase):
         self.assertEqual(MonthlyStudentReportDispatch.objects.count(), 0)
 
     @patch("tabel_app.report.run_dify_workflow")
-    def test_report_does_not_treat_earlier_created_lesson_as_month_end(self, mocked_run_dify_workflow):
+    def test_report_uses_latest_existing_lesson_as_month_end(self, mocked_run_dify_workflow):
         self.third_lesson.delete()
         LessonRecord.objects.create(student=self.student, lesson=self.first_lesson, grade="5")
         LessonRecord.objects.create(student=self.student, lesson=self.second_lesson, grade="4")
@@ -571,7 +677,7 @@ class MonthlyReportServiceTests(APITestCase):
         )
 
         self.assertEqual(results[0]["status"], "skipped")
-        self.assertEqual(results[0]["reason"], "trigger_lesson_not_created")
+        self.assertEqual(results[0]["reason"], "not_due_today")
         mocked_run_dify_workflow.assert_not_called()
         self.assertEqual(MonthlyStudentReportDispatch.objects.count(), 0)
 
@@ -597,7 +703,7 @@ class MonthlyReportServiceTests(APITestCase):
         self.assertEqual(mocked_run_dify_workflow.call_count, 1)
 
     @patch("tabel_app.report.run_dify_workflow")
-    def test_admin_bulk_service_bypasses_schedule_marks_and_previous_success(
+    def test_admin_bulk_service_bypasses_schedule_and_skips_previous_success(
         self,
         mocked_run_dify_workflow,
     ):
@@ -615,13 +721,63 @@ class MonthlyReportServiceTests(APITestCase):
             month_start=self.month_start,
         )
 
-        self.assertEqual([result["status"] for result in results], ["sent", "sent"])
-        self.assertEqual(mocked_run_dify_workflow.call_count, 2)
+        self.assertEqual([result["status"] for result in results], ["skipped", "sent"])
+        self.assertEqual(results[0]["reason"], "already_sent")
+        self.assertEqual(mocked_run_dify_workflow.call_count, 1)
         existing.refresh_from_db()
-        self.assertEqual(existing.attempts, 2)
-        self.assertEqual(existing.workflow_run_id, "run-forced")
-        self.assertEqual(existing.delivery_attempts.count(), 1)
-        self.assertEqual(existing.delivery_attempts.get().attempt_number, 2)
+        self.assertEqual(existing.attempts, 1)
+        self.assertEqual(existing.delivery_attempts.count(), 0)
+
+    @patch("tabel_app.report.run_dify_workflow")
+    def test_failed_manual_dispatch_can_be_retried_without_replacing_history(self, mocked_run_dify_workflow):
+        mocked_run_dify_workflow.side_effect = [
+            RuntimeError("Dify is unavailable"),
+            {"workflow_run_id": "retry-ok", "data": {"status": "succeeded"}},
+        ]
+
+        first = send_student_month_report(
+            self.student,
+            month_start=self.month_start,
+            bypass_schedule=True,
+        )
+        second = send_student_month_report(
+            self.student,
+            month_start=self.month_start,
+            bypass_schedule=True,
+            retry_failed_confirmed=True,
+        )
+
+        self.assertEqual(first["status"], "failed")
+        self.assertEqual(second["status"], "sent")
+        dispatch = MonthlyStudentReportDispatch.objects.get(student=self.student, month=self.month_start)
+        self.assertEqual(dispatch.attempts, 2)
+        self.assertEqual(list(dispatch.delivery_attempts.values_list("attempt_number", flat=True)), [1, 2])
+
+    @patch("tabel_app.report.run_dify_workflow")
+    def test_successful_manual_dispatch_is_not_resent_by_default(self, mocked_run_dify_workflow):
+        mocked_run_dify_workflow.return_value = {
+            "workflow_run_id": "first-success",
+            "data": {"status": "succeeded"},
+        }
+
+        first = send_student_month_report(
+            self.student,
+            month_start=self.month_start,
+            bypass_schedule=True,
+        )
+        second = send_student_month_report(
+            self.student,
+            month_start=self.month_start,
+            bypass_schedule=True,
+        )
+
+        self.assertEqual(first["status"], "sent")
+        self.assertEqual(second["status"], "skipped")
+        self.assertEqual(second["reason"], "already_sent")
+        mocked_run_dify_workflow.assert_called_once()
+        dispatch = MonthlyStudentReportDispatch.objects.get(student=self.student, month=self.month_start)
+        self.assertEqual(dispatch.attempts, 1)
+        self.assertEqual(dispatch.delivery_attempts.count(), 1)
 
     @patch("tabel_app.report.run_dify_workflow")
     def test_failed_report_is_logged_for_retry(self, mocked_run_dify_workflow):
@@ -641,6 +797,13 @@ class MonthlyReportServiceTests(APITestCase):
 
     def build_callback_payload(self, meta_status_code=200, meta_response=None):
         report = build_student_month_report(self.student, month_start=self.month_start)
+        dispatch = MonthlyStudentReportDispatch.objects.get(student=self.student, month=self.month_start)
+        attempt = dispatch.delivery_attempts.get()
+        report["correlation"] = {
+            "dispatch_id": dispatch.pk,
+            "attempt_id": attempt.pk,
+            "batch_item_id": None,
+        }
         return {
             "delivery": {
                 "event": "student_monthly_report_sent",
@@ -652,7 +815,9 @@ class MonthlyReportServiceTests(APITestCase):
                 "meta_request": {"messaging_product": "whatsapp"},
             },
             "meta_status_code": meta_status_code,
-            "meta_response": meta_response if meta_response is not None else {"messages": [{"id": "wamid.local-1"}]},
+            "meta_response": meta_response if meta_response is not None else {
+                "messages": [{"id": "wamid.local-1", "message_status": "accepted"}]
+            },
         }
 
     def create_pending_dispatch(self):
@@ -678,6 +843,32 @@ class MonthlyReportServiceTests(APITestCase):
         response = self.client.post("/api/report-logs/", self.build_callback_payload(), format="json")
         self.assertEqual(response.status_code, status.HTTP_401_UNAUTHORIZED)
 
+    @patch.dict(os.environ, {"BACKEND_REPORT_CALLBACK_TOKEN": ""}, clear=False)
+    def test_meta_callback_without_configured_token_is_unavailable(self):
+        dispatch = self.create_pending_dispatch()
+
+        response = self.client.post("/api/report-logs/", self.build_callback_payload(), format="json")
+
+        self.assertEqual(response.status_code, status.HTTP_503_SERVICE_UNAVAILABLE)
+        dispatch.refresh_from_db()
+        self.assertEqual(dispatch.status, MonthlyStudentReportDispatch.STATUS_PENDING)
+
+    @patch("tabel_app.report.request.urlopen")
+    def test_missing_callback_token_blocks_dify_before_external_http(self, mocked_urlopen):
+        with patch.dict(
+            os.environ,
+            {
+                "DIFY_API_KEY": "configured-test-key",
+                "DIFY_API_URL": "https://api.dify.invalid/v1/workflows/run",
+                "BACKEND_REPORT_CALLBACK_TOKEN": "",
+            },
+            clear=False,
+        ):
+            with self.assertRaises(ReportConfigurationError):
+                run_dify_workflow({}, "report:1:2026-04")
+
+        mocked_urlopen.assert_not_called()
+
     @patch.dict(os.environ, {"BACKEND_REPORT_CALLBACK_TOKEN": "local-callback-token-at-least-32-chars"}, clear=False)
     def test_meta_callback_stores_success_idempotently(self):
         dispatch = self.create_pending_dispatch()
@@ -690,7 +881,7 @@ class MonthlyReportServiceTests(APITestCase):
         self.assertFalse(first.data["duplicate"])
         self.assertTrue(second.data["duplicate"])
         dispatch.refresh_from_db()
-        self.assertEqual(dispatch.status, MonthlyStudentReportDispatch.STATUS_SUCCEEDED)
+        self.assertEqual(dispatch.status, MonthlyStudentReportDispatch.STATUS_ACCEPTED)
         self.assertEqual(dispatch.response_payload["meta"]["status_code"], 200)
         self.assertIn("Motion Web IT академиясынан", dispatch.response_payload["meta"]["rendered_text"])
         self.assertIn("Report Student", dispatch.response_payload["meta"]["rendered_text"])
@@ -787,7 +978,7 @@ class MonthlyReportServiceTests(APITestCase):
             record_meta_delivery_callback(
                 delivery={"report": inputs["report"], "rendered_text": "Exact message"},
                 meta_status_code=200,
-                meta_response={"messages": [{"id": "wamid.success"}]},
+                meta_response={"messages": [{"id": "wamid.success", "message_status": "accepted"}]},
             )
             return {"workflow_run_id": "run-partial-after-meta", "data": {"status": "partial-succeeded"}}
 
@@ -795,8 +986,8 @@ class MonthlyReportServiceTests(APITestCase):
         results = send_due_monthly_reports(run_date=date(2026, 4, 30), student_id=self.student.pk)
 
         dispatch = MonthlyStudentReportDispatch.objects.get(student=self.student, month=self.month_start)
-        self.assertEqual(results[0]["status"], "sent")
-        self.assertEqual(dispatch.status, MonthlyStudentReportDispatch.STATUS_SUCCEEDED)
+        self.assertEqual(results[0]["status"], "accepted")
+        self.assertEqual(dispatch.status, MonthlyStudentReportDispatch.STATUS_ACCEPTED)
         self.assertEqual(dispatch.response_payload["meta"]["rendered_text"], "Exact message")
 
     def test_only_admin_can_read_report_conversations(self):

@@ -47,6 +47,7 @@ def _should_start_in_this_process() -> bool:
             "makemigrations",
             "collectstatic",
             "seed_demo",
+            "import_college_seed",
             "send_monthly_reports",
             "shell",
             "createsuperuser",

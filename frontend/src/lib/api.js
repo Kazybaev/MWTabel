@@ -88,7 +88,7 @@ export function getErrorMessage(payload, fallback = "Что-то пошло не
 
 export async function apiRequest(
   path,
-  { method = "GET", body, headers = {}, session, onSessionChange, onUnauthorized } = {},
+  { method = "GET", body, headers = {}, session, organization, collegeBranch, onSessionChange, onUnauthorized } = {},
 ) {
   const requestHeaders = {
     Accept: "application/json",
@@ -102,6 +102,8 @@ export async function apiRequest(
   if (session?.access) {
     requestHeaders.Authorization = `Bearer ${session.access}`;
   }
+  requestHeaders["X-Organization-Type"] = organization || window.localStorage.getItem("tabel.organization") || "academy";
+  requestHeaders["X-College-Branch"] = collegeBranch || window.localStorage.getItem("tabel.collegeBranch") || "kuwait";
 
   const requestInit = {
     method,

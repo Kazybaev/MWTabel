@@ -15,6 +15,7 @@ from .models import (
     Lesson,
     LessonRecord,
     MonthlyStudentReportAttempt,
+    MonthlyStudentReportBatchItem,
     MonthlyStudentReportDispatch,
     StudentProfile,
 )
@@ -101,16 +102,9 @@ def get_group_study_weekdays(group: Group) -> set[int]:
 
 
 def get_group_last_lesson_date(group: Group, month_start: date) -> date | None:
-    month_start, month_end = month_bounds(month_start)
-    study_weekdays = get_group_study_weekdays(group)
-    if study_weekdays:
-        current_date = month_end
-        while current_date >= month_start:
-            if current_date.weekday() in study_weekdays:
-                return current_date
-            current_date -= timedelta(days=1)
+    if group.archived_at is not None:
         return None
-
+    month_start, month_end = month_bounds(month_start)
     return (
         group.lessons.filter(lesson_date__gte=month_start, lesson_date__lte=month_end)
         .order_by("-lesson_date", "-id")
@@ -134,6 +128,16 @@ def get_student_trigger_lesson(student: StudentProfile, month_start: date) -> Le
     )
 
 
+def get_student_report_groups(student: StudentProfile) -> list[Group]:
+    """Return all subjects for a college student, or the single academy group."""
+    if student.organization_type != "college":
+        return [student.group]
+    groups = list(student.college_groups.filter(archived_at__isnull=True).select_related("mentor__user").order_by("course_name", "id"))
+    if student.group_id and student.group.archived_at is None and all(group.pk != student.group_id for group in groups):
+        groups.insert(0, student.group)
+    return groups or [student.group]
+
+
 def has_student_trigger_lesson_record(student: StudentProfile, trigger_lesson: Lesson) -> bool:
     return LessonRecord.objects.filter(student=student, lesson=trigger_lesson).exists()
 
@@ -142,10 +146,10 @@ def get_month_lessons_for_student(student: StudentProfile, month_start: date) ->
     month_start, month_end = month_bounds(month_start)
     return list(
         Lesson.objects.filter(
-            group=student.group,
+            group__in=get_student_report_groups(student),
             lesson_date__gte=month_start,
             lesson_date__lte=month_end,
-        ).order_by("lesson_date", "id")
+        ).select_related("group").order_by("lesson_date", "id")
     )
 
 
@@ -154,12 +158,12 @@ def get_month_records_for_student(student: StudentProfile, month_start: date) ->
     return list(
         LessonRecord.objects.filter(
             student=student,
-            lesson__group=student.group,
+            lesson__group__in=get_student_report_groups(student),
             lesson__lesson_date__gte=month_start,
             lesson__lesson_date__lte=month_end,
         )
-        .select_related("lesson")
-        .order_by("lesson__lesson_date", "lesson_id")
+        .select_related("lesson", "author")
+        .order_by("lesson__lesson_date", "lesson_id", "sequence", "id")
     )
 
 
@@ -168,13 +172,26 @@ def build_student_month_report(
     month_start: date | datetime | None = None,
     trigger_date: date | None = None,
 ) -> dict[str, Any]:
+    if student.archived_at is not None or student.group.archived_at is not None:
+        return {
+            "student_id": student.pk,
+            "student_name": student.user.full_name,
+            "status": "skipped",
+            "reason": "archived_student_or_group",
+        }
     month_start = normalize_month_start(month_start)
     month_start, month_end = month_bounds(month_start)
     lessons = get_month_lessons_for_student(student, month_start)
     records = get_month_records_for_student(student, month_start)
-    trigger_date = trigger_date or get_group_last_lesson_date(student.group, month_start)
+    groups = get_student_report_groups(student)
+    trigger_date = trigger_date or max(
+        (day for group in groups if (day := get_group_last_lesson_date(group, month_start)) is not None),
+        default=None,
+    )
 
-    records_by_lesson_id = {record.lesson_id: record for record in records}
+    records_by_lesson_id: dict[int, list[LessonRecord]] = {}
+    for record in records:
+        records_by_lesson_id.setdefault(record.lesson_id, []).append(record)
     numeric_grades: list[int] = []
     attendance_count = 0
     absence_count = 0
@@ -188,45 +205,59 @@ def build_student_month_report(
     lesson_rows: list[dict[str, Any]] = []
 
     for lesson in lessons:
-        record = records_by_lesson_id.get(lesson.pk)
-        grade = (record.grade or "").strip() if record else ""
-        if grade.isdigit():
-            numeric_grades.append(int(grade))
-            attendance_count += 1
-            if grade in grade_totals:
-                grade_totals[grade] += 1
-        elif grade:
-            if is_absence_grade(grade):
-                absence_count += 1
-                grade_totals["Н"] += 1
-            else:
-                attendance_count += 1
+        lesson_records = records_by_lesson_id.get(lesson.pk, [])
+        grades = [(record.grade or "").strip() for record in lesson_records]
+        has_attendance = any(grade and not is_absence_grade(grade) for grade in grades)
+        has_absence = any(is_absence_grade(grade) for grade in grades)
+        attendance_count += int(has_attendance)
+        absence_count += int(has_absence and not has_attendance)
 
-        lesson_rows.append(
-            {
-                "lesson_id": lesson.pk,
-                "date": lesson.lesson_date.isoformat(),
-                "topic": lesson.topic,
-                "grade": grade,
-                "comment": record.comment if record else "",
-                "status": (
-                    "absent"
-                    if is_absence_grade(grade)
-                    else "attended"
-                    if grade
-                    else "unmarked"
-                ),
-            }
-        )
+        for record, grade in zip(lesson_records, grades):
+            if grade.isdigit():
+                numeric_grades.append(int(grade))
+                if grade in grade_totals:
+                    grade_totals[grade] += 1
+            elif is_absence_grade(grade):
+                grade_totals["Н"] += 1
+
+            lesson_rows.append(
+                {
+                    "record_id": record.pk,
+                    "lesson_id": lesson.pk,
+                    "group_id": lesson.group_id,
+                    "group_name": lesson.group.course_name,
+                    "date": lesson.lesson_date.isoformat(),
+                    "topic": lesson.topic,
+                    "grade": grade,
+                    "comment": record.comment,
+                    "teacher_name": record.author.full_name if record.author else "",
+                    "status": "absent" if is_absence_grade(grade) else "attended" if grade else "unmarked",
+                }
+            )
+        if not lesson_records:
+            lesson_rows.append(
+                {
+                    "record_id": None,
+                    "lesson_id": lesson.pk,
+                    "group_id": lesson.group_id,
+                    "group_name": lesson.group.course_name,
+                    "date": lesson.lesson_date.isoformat(),
+                    "topic": lesson.topic,
+                    "grade": "",
+                    "comment": "",
+                    "teacher_name": "",
+                    "status": "unmarked",
+                }
+            )
 
     total_lessons = len(lessons)
-    marked_lessons_count = len(records)
+    marked_lessons_count = len(records_by_lesson_id)
     unmarked_count = max(total_lessons - marked_lessons_count, 0)
     average_grade = round(sum(numeric_grades) / len(numeric_grades), 1) if numeric_grades else 0
     attendance_rate = round((attendance_count / total_lessons) * 100, 1) if total_lessons else  0
 
     mentor_user = student.group.mentor.user
-    return {
+    payload = {
         "student": {
             "id": student.pk,
             "user_id": student.user_id,
@@ -242,6 +273,17 @@ def build_student_month_report(
             "study_days_label": student.group.get_study_days_display(),
             "description": student.group.description,
         },
+        "groups": [
+            {
+                "id": group.pk,
+                "course_name": group.course_name,
+                "study_days": group.study_days,
+                "study_days_label": group.get_study_days_display(),
+                "description": group.description,
+                "mentor_name": group.mentor.user.full_name,
+            }
+            for group in groups
+        ],
         "mentor": {
             "id": student.group.mentor_id,
             "full_name": mentor_user.full_name,
@@ -272,16 +314,69 @@ def build_student_month_report(
         },
         "lessons": lesson_rows,
     }
+    if student.organization_type == "college":
+        payload["main_group"] = {
+            "id": student.group.main_group_id,
+            "name": student.group.main_group.name if student.group.main_group_id else "",
+        }
+        payload["subjects"] = [
+            {
+                "group_id": group.pk,
+                "name": group.course_name,
+                "grade_counts": {
+                    grade: sum(row["group_id"] == group.pk and row["grade"] == grade for row in lesson_rows)
+                    for grade in ("5", "4", "3", "2")
+                },
+                "absence_dates": sorted({row["date"] for row in lesson_rows if row["group_id"] == group.pk and row["status"] == "absent"}),
+            }
+            for group in groups
+        ]
+        payload["absence_dates"] = sorted({row["date"] for row in lesson_rows if row["status"] == "absent"})
+        payload["message_text"] = format_college_parent_message(payload)
+    return payload
+
+
+KYRGYZ_MONTH_NAMES = (
+    "январь", "февраль", "март", "апрель", "май", "июнь",
+    "июль", "август", "сентябрь", "октябрь", "ноябрь", "декабрь",
+)
+
+
+def format_college_parent_message(payload: dict[str, Any]) -> str:
+    month = date.fromisoformat(payload["period"]["month_start"])
+    group_name = payload["main_group"]["name"] or payload["group"]["course_name"]
+    lines = [
+        "Саламатсызбы!", "",
+        "Мен Motion Web IT академиясынан байланышып жатам ✅", "",
+        f"Сизге *{group_name}* группасынын окуучусу *{payload['student']['full_name']}* "
+        f"{month.year}-жылдын *{KYRGYZ_MONTH_NAMES[month.month - 1]}* айындагы окуу жыйынтыктары тууралуу маалымат бере кетейин:",
+        "", "📊 Сабактар боюнча баалары:",
+    ]
+    for subject in payload["subjects"]:
+        counts = subject["grade_counts"]
+        lines.extend([
+            "", f"• *{subject['name']}* сабагы —", "",
+            f'“5”тен {counts["5"]} даана', f'“4”төн {counts["4"]} даана',
+            f'“3”төн {counts["3"]} даана', f'“2”ден {counts["2"]} даана',
+        ])
+    lines.extend(["", "📌 Сабактан калуулар:"])
+    if payload["absence_dates"]:
+        dates = [date.fromisoformat(value) for value in payload["absence_dates"]]
+        labels = [f"{day.day}-{KYRGYZ_MONTH_NAMES[day.month - 1]}" for day in dates]
+        lines.append(f"• Бир айда {', '.join(labels)} сабактан калган.")
+    else:
+        lines.append("• Сабактан калган жок.")
+    return "\n".join(lines)
 
 
 def build_dify_inputs(report_payload: dict[str, Any]) -> dict[str, Any]:
     summary = report_payload["summary"]
-    return {
+    inputs = {
         "report": report_payload,
         "student_name": report_payload["student"]["full_name"],
         "recipient_name": report_payload["student"]["parent_name"] or report_payload["student"]["full_name"],
         "recipient_phone": report_payload["student"]["parent_phone"],
-        "group_name": report_payload["group"]["course_name"],
+        "group_name": report_payload.get("main_group", {}).get("name") or report_payload["group"]["course_name"],
         "mentor_name": report_payload["mentor"]["full_name"],
         "month": report_payload["period"]["month"],
         "average_grade": summary["average_grade"],
@@ -293,6 +388,9 @@ def build_dify_inputs(report_payload: dict[str, Any]) -> dict[str, Any]:
         "total_two": summary["total_two"],
         "attendance_rate": summary["attendance_rate"],
     }
+    if "message_text" in report_payload:
+        inputs["message_text"] = report_payload["message_text"]
+    return inputs
 
 
 def get_dify_run_url() -> str:
@@ -321,6 +419,12 @@ def run_dify_workflow(inputs: dict[str, Any], user_key: str) -> dict[str, Any]:
     api_key = os.getenv("DIFY_API_KEY", "").strip()
     if not api_key:
         raise ReportConfigurationError("DIFY_API_KEY must be configured.")
+
+    callback_token = os.getenv("BACKEND_REPORT_CALLBACK_TOKEN", "").strip()
+    if len(callback_token) < 32:
+        raise ReportConfigurationError(
+            "BACKEND_REPORT_CALLBACK_TOKEN must be configured with at least 32 characters."
+        )
 
     response_mode = os.getenv("DIFY_RESPONSE_MODE", "blocking").strip() or "blocking"
     timeout_seconds = int(os.getenv("DIFY_TIMEOUT_SECONDS", "30"))
@@ -406,6 +510,8 @@ def send_student_month_report(
     force: bool = False,
     bypass_schedule: bool = False,
     resend_succeeded: bool = False,
+    batch_item: MonthlyStudentReportBatchItem | None = None,
+    retry_failed_confirmed: bool = False,
 ) -> dict[str, Any]:
     run_date = normalize_run_date(run_date)
     month_start = normalize_month_start(month_start or run_date)
@@ -455,7 +561,7 @@ def send_student_month_report(
     dispatch = MonthlyStudentReportDispatch.objects.filter(student=student, month=month_start).first()
     if (
         dispatch
-        and dispatch.status == MonthlyStudentReportDispatch.STATUS_SUCCEEDED
+        and dispatch.status in MonthlyStudentReportDispatch.SUCCESSFUL_STATUSES
         and not resend_succeeded
     ):
         logger.info(
@@ -468,6 +574,14 @@ def send_student_month_report(
             "student_name": student.user.full_name,
             "status": "skipped",
             "reason": "already_sent",
+            "dispatch_id": dispatch.pk,
+        }
+    if dispatch and dispatch.status == MonthlyStudentReportDispatch.STATUS_FAILED and not retry_failed_confirmed:
+        return {
+            "student_id": student.pk,
+            "student_name": student.user.full_name,
+            "status": "skipped",
+            "reason": "failed_retry_not_confirmed",
             "dispatch_id": dispatch.pk,
         }
 
@@ -501,7 +615,7 @@ def send_student_month_report(
             )
 
             if (
-                dispatch.status == MonthlyStudentReportDispatch.STATUS_SUCCEEDED
+                dispatch.status in MonthlyStudentReportDispatch.SUCCESSFUL_STATUSES
                 and not resend_succeeded
             ):
                 return {
@@ -509,6 +623,14 @@ def send_student_month_report(
                     "student_name": student.user.full_name,
                     "status": "skipped",
                     "reason": "already_sent",
+                    "dispatch_id": dispatch.pk,
+                }
+            if dispatch.status == MonthlyStudentReportDispatch.STATUS_FAILED and not retry_failed_confirmed:
+                return {
+                    "student_id": student.pk,
+                    "student_name": student.user.full_name,
+                    "status": "skipped",
+                    "reason": "failed_retry_not_confirmed",
                     "dispatch_id": dispatch.pk,
                 }
 
@@ -541,6 +663,22 @@ def send_student_month_report(
                 status=MonthlyStudentReportDispatch.STATUS_PENDING,
                 payload=report_payload,
             )
+            correlation = {
+                "dispatch_id": dispatch.pk,
+                "attempt_id": delivery_attempt.pk,
+                "batch_item_id": batch_item.pk if batch_item is not None else None,
+            }
+            report_payload = {**report_payload, "correlation": correlation}
+            dispatch.payload = report_payload
+            dispatch.save(update_fields=["payload", "updated_at"])
+            delivery_attempt.payload = report_payload
+            delivery_attempt.save(update_fields=["payload", "updated_at"])
+            if batch_item is not None:
+                locked_item = MonthlyStudentReportBatchItem.objects.select_for_update().get(pk=batch_item.pk)
+                locked_item.dispatch = dispatch
+                locked_item.attempt = delivery_attempt
+                locked_item.status = MonthlyStudentReportBatchItem.STATUS_PROCESSING
+                locked_item.save(update_fields=["dispatch", "attempt", "status", "updated_at"])
     except IntegrityError:
         dispatch = MonthlyStudentReportDispatch.objects.get(student=student, month=month_start)
         return {
@@ -564,6 +702,17 @@ def send_student_month_report(
             month_start.strftime("%Y-%m"),
             exc,
         )
+        dispatch.refresh_from_db()
+        delivery_attempt.refresh_from_db()
+        stored_response = dispatch.response_payload if isinstance(dispatch.response_payload, dict) else {}
+        if isinstance(stored_response.get("meta"), dict) and stored_response["meta"].get("callback_received"):
+            return {
+                "student_id": student.pk,
+                "student_name": student.user.full_name,
+                "status": dispatch.status,
+                "dispatch_id": dispatch.pk,
+                "workflow_run_id": dispatch.workflow_run_id,
+            }
         dispatch.status = MonthlyStudentReportDispatch.STATUS_FAILED
         dispatch.error_message = str(exc)
         dispatch.save(
@@ -601,6 +750,11 @@ def send_student_month_report(
         workflow_failed = workflow_status in {"failed", "stopped"} or (
             workflow_status == "partial-succeeded" and not accepts_partial_dify_success()
         )
+        if batch_item is not None and not workflow_failed:
+            workflow_failed = True
+            missing_callback_error = "Dify completed without a valid Meta callback."
+        else:
+            missing_callback_error = ""
         dispatch.status = (
             MonthlyStudentReportDispatch.STATUS_FAILED
             if workflow_failed
@@ -608,7 +762,7 @@ def send_student_month_report(
         )
         dispatch.response_payload = response_payload
         dispatch.error_message = (
-            f"Dify workflow finished with status '{workflow_status}'."
+            missing_callback_error or f"Dify workflow finished with status '{workflow_status}'."
             if workflow_failed
             else ""
         )
@@ -670,7 +824,10 @@ def send_student_month_report(
     return {
         "student_id": student.pk,
         "student_name": student.user.full_name,
-        "status": "sent",
+        "status": dispatch.status if dispatch.status in {
+            MonthlyStudentReportDispatch.STATUS_ACCEPTED,
+            MonthlyStudentReportDispatch.STATUS_DELIVERED,
+        } else "sent",
         "dispatch_id": dispatch.pk,
         "workflow_run_id": dispatch.workflow_run_id,
         "trigger_date": effective_trigger_date.isoformat(),
@@ -680,13 +837,29 @@ def send_student_month_report(
 def force_send_all_monthly_reports(
     run_date: date | datetime | None = None,
     month_start: date | datetime | None = None,
+    organization_type: str | None = None,
+    college_branch: str | None = None,
+    group_ids: list[int] | None = None,
+    student_ids: list[int] | None = None,
+    resend_succeeded: bool = False,
 ) -> list[dict[str, Any]]:
     """Explicit admin action: send the selected month to every active student."""
     run_date = normalize_run_date(run_date)
     month_start = normalize_month_start(month_start or run_date)
+    student_queryset = StudentProfile.objects.select_related("user", "group", "group__mentor__user").filter(
+        archived_at__isnull=True,
+        group__archived_at__isnull=True,
+    )
+    if organization_type:
+        student_queryset = student_queryset.filter(organization_type=organization_type)
+    if college_branch:
+        student_queryset = student_queryset.filter(college_branch=college_branch)
+    if group_ids:
+        student_queryset = student_queryset.filter(group_id__in=group_ids, group__archived_at__isnull=True)
+    if student_ids:
+        student_queryset = student_queryset.filter(pk__in=student_ids)
     students = list(
-        StudentProfile.objects.select_related("user", "group", "group__mentor__user")
-        .filter(archived_at__isnull=True)
+        student_queryset
         .order_by("group__course_name", "user__full_name")
     )
 
@@ -698,7 +871,7 @@ def force_send_all_monthly_reports(
             month_start=month_start,
             force=True,
             bypass_schedule=True,
-            resend_succeeded=True,
+            resend_succeeded=resend_succeeded,
         )
         results.append(result)
     return results
@@ -711,6 +884,7 @@ def send_due_monthly_reports(
     group_id: int | None = None,
     dry_run: bool = False,
     force: bool = False,
+    organization_type: str | None = None,
 ) -> list[dict[str, Any]]:
     run_date = normalize_run_date(run_date)
     month_start = normalize_month_start(month_start or run_date)
@@ -722,9 +896,12 @@ def send_due_monthly_reports(
         "group__mentor__user",
     ).filter(
         archived_at__isnull=True,
+        group__archived_at__isnull=True,
         group__lessons__lesson_date__gte=month_start,
         group__lessons__lesson_date__lte=month_end,
     ).distinct()
+    if organization_type:
+        students = students.filter(organization_type=organization_type)
 
     if student_id is not None:
         students = students.filter(pk=student_id)

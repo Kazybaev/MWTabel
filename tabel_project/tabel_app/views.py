@@ -3,10 +3,11 @@ import hmac
 from mimetypes import guess_type
 from pathlib import Path
 import os
+import re
 
 from django.core.exceptions import PermissionDenied
 from django.db import transaction
-from django.db.models import Count, Q
+from django.db.models import Count, Max, Q
 from django.http import FileResponse, Http404, HttpResponse
 from django.shortcuts import get_object_or_404
 from django.utils import timezone
@@ -20,18 +21,28 @@ from rest_framework_simplejwt.tokens import RefreshToken
 from rest_framework_simplejwt.views import TokenObtainPairView
 
 from .models import (
+    Badge,
+    CollegeGroup,
     Group,
     Lesson,
     LessonRecord,
     MentorProfile,
     MonthlyStudentReportAttempt,
+    MonthlyStudentReportBatch,
+    MonthlyStudentReportBatchItem,
     MonthlyStudentReportDispatch,
     StudentProfile,
+    StudentBadge,
     User,
 )
 from .report_delivery import build_report_conversations, record_meta_delivery_callback, serialize_report_attempt
 from .report import force_send_all_monthly_reports, is_absence_grade, send_student_month_report
+from .organization import college_branch_for_request, organization_for_request, require_agrarian_college
+from .report_queue import enqueue_monthly_report_batch, serialize_report_batch
 from .serializers import (
+    AgrarianGradeRecordSerializer,
+    BadgeSerializer,
+    CollegeGroupSerializer,
     GroupDetailSerializer,
     GroupListSerializer,
     GroupWriteSerializer,
@@ -39,8 +50,11 @@ from .serializers import (
     LoginSerializer,
     MentorProfileSerializer,
     ReportDispatchRequestSerializer,
+    ReportBulkDispatchRequestSerializer,
     ReportDeliveryCallbackSerializer,
+    ReportResendRequestSerializer,
     StudentProfileSerializer,
+    StudentBadgeSerializer,
     UserSerializer,
     move_student_records_to_group,
 )
@@ -49,44 +63,64 @@ from .serializers import (
 FRONTEND_DIST_DIR = Path(__file__).resolve().parents[2] / "frontend" / "dist"
 
 
+def summarize_report_failure(result):
+    reason = str(result.get("reason") or "").strip()
+    if reason in {
+        "DIFY_API_KEY must be configured.",
+        "BACKEND_REPORT_CALLBACK_TOKEN must be configured with at least 32 characters.",
+    }:
+        return reason
+
+    match = re.match(r"Dify returned HTTP (\d{3})", reason)
+    if match:
+        return f"Dify returned HTTP {match.group(1)}."
+    if reason.startswith("Could not reach Dify:"):
+        return "Could not reach Dify."
+    if reason.startswith("Dify workflow finished with status "):
+        return reason.split(".", 1)[0] + "."
+    if reason.startswith("Meta returned HTTP "):
+        return reason.split(".", 1)[0] + "."
+    return "Report delivery failed. See the per-student attempt history for details."
+
+
 def groups_for_user(user):
-    queryset = Group.objects.select_related("mentor__user").prefetch_related("students__user", "lessons")
+    queryset = Group.objects.filter(archived_at__isnull=True).select_related("mentor__user").prefetch_related("students__user", "lessons")
     if user.role == User.ROLE_ADMIN:
         return queryset
     if user.role == User.ROLE_MENTOR and hasattr(user, "mentor_profile"):
         return queryset.filter(mentor=user.mentor_profile)
     if user.role == User.ROLE_STUDENT and hasattr(user, "student_profile"):
-        return queryset.filter(pk=user.student_profile.group_id)
+        return queryset.filter(Q(pk=user.student_profile.group_id) | Q(college_students=user.student_profile)).distinct()
     return queryset.none()
 
 
 def students_for_user(user):
     queryset = StudentProfile.objects.select_related("user", "group", "group__mentor__user")
     if user.role == User.ROLE_ADMIN:
-        return queryset.filter(archived_at__isnull=True)
+        return queryset.filter(archived_at__isnull=True, group__archived_at__isnull=True)
     if user.role == User.ROLE_MENTOR and hasattr(user, "mentor_profile"):
-        return queryset.filter(group__mentor=user.mentor_profile, archived_at__isnull=True)
+        return queryset.filter(Q(group__mentor=user.mentor_profile, group__archived_at__isnull=True) | Q(college_groups__mentor=user.mentor_profile, college_groups__archived_at__isnull=True), archived_at__isnull=True).distinct()
     if user.role == User.ROLE_STUDENT and hasattr(user, "student_profile"):
         return queryset.filter(pk=user.student_profile.pk, archived_at__isnull=True)
     return queryset.none()
 
 
 def lessons_for_user(user):
-    queryset = Lesson.objects.select_related("group", "group__mentor__user").prefetch_related("records__student__user")
+    queryset = Lesson.objects.filter(group__archived_at__isnull=True).select_related("group", "group__mentor__user").prefetch_related("records__student__user")
     if user.role == User.ROLE_ADMIN:
         return queryset
     if user.role == User.ROLE_MENTOR and hasattr(user, "mentor_profile"):
         return queryset.filter(group__mentor=user.mentor_profile)
     if user.role == User.ROLE_STUDENT and hasattr(user, "student_profile"):
-        return queryset.filter(group=user.student_profile.group)
+        return queryset.filter(Q(group=user.student_profile.group) | Q(group__college_students=user.student_profile)).distinct()
     return queryset.none()
 
 
 def manageable_groups_for_user(user):
     if user.role == User.ROLE_ADMIN:
-        return Group.objects.select_related("mentor__user")
+        return Group.objects.filter(archived_at__isnull=True).select_related("mentor__user")
     if user.role == User.ROLE_MENTOR and hasattr(user, "mentor_profile"):
-        return Group.objects.select_related("mentor__user").filter(mentor=user.mentor_profile)
+        return Group.objects.filter(archived_at__isnull=True).select_related("mentor__user").filter(mentor=user.mentor_profile)
     return Group.objects.none()
 
 
@@ -113,6 +147,26 @@ def parse_month_value(month_value):
 
 def get_selected_month(request):
     return parse_month_value(request.GET.get("month")) or timezone.localdate().replace(day=1)
+
+
+def get_admin_student_gradebook_month(request, student, organization_type):
+    requested_month = parse_month_value(request.GET.get("month"))
+    if requested_month is not None:
+        return requested_month
+
+    latest_lesson_date = (
+        LessonRecord.objects.filter(
+            student=student,
+            lesson__group__organization_type=organization_type,
+        )
+        .order_by("-lesson__lesson_date", "-lesson_id")
+        .values_list("lesson__lesson_date", flat=True)
+        .first()
+    )
+    if latest_lesson_date is not None:
+        return latest_lesson_date.replace(day=1)
+
+    return timezone.localdate().replace(day=1)
 
 
 def month_bounds(current_month):
@@ -151,14 +205,23 @@ def grade_tone(grade):
     }.get(grade, "empty")
 
 
+def best_grade_for_records(records):
+    numeric_grades = [int(record.grade) for record in records if record.grade.isdigit()]
+    if numeric_grades:
+        return str(max(numeric_grades))
+    return next(((record.grade or "").strip() for record in records if (record.grade or "").strip()), "")
+
+
 def build_gradebook_rows(group, students, month_days, lessons_by_date):
     lesson_ids = [lesson.pk for lesson in lessons_by_date.values()]
     student_ids = [student.pk for student in students]
     records = LessonRecord.objects.filter(
         lesson_id__in=lesson_ids,
         student_id__in=student_ids,
-    ).select_related("lesson", "student__user")
-    record_map = {(record.student_id, record.lesson.lesson_date): record for record in records}
+    ).select_related("lesson", "student__user", "author").order_by("sequence", "id")
+    records_map = {}
+    for record in records:
+        records_map.setdefault((record.student_id, record.lesson.lesson_date), []).append(record)
     study_weekdays = get_group_study_weekdays(group)
     rows = []
 
@@ -168,17 +231,21 @@ def build_gradebook_rows(group, students, month_days, lessons_by_date):
         cells = []
         for day in month_days:
             lesson = lessons_by_date.get(day)
-            record = record_map.get((student.pk, day))
-            grade = record.grade if record else ""
-            if grade.isdigit():
-                numeric_grades.append(int(grade))
-            if grade and not is_absence_grade(grade):
-                attendance_count += 1
+            day_records = records_map.get((student.pk, day), [])
+            record = day_records[0] if day_records else None
+            grade = (
+                best_grade_for_records(day_records)
+                if group.organization_type == "college" and group.college_branch == "agrarian"
+                else record.grade if record else ""
+            )
+            numeric_grades.extend(int(item.grade) for item in day_records if item.grade.isdigit())
+            attendance_count += int(any(item.grade and not is_absence_grade(item.grade) for item in day_records))
             cells.append(
                 {
                     "date": day,
                     "lesson": lesson,
                     "record": record,
+                    "records": day_records,
                     "grade": grade,
                     "tone": grade_tone(grade),
                     "is_today": day == timezone.localdate(),
@@ -209,15 +276,19 @@ def serialize_choice_pairs(choices):
 
 
 def build_gradebook_payload(group, user, selected_month):
-    can_edit = user.role in {User.ROLE_ADMIN, User.ROLE_MENTOR}
+    can_edit = user.role in {User.ROLE_ADMIN, User.ROLE_MENTOR} and group.archived_at is None
     previous_month, next_month = month_navigation(selected_month)
     month_days = build_month_days(selected_month)
     month_start, month_end = month_bounds(selected_month)
     study_weekdays = get_group_study_weekdays(group)
 
-    if can_edit:
-        students = list(group.students.filter(archived_at__isnull=True).select_related("user"))
-    elif hasattr(user, "student_profile") and user.student_profile.group_id == group.pk:
+    if user.role in {User.ROLE_ADMIN, User.ROLE_MENTOR}:
+        relation = group.college_students if group.organization_type == "college" else group.students
+        students = list((relation if group.archived_at is not None else relation.filter(archived_at__isnull=True)).select_related("user"))
+    elif hasattr(user, "student_profile") and (
+        user.student_profile.group_id == group.pk
+        or user.student_profile.college_groups.filter(pk=group.pk).exists()
+    ):
         students = [user.student_profile]
     else:
         raise PermissionDenied
@@ -263,11 +334,26 @@ def build_gradebook_payload(group, user, selected_month):
                     {
                         "date": cell["date"].isoformat(),
                         "grade": cell["grade"],
+                        "best_grade": cell["grade"] if group.organization_type == "college" and group.college_branch == "agrarian" else "",
+                        "grade_count": len(cell["records"]) if group.organization_type == "college" and group.college_branch == "agrarian" else 0,
                         "tone": cell["tone"],
                         "lesson_id": cell["lesson"].pk if cell["lesson"] else None,
                         "is_today": cell["is_today"],
                         "is_weekend": cell["is_weekend"],
                         "is_study_day": cell["is_study_day"],
+                        "grade_entries": [
+                            {
+                                "id": record.pk,
+                                "score": record.grade,
+                                "comment": record.comment,
+                                "teacher": record.author_id,
+                                "teacher_name": record.author.full_name if record.author else "",
+                                "sequence": record.sequence,
+                                "created_at": record.created_at,
+                                "updated_at": record.updated_at,
+                            }
+                            for record in cell["records"]
+                        ] if group.organization_type == "college" and group.college_branch == "agrarian" else [],
                     }
                     for cell in row["cells"]
                 ],
@@ -284,6 +370,7 @@ def build_gradebook_payload(group, user, selected_month):
         "grade_choices": serialize_choice_pairs(LessonRecord.GRADE_CHOICES),
         "can_edit": can_edit,
         "student_only": not can_edit,
+        "agrarian_features": group.organization_type == "college" and group.college_branch == "agrarian",
         "filled_days_count": len(lessons_by_date),
         "page_title": "Табель группы" if can_edit else "Мой табель",
         "page_copy": (
@@ -327,7 +414,11 @@ def save_gradebook_entries(group, students, month_days, lessons_by_date, entries
     student_ids = list(students_by_id)
     existing_records = {
         (record.student_id, record.lesson.lesson_date): record
-        for record in LessonRecord.objects.filter(lesson_id__in=lesson_ids, student_id__in=student_ids)
+        for record in LessonRecord.objects.filter(
+            lesson_id__in=lesson_ids,
+            student_id__in=student_ids,
+            sequence=1,
+        )
         .select_related("lesson")
     }
 
@@ -350,6 +441,7 @@ def save_gradebook_entries(group, students, month_days, lessons_by_date, entries
                 LessonRecord.objects.update_or_create(
                     student=student,
                     lesson=lesson,
+                    sequence=1,
                     defaults=defaults,
                 )
             elif current_record:
@@ -361,27 +453,11 @@ def save_gradebook_entries(group, students, month_days, lessons_by_date, entries
 
 
 def dispatch_due_reports_after_gradebook_save(students, selected_month):
-    if (os.getenv("AUTO_MONTHLY_REPORTS", "false") or "").strip().lower() not in {"1", "true", "yes", "on"}:
-        return []
-
-    results = []
-    run_date = timezone.localdate()
-    for student in students:
-        result = send_student_month_report(
-            student,
-            run_date=run_date,
-            month_start=selected_month,
-            force=False,
-        )
-        if result["status"] != "skipped" or result.get("reason") in {
-            "already_sent",
-            "send_already_in_progress",
-        }:
-            results.append(result)
-    return results
+    # Reports are intentionally sent only by an explicit action in the Reports section.
+    return []
 
 
-def build_student_monthly_stats(student_profile):
+def build_student_monthly_stats(student_profile, *, organization_type=None, group_id=None):
     if not student_profile:
         return []
 
@@ -401,18 +477,26 @@ def build_student_monthly_stats(student_profile):
         "Декабрь",
     ]
     month_tones = ["blue", "red", "green", "orange", "violet", "cyan", "teal", "amber", "indigo", "emerald", "rose", "slate"]
-    records = list(
-        LessonRecord.objects.select_related("lesson")
-        .filter(student=student_profile, lesson__lesson_date__year=current_year)
-        .order_by("lesson__lesson_date", "lesson_id")
+    records_queryset = LessonRecord.objects.select_related("lesson").filter(
+        student=student_profile,
+        lesson__lesson_date__year=current_year,
     )
+    if organization_type:
+        records_queryset = records_queryset.filter(lesson__group__organization_type=organization_type)
+    if group_id is not None:
+        records_queryset = records_queryset.filter(lesson__group_id=group_id)
+    records = list(records_queryset.order_by("lesson__lesson_date", "lesson_id"))
     monthly_stats = []
 
     for month_number, month_name in enumerate(month_names, start=1):
         month_records = [record for record in records if record.lesson.lesson_date.month == month_number]
         numeric_grades = [int(record.grade) for record in month_records if record.grade.isdigit()]
-        attendance_count = len([record for record in month_records if record.grade and not is_absence_grade(record.grade)])
-        absence_count = len([record for record in month_records if is_absence_grade(record.grade)])
+        attendance_count = len({record.lesson_id for record in month_records if record.grade and not is_absence_grade(record.grade)})
+        absence_count = len({record.lesson_id for record in month_records if is_absence_grade(record.grade)})
+        grades_by_day = {}
+        for record in month_records:
+            if record.grade.isdigit():
+                grades_by_day.setdefault(record.lesson.lesson_date.day, []).append(int(record.grade))
         monthly_stats.append(
             {
                 "value": f"{current_year}-{month_number:02d}",
@@ -423,9 +507,8 @@ def build_student_monthly_stats(student_profile):
                 "absence_count": absence_count,
                 "average_grade": round(sum(numeric_grades) / len(numeric_grades), 1) if numeric_grades else None,
                 "daily_points": [
-                    {"day": record.lesson.lesson_date.day, "grade": int(record.grade)}
-                    for record in month_records
-                    if record.grade.isdigit()
+                    {"day": day, "grade": round(sum(day_grades) / len(day_grades), 2)}
+                    for day, day_grades in sorted(grades_by_day.items())
                 ],
             }
         )
@@ -433,14 +516,168 @@ def build_student_monthly_stats(student_profile):
     return monthly_stats
 
 
-def build_dashboard_payload(user):
-    if user.role == User.ROLE_ADMIN:
-        groups = groups_for_user(user).annotate(
-            students_count=Count("students", filter=Q(students__archived_at__isnull=True))
+def groups_for_student_gradebook(student, organization_type):
+    return (
+        Group.objects.filter(
+            Q(pk=student.group_id) | Q(college_students=student),
+            organization_type=organization_type,
         )
-        mentors = MentorProfile.objects.select_related("user").annotate(groups_count=Count("groups"))
-        students = students_for_user(user)
-        lessons = lessons_for_user(user)
+        .select_related("mentor__user")
+        .distinct()
+        .order_by("course_name", "pk")
+    )
+
+
+def annotate_group_students_count(queryset, organization_type):
+    relation = "college_students" if organization_type == "college" else "students"
+    return queryset.annotate(
+        students_count=Count(
+            relation,
+            filter=Q(**{f"{relation}__archived_at__isnull": True}),
+            distinct=True,
+        )
+    )
+
+
+def build_admin_student_gradebook_payload(student, organization_type, selected_month):
+    month_start, month_end = month_bounds(selected_month)
+    previous_month, next_month = month_navigation(selected_month)
+    days = build_month_days(selected_month)
+    groups = list(groups_for_student_gradebook(student, organization_type))
+    rows = []
+
+    for group in groups:
+        lessons_by_date = {}
+        for lesson in group.lessons.filter(
+            lesson_date__gte=month_start,
+            lesson_date__lte=month_end,
+        ).order_by("lesson_date", "pk"):
+            lessons_by_date.setdefault(lesson.lesson_date, lesson)
+        records = list(LessonRecord.objects.filter(
+            student=student,
+            lesson_id__in=[lesson.pk for lesson in lessons_by_date.values()],
+        ).select_related("lesson", "author").order_by("lesson__lesson_date", "sequence", "id"))
+        records_by_date = {}
+        for record in records:
+            records_by_date.setdefault(record.lesson.lesson_date.isoformat(), []).append(record)
+        grades = {
+            record_date: (
+                best_grade_for_records(day_records)
+                if group.college_branch == "agrarian"
+                else day_records[0].grade
+            )
+            for record_date, day_records in records_by_date.items()
+        }
+        numeric_grades = [int(record.grade) for record in records if record.grade.isdigit()]
+        rows.append(
+            {
+                "group_id": group.pk,
+                "subject": group.course_name,
+                "mentor_name": group.mentor.user.full_name,
+                "grades": {day.isoformat(): grades.get(day.isoformat(), "") for day in days},
+                "grade_entries": {
+                    day.isoformat(): [
+                        {
+                            "id": record.pk,
+                            "score": record.grade,
+                            "comment": record.comment,
+                            "teacher_name": record.author.full_name if record.author else "",
+                            "created_at": record.created_at,
+                        }
+                        for record in records_by_date.get(day.isoformat(), [])
+                    ]
+                    for day in days
+                } if group.college_branch == "agrarian" else {},
+                "grade_counts": {
+                    day.isoformat(): len(records_by_date.get(day.isoformat(), []))
+                    for day in days
+                } if group.college_branch == "agrarian" else {},
+                "lesson_dates": [day.isoformat() for day in lessons_by_date],
+                "grades_count": len(numeric_grades),
+                "attendance_count": len({record.lesson_id for record in records if record.grade and not is_absence_grade(record.grade)}),
+                "absence_count": len({record.lesson_id for record in records if is_absence_grade(record.grade)}),
+                "average_grade": round(sum(numeric_grades) / len(numeric_grades), 1) if numeric_grades else None,
+            }
+        )
+
+    return {
+        "student": {
+            "id": student.pk,
+            "full_name": student.user.full_name,
+            "username": student.user.username,
+            "parent_name": student.parent_name,
+            "parent_phone": str(student.parent_phone),
+            "college_course": student.college_course,
+            "organization_type": student.organization_type,
+            "groups_count": len(groups),
+        },
+        "month": selected_month.strftime("%Y-%m"),
+        "previous_month": previous_month.strftime("%Y-%m"),
+        "next_month": next_month.strftime("%Y-%m"),
+        "days": [
+            {
+                "date": day.isoformat(),
+                "day": day.day,
+                "weekday": ["Пн", "Вт", "Ср", "Чт", "Пт", "Сб", "Вс"][day.weekday()],
+                "is_weekend": day.weekday() >= 5,
+                "is_today": day == timezone.localdate(),
+            }
+            for day in days
+        ],
+        "rows": rows,
+        "grade_choices": serialize_choice_pairs(LessonRecord.GRADE_CHOICES),
+        "can_edit": True,
+        "agrarian_features": student.college_branch == "agrarian",
+    }
+
+
+def save_admin_student_gradebook(student, organization_type, selected_month, entries):
+    if not isinstance(entries, list):
+        raise ValidationError({"entries": "Список оценок должен быть массивом."})
+    groups = list(groups_for_student_gradebook(student, organization_type))
+    groups_by_id = {group.pk: group for group in groups}
+    invalid_group_ids = {
+        entry.get("group") for entry in entries if entry.get("group") not in groups_by_id
+    }
+    if invalid_group_ids:
+        raise ValidationError({"entries": "Одна из групп не назначена выбранному студенту."})
+
+    month_start, month_end = month_bounds(selected_month)
+    month_days = build_month_days(selected_month)
+    for group in groups:
+        lessons_by_date = {}
+        for lesson in group.lessons.filter(
+            lesson_date__gte=month_start,
+            lesson_date__lte=month_end,
+        ).order_by("lesson_date", "pk"):
+            lessons_by_date.setdefault(lesson.lesson_date, lesson)
+        group_entries = [
+            {
+                "student": student.pk,
+                "date": entry.get("date"),
+                "grade": entry.get("grade", ""),
+            }
+            for entry in entries
+            if entry.get("group") == group.pk
+        ]
+        save_gradebook_entries(group, [student], month_days, lessons_by_date, group_entries)
+
+    dispatch_due_reports_after_gradebook_save([student], selected_month)
+
+
+def build_dashboard_payload(user, organization_type=None, college_branch=None):
+    if user.role == User.ROLE_ADMIN:
+        groups = annotate_group_students_count(
+            groups_for_user(user).filter(organization_type=organization_type),
+            organization_type,
+        )
+        mentors = MentorProfile.objects.filter(organization_type=organization_type).select_related("user").annotate(groups_count=Count("groups"))
+        students = students_for_user(user).filter(organization_type=organization_type)
+        lessons = lessons_for_user(user).filter(group__organization_type=organization_type)
+        if college_branch:
+            groups = groups.filter(college_branch=college_branch)
+            students = students.filter(college_branch=college_branch)
+            lessons = lessons.filter(group__college_branch=college_branch)
         return {
             "dashboard_title": "Панель администратора",
             "dashboard_copy": "Управляйте группами, менторами, студентами и следите за учебным потоком.",
@@ -457,11 +694,16 @@ def build_dashboard_payload(user):
         }
 
     if user.role == User.ROLE_MENTOR and hasattr(user, "mentor_profile"):
-        groups = groups_for_user(user).annotate(
-            students_count=Count("students", filter=Q(students__archived_at__isnull=True))
+        groups = annotate_group_students_count(
+            groups_for_user(user).filter(organization_type=organization_type),
+            organization_type,
         )
-        students = students_for_user(user)
-        lessons = lessons_for_user(user)
+        students = students_for_user(user).filter(organization_type=organization_type)
+        lessons = lessons_for_user(user).filter(group__organization_type=organization_type)
+        if college_branch:
+            groups = groups.filter(college_branch=college_branch)
+            students = students.filter(college_branch=college_branch)
+            lessons = lessons.filter(group__college_branch=college_branch)
         return {
             "dashboard_title": "Кабинет ментора",
             "dashboard_copy": "Следите за своими группами и сразу переходите к месячному табелю.",
@@ -476,18 +718,58 @@ def build_dashboard_payload(user):
         }
 
     student_profile = getattr(user, "student_profile", None)
+    student_groups = (
+        Group.objects.filter(
+            Q(pk=getattr(student_profile, "group_id", None)) | Q(college_students=student_profile),
+            organization_type=organization_type,
+        )
+        .select_related("mentor__user")
+        .distinct()
+        .order_by("course_name", "pk")
+        if student_profile
+        else Group.objects.none()
+    )
+    if college_branch:
+        student_groups = student_groups.filter(college_branch=college_branch)
     records = (
         LessonRecord.objects.select_related("lesson", "lesson__group")
-        .filter(student=student_profile)
+        .filter(student=student_profile, lesson__group__organization_type=organization_type)
         .order_by("-lesson__lesson_date")
         if student_profile
         else LessonRecord.objects.none()
     )
+    if college_branch:
+        records = records.filter(lesson__group__college_branch=college_branch)
     grades_count = records.count()
     attendance_count = records.exclude(grade="Н").exclude(grade="н").count()
     average_grade = build_student_average(records) or "—"
-    group_name = student_profile.group.course_name if student_profile else "Не назначена"
-    mentor_name = student_profile.group.mentor.user.full_name if student_profile else "Не назначен"
+    group_names = list(student_groups.values_list("course_name", flat=True))
+    mentor_names = list(dict.fromkeys(student_groups.values_list("mentor__user__full_name", flat=True)))
+    group_name = ", ".join(group_names) if group_names else "Не назначена"
+    mentor_name = ", ".join(mentor_names) if mentor_names else "Не назначен"
+    all_monthly_stats = build_student_monthly_stats(
+        student_profile,
+        organization_type=organization_type,
+    )
+    student_stat_scopes = [
+        {
+            "value": "all",
+            "label": "Все группы",
+            "monthly_stats": all_monthly_stats,
+        },
+        *[
+            {
+                "value": str(group.pk),
+                "label": group.course_name,
+                "monthly_stats": build_student_monthly_stats(
+                    student_profile,
+                    organization_type=organization_type,
+                    group_id=group.pk,
+                ),
+            }
+            for group in student_groups
+        ],
+    ]
     return {
         "dashboard_title": "Кабинет студента",
         "dashboard_copy": "Здесь собрана короткая сводка по вашей группе, ментору и текущей успеваемости.",
@@ -503,7 +785,8 @@ def build_dashboard_payload(user):
             "attendance_count": attendance_count,
             "average_grade": average_grade,
         },
-        "student_monthly_stats": build_student_monthly_stats(student_profile),
+        "student_monthly_stats": all_monthly_stats,
+        "student_stat_scopes": student_stat_scopes,
     }
 
 
@@ -548,6 +831,7 @@ class ApiRootAPIView(APIView):
                 "reports": {
                     "dispatch": "/api/reports/send/",
                     "force_send_all": "/api/reports/send-all/",
+                    "explicit_resend": "/api/reports/resend/",
                     "delivery_callback": "/api/report-logs/",
                     "admin_conversations": "/api/reports/conversations/",
                 },
@@ -584,11 +868,87 @@ class CurrentUserAPIView(generics.RetrieveAPIView):
         return self.request.user
 
 
+class CollegeGradebookAPIView(APIView):
+    permission_classes = [permissions.IsAuthenticated]
+
+    def get(self, request, *args, **kwargs):
+        organization = organization_for_request(request)
+        college_branch = college_branch_for_request(request)
+        if organization != "college" or request.user.role != User.ROLE_STUDENT or not hasattr(request.user, "student_profile"):
+            raise PermissionDenied
+        student = request.user.student_profile
+        if student.organization_type != organization:
+            raise PermissionDenied
+        if student.college_branch != college_branch:
+            raise PermissionDenied
+        month_start = parse_month_value(request.query_params.get("month")) or timezone.localdate().replace(day=1)
+        month_start, month_end = month_bounds(month_start)
+        groups = student.college_groups.filter(
+            organization_type=organization,
+            college_branch=college_branch,
+        ).select_related("mentor__user")
+        if not groups.exists() and student.group.organization_type == organization:
+            groups = Group.objects.filter(pk=student.group_id, college_branch=college_branch)
+        days = [month_start + timedelta(days=index) for index in range((month_end - month_start).days + 1)]
+        records = list(LessonRecord.objects.filter(
+            student=student,
+            lesson__group__in=groups,
+            lesson__lesson_date__range=(month_start, month_end),
+        ).select_related("lesson", "lesson__group", "author").order_by("lesson__lesson_date", "sequence", "id"))
+        records_by_cell = {}
+        for record in records:
+            key = (record.lesson.group_id, record.lesson.lesson_date.isoformat())
+            records_by_cell.setdefault(key, []).append(record)
+        values = {
+            key: best_grade_for_records(day_records) if college_branch == "agrarian" else day_records[0].grade
+            for key, day_records in records_by_cell.items()
+        }
+        payload = {
+            "month": month_start.strftime("%Y-%m"),
+            "days": [{"date": day.isoformat(), "day": day.day} for day in days],
+            "rows": [
+                {
+                    "group_id": group.pk,
+                    "subject": group.course_name,
+                    "grades": {day.isoformat(): values.get((group.pk, day.isoformat()), "") for day in days},
+                    "grade_entries": {
+                        day.isoformat(): [
+                            {
+                                "id": record.pk,
+                                "score": record.grade,
+                                "comment": record.comment,
+                                "teacher_name": record.author.full_name if record.author else "",
+                                "created_at": record.created_at,
+                            }
+                            for record in records_by_cell.get((group.pk, day.isoformat()), [])
+                        ]
+                        for day in days
+                    } if college_branch == "agrarian" else {},
+                    "grade_counts": {
+                        day.isoformat(): len(records_by_cell.get((group.pk, day.isoformat()), []))
+                        for day in days
+                    } if college_branch == "agrarian" else {},
+                }
+                for group in groups.order_by("course_name")
+            ],
+            "agrarian_features": college_branch == "agrarian",
+        }
+        if college_branch == "agrarian":
+            awards = StudentBadge.objects.filter(student=student).select_related("badge", "group", "teacher")
+            payload["badges"] = StudentBadgeSerializer(awards, many=True, context={"request": request}).data
+        return Response(payload)
+
+
 class DashboardAPIView(APIView):
     permission_classes = [permissions.IsAuthenticated]
 
     def get(self, request, *args, **kwargs):
-        return Response(build_dashboard_payload(request.user))
+        organization = organization_for_request(request)
+        return Response(build_dashboard_payload(
+            request.user,
+            organization,
+            college_branch_for_request(request) if organization == "college" else None,
+        ))
 
 
 class AppMetaAPIView(APIView):
@@ -622,7 +982,10 @@ class ReportDispatchAPIView(APIView):
         serializer.is_valid(raise_exception=True)
 
         student = get_object_or_404(
-            students_for_user(request.user).select_related("user", "group", "group__mentor__user"),
+            students_for_user(request.user).filter(
+                organization_type=organization_for_request(request),
+                **({"college_branch": college_branch_for_request(request)} if organization_for_request(request) == "college" else {}),
+            ).select_related("user", "group", "group__mentor__user"),
             pk=serializer.validated_data["student_id"],
         )
 
@@ -637,6 +1000,60 @@ class ReportDispatchAPIView(APIView):
             month_start=month_start,
             dry_run=serializer.validated_data.get("dry_run", False),
             force=serializer.validated_data.get("force", True),
+            bypass_schedule=True,
+            resend_succeeded=False,
+            retry_failed_confirmed=serializer.validated_data.get("confirm_retry_failed", False),
+        )
+        response_status = status.HTTP_502_BAD_GATEWAY if result.get("status") == "failed" else status.HTTP_200_OK
+        return Response(result, status=response_status)
+
+
+class ReportResendAPIView(APIView):
+    permission_classes = [permissions.IsAuthenticated]
+
+    @extend_schema(
+        summary="Explicitly resend one previously successful monthly report",
+        request=ReportResendRequestSerializer,
+        responses={
+            200: OpenApiResponse(description="Successful report explicitly resent."),
+            409: OpenApiResponse(description="No successful report exists for this student and month."),
+            502: OpenApiResponse(description="Dify rejected the report or delivery failed."),
+        },
+    )
+    def post(self, request, *args, **kwargs):
+        if request.user.role != User.ROLE_ADMIN:
+            raise PermissionDenied
+
+        serializer = ReportResendRequestSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        student = get_object_or_404(
+            students_for_user(request.user)
+            .filter(organization_type=organization_for_request(request))
+            .select_related("user", "group", "group__mentor__user"),
+            pk=serializer.validated_data["student_id"],
+        )
+        month_start = parse_month_value(serializer.validated_data["month"])
+        if month_start is None:
+            raise ValidationError({"month": "Use YYYY-MM format for the report month."})
+
+        has_successful_dispatch = MonthlyStudentReportDispatch.objects.filter(
+            student=student,
+            month=month_start,
+            status__in=MonthlyStudentReportDispatch.SUCCESSFUL_STATUSES,
+        ).exists()
+        if not has_successful_dispatch:
+            return Response(
+                {"detail": "No successful report exists for this student and month."},
+                status=status.HTTP_409_CONFLICT,
+            )
+
+        result = send_student_month_report(
+            student,
+            run_date=timezone.localdate(),
+            month_start=month_start,
+            force=True,
+            bypass_schedule=True,
+            resend_succeeded=True,
         )
         response_status = status.HTTP_502_BAD_GATEWAY if result.get("status") == "failed" else status.HTTP_200_OK
         return Response(result, status=response_status)
@@ -664,7 +1081,13 @@ class ReportDeliveryCallbackAPIView(APIView):
         serializer.is_valid(raise_exception=True)
         try:
             dispatch, duplicate = record_meta_delivery_callback(**serializer.validated_data)
-        except (MonthlyStudentReportDispatch.DoesNotExist, ValueError, TypeError):
+        except (
+            MonthlyStudentReportDispatch.DoesNotExist,
+            MonthlyStudentReportAttempt.DoesNotExist,
+            MonthlyStudentReportBatchItem.DoesNotExist,
+            ValueError,
+            TypeError,
+        ):
             return Response(
                 {"detail": "Matching monthly report dispatch was not found."},
                 status=status.HTTP_404_NOT_FOUND,
@@ -686,7 +1109,38 @@ class ReportConversationListAPIView(APIView):
     def get(self, request, *args, **kwargs):
         if request.user.role != User.ROLE_ADMIN:
             raise PermissionDenied
-        return Response(build_report_conversations())
+        organization = organization_for_request(request)
+        return Response(build_report_conversations(
+            organization,
+            college_branch_for_request(request) if organization == "college" else None,
+        ))
+
+
+class ReportDispatchOptionsAPIView(APIView):
+    permission_classes = [permissions.IsAuthenticated]
+
+    def get(self, request, *args, **kwargs):
+        if request.user.role != User.ROLE_ADMIN:
+            raise PermissionDenied
+        organization = organization_for_request(request)
+        college_branch = college_branch_for_request(request) if organization == "college" else None
+        groups = Group.objects.filter(
+            organization_type=organization,
+            archived_at__isnull=True,
+        ).filter(
+            Q(students__archived_at__isnull=True) | Q(college_students__archived_at__isnull=True),
+        ).distinct().order_by("course_name", "pk")
+        students = students_for_user(request.user).filter(
+            organization_type=organization,
+        ).order_by("group__course_name", "user__full_name")
+        if college_branch:
+            groups = groups.filter(college_branch=college_branch)
+            students = students.filter(college_branch=college_branch)
+        return Response({
+            "organization": organization,
+            "groups": [{"id": group.pk, "name": group.course_name} for group in groups],
+            "students": [{"id": student.pk, "name": student.user.full_name, "group_id": student.group_id, "group_name": student.group.course_name} for student in students],
+        })
 
 
 class ForceSendAllReportsAPIView(APIView):
@@ -696,25 +1150,36 @@ class ForceSendAllReportsAPIView(APIView):
         if request.user.role != User.ROLE_ADMIN:
             raise PermissionDenied
 
-        month_start = timezone.localdate().replace(day=1)
-        results = force_send_all_monthly_reports(
-            run_date=timezone.localdate(),
-            month_start=month_start,
+        serializer = ReportBulkDispatchRequestSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        organization = organization_for_request(request)
+        if organization == "college" and (serializer.validated_data.get("group_ids") or serializer.validated_data.get("student_ids")):
+            raise ValidationError("Для колледжа доступна только отправка всем студентам.")
+        month_start = parse_month_value(serializer.validated_data.get("month")) or timezone.localdate().replace(day=1)
+        batch = enqueue_monthly_report_batch(
+            created_by=request.user,
+            month=month_start,
+            organization_type=organization,
+            college_branch=college_branch_for_request(request) if organization == "college" else None,
+            group_ids=serializer.validated_data.get("group_ids"),
+            student_ids=serializer.validated_data.get("student_ids"),
+            confirm_retry_failed=serializer.validated_data.get("confirm_retry_failed", False),
         )
-        sent_count = sum(result.get("status") == "sent" for result in results)
-        failed_count = sum(result.get("status") == "failed" for result in results)
-        skipped_count = len(results) - sent_count - failed_count
-        return Response(
-            {
-                "month": month_start.strftime("%Y-%m"),
-                "total": len(results),
-                "sent": sent_count,
-                "failed": failed_count,
-                "skipped": skipped_count,
-                "results": results,
-            },
-            status=status.HTTP_200_OK,
+        return Response(serialize_report_batch(batch), status=status.HTTP_202_ACCEPTED)
+
+
+class ReportBatchDetailAPIView(APIView):
+    permission_classes = [permissions.IsAuthenticated]
+
+    def get(self, request, batch_id, *args, **kwargs):
+        if request.user.role != User.ROLE_ADMIN:
+            raise PermissionDenied
+        batch = get_object_or_404(
+            MonthlyStudentReportBatch,
+            pk=batch_id,
+            organization_type=organization_for_request(request),
         )
+        return Response(serialize_report_batch(batch))
 
 
 class ReportConversationDetailAPIView(APIView):
@@ -724,7 +1189,12 @@ class ReportConversationDetailAPIView(APIView):
         if request.user.role != User.ROLE_ADMIN:
             raise PermissionDenied
 
-        student = get_object_or_404(StudentProfile.objects.select_related("user", "group"), pk=student_id)
+        student = get_object_or_404(
+            StudentProfile.objects.select_related("user", "group"),
+            pk=student_id,
+            organization_type=organization_for_request(request),
+            **({"college_branch": college_branch_for_request(request)} if organization_for_request(request) == "college" else {}),
+        )
         attempts = MonthlyStudentReportAttempt.objects.filter(
             dispatch__student=student,
         ).select_related("dispatch").order_by("created_at", "id")
@@ -746,7 +1216,16 @@ class MentorProfileViewSet(viewsets.ModelViewSet):
     serializer_class = MentorProfileSerializer
 
     def get_queryset(self):
-        queryset = MentorProfile.objects.select_related("user").annotate(groups_count=Count("groups"))
+        organization = organization_for_request(self.request)
+        queryset = (
+            MentorProfile.objects.filter(
+                Q(user__organization_accesses__organization_type=organization)
+                | Q(user__organization_accesses__isnull=True, organization_type=organization)
+            )
+            .select_related("user")
+            .distinct()
+            .annotate(groups_count=Count("groups", filter=Q(groups__organization_type=organization), distinct=True))
+        )
         if self.request.user.role == User.ROLE_ADMIN:
             return queryset
         if self.request.user.role == User.ROLE_MENTOR and hasattr(self.request.user, "mentor_profile"):
@@ -757,6 +1236,9 @@ class MentorProfileViewSet(viewsets.ModelViewSet):
         if request.user.role != User.ROLE_ADMIN:
             raise PermissionDenied
         return super().create(request, *args, **kwargs)
+
+    def perform_create(self, serializer):
+        serializer.save(organization_type=organization_for_request(self.request))
 
     def update(self, request, *args, **kwargs):
         if request.user.role != User.ROLE_ADMIN:
@@ -780,17 +1262,31 @@ class StudentProfileViewSet(viewsets.ModelViewSet):
     serializer_class = StudentProfileSerializer
 
     def get_queryset(self):
-        queryset = StudentProfile.objects.select_related("user", "group", "group__mentor__user")
+        organization = organization_for_request(self.request)
+        queryset = StudentProfile.objects.filter(organization_type=organization).select_related("user", "group", "group__mentor__user")
+        if organization == "college":
+            queryset = queryset.filter(college_branch=college_branch_for_request(self.request))
         if self.request.user.role == User.ROLE_ADMIN:
             if self.action in {"archived", "restore", "destroy"}:
                 return queryset.filter(archived_at__isnull=False)
             return queryset.filter(archived_at__isnull=True)
-        return students_for_user(self.request.user)
+        return students_for_user(self.request.user).filter(
+            organization_type=organization,
+            **({"college_branch": college_branch_for_request(self.request)} if organization == "college" else {}),
+        )
 
     def create(self, request, *args, **kwargs):
         if request.user.role != User.ROLE_ADMIN:
             raise PermissionDenied
         return super().create(request, *args, **kwargs)
+
+    def perform_create(self, serializer):
+        organization = organization_for_request(self.request)
+        college_branch = college_branch_for_request(self.request) if organization == "college" else None
+        serializer.save(
+            organization_type=organization,
+            **({"college_branch": college_branch} if organization == "college" else {}),
+        )
 
     def update(self, request, *args, **kwargs):
         if request.user.role != User.ROLE_ADMIN:
@@ -808,6 +1304,28 @@ class StudentProfileViewSet(viewsets.ModelViewSet):
         instance = self.get_object()
         instance.user.delete()
         return Response(status=status.HTTP_204_NO_CONTENT)
+
+    @action(detail=True, methods=["get", "post"])
+    def gradebook(self, request, pk=None):
+        if request.user.role != User.ROLE_ADMIN:
+            raise PermissionDenied
+        organization = organization_for_request(request)
+        student = self.get_object()
+
+        if request.method == "GET":
+            selected_month = get_admin_student_gradebook_month(request, student, organization)
+            return Response(build_admin_student_gradebook_payload(student, organization, selected_month))
+
+        selected_month = parse_month_value(request.data.get("month"))
+        if selected_month is None:
+            raise ValidationError({"month": "Неверный формат месяца. Используйте YYYY-MM."})
+        save_admin_student_gradebook(
+            student,
+            organization,
+            selected_month,
+            request.data.get("entries", []),
+        )
+        return Response(build_admin_student_gradebook_payload(student, organization, selected_month))
 
     @action(detail=True, methods=["post"])
     def archive(self, request, pk=None):
@@ -835,22 +1353,59 @@ class StudentProfileViewSet(viewsets.ModelViewSet):
         group_id = request.data.get("group")
         if not group_id:
             raise ValidationError({"group": "Выберите группу для восстановления студента."})
-        group = get_object_or_404(Group, pk=group_id)
+        organization = organization_for_request(request)
+        group = get_object_or_404(
+            Group,
+            pk=group_id,
+            organization_type=organization,
+            **({"college_branch": college_branch_for_request(request)} if organization == "college" else {}),
+        )
         old_group = instance.group
         with transaction.atomic():
             instance.group = group
             instance.archived_at = None
             instance.save(update_fields=["group", "archived_at"])
-            move_student_records_to_group(instance, old_group, group)
+            if instance.organization_type == "college":
+                instance.college_groups.set([group])
+            else:
+                move_student_records_to_group(instance, old_group, group)
             instance.user.is_active = True
             instance.user.save(update_fields=["is_active"])
         return Response(self.get_serializer(instance).data)
 
 
+class CollegeGroupViewSet(viewsets.ModelViewSet):
+    serializer_class = CollegeGroupSerializer
+    http_method_names = ["get", "post", "put", "patch", "head", "options"]
+
+    def get_queryset(self):
+        if organization_for_request(self.request) != "college":
+            raise PermissionDenied("Основные группы доступны только в колледже.")
+        if self.request.method not in permissions.SAFE_METHODS and self.request.user.role != User.ROLE_ADMIN:
+            raise PermissionDenied
+        queryset = CollegeGroup.objects.filter(college_branch=college_branch_for_request(self.request))
+        if self.request.user.role != User.ROLE_ADMIN:
+            queryset = queryset.filter(subgroups__in=groups_for_user(self.request.user)).distinct()
+        return queryset
+
+    def perform_create(self, serializer):
+        self.get_queryset()
+        serializer.save(college_branch=college_branch_for_request(self.request))
+
+
 class GroupViewSet(viewsets.ModelViewSet):
     def get_queryset(self):
-        return groups_for_user(self.request.user).annotate(
-            students_count=Count("students", filter=Q(students__archived_at__isnull=True))
+        organization = organization_for_request(self.request)
+        branch_filter = {"college_branch": college_branch_for_request(self.request)} if organization == "college" else {}
+        include_archived = self.request.query_params.get("archived") == "1" and self.request.user.role == User.ROLE_ADMIN
+        if self.action == "archived" or include_archived:
+            return annotate_group_students_count(
+                Group.objects.filter(archived_at__isnull=False, organization_type=organization, **branch_filter),
+                organization,
+            )
+        return annotate_group_students_count(
+            groups_for_user(self.request.user).filter(organization_type=organization, **branch_filter),
+            organization,
         )
 
     def get_serializer_class(self):
@@ -865,6 +1420,16 @@ class GroupViewSet(viewsets.ModelViewSet):
             raise PermissionDenied
         return super().create(request, *args, **kwargs)
 
+    def perform_create(self, serializer):
+        organization = organization_for_request(self.request)
+        defaults = {"organization_type": organization}
+        if organization == "college":
+            college_branch = college_branch_for_request(self.request)
+            defaults["college_branch"] = college_branch
+        if organization == "college" and not serializer.validated_data.get("study_days"):
+            defaults["study_days"] = Group.MON_FRI
+        serializer.save(**defaults)
+
     def update(self, request, *args, **kwargs):
         if request.user.role != User.ROLE_ADMIN:
             raise PermissionDenied
@@ -876,9 +1441,35 @@ class GroupViewSet(viewsets.ModelViewSet):
         return super().partial_update(request, *args, **kwargs)
 
     def destroy(self, request, *args, **kwargs):
+        raise ValidationError("Удаление групп отключено. Используйте архивирование.")
+
+    @action(detail=True, methods=["post"])
+    def archive(self, request, pk=None):
         if request.user.role != User.ROLE_ADMIN:
             raise PermissionDenied
-        return super().destroy(request, *args, **kwargs)
+        group = self.get_object()
+        relation = group.college_students if group.organization_type == "college" else group.students
+        now = timezone.now()
+        with transaction.atomic():
+            group.archived_at = now
+            group.save(update_fields=["archived_at"])
+            for student in relation.filter(archived_at__isnull=True).select_related("user", "group"):
+                if group.organization_type == "college":
+                    has_active_group = student.college_groups.filter(archived_at__isnull=True).exclude(pk=group.pk).exists()
+                else:
+                    has_active_group = False
+                if not has_active_group:
+                    student.archived_at = now
+                    student.save(update_fields=["archived_at"])
+                    student.user.is_active = False
+                    student.user.save(update_fields=["is_active"])
+        return Response(self.get_serializer(group).data)
+
+    @action(detail=False, methods=["get"])
+    def archived(self, request):
+        if request.user.role != User.ROLE_ADMIN:
+            raise PermissionDenied
+        return Response(self.get_serializer(self.get_queryset(), many=True).data)
 
     @action(detail=True, methods=["get", "post"])
     def gradebook(self, request, pk=None):
@@ -888,6 +1479,9 @@ class GroupViewSet(viewsets.ModelViewSet):
             selected_month = get_selected_month(request)
             payload, _, _, _ = build_gradebook_payload(group, request.user, selected_month)
             return Response(payload)
+
+        if group.archived_at is not None:
+            raise ValidationError("Архивный табель доступен только для просмотра.")
 
         if request.user.role not in {User.ROLE_ADMIN, User.ROLE_MENTOR}:
             raise PermissionDenied
@@ -909,11 +1503,176 @@ class GroupViewSet(viewsets.ModelViewSet):
         return Response(payload, status=status.HTTP_200_OK)
 
 
+class AgrarianGradeRecordViewSet(viewsets.ModelViewSet):
+    serializer_class = AgrarianGradeRecordSerializer
+    http_method_names = ["get", "post", "patch", "delete", "head", "options"]
+
+    def get_queryset(self):
+        require_agrarian_college(self.request)
+        queryset = LessonRecord.objects.filter(
+            lesson__group__organization_type="college",
+            lesson__group__college_branch="agrarian",
+            student__organization_type="college",
+            student__college_branch="agrarian",
+        ).select_related("student__user", "lesson__group", "author")
+        user = self.request.user
+        if user.role == User.ROLE_MENTOR and hasattr(user, "mentor_profile"):
+            queryset = queryset.filter(lesson__group__mentor=user.mentor_profile)
+        elif user.role == User.ROLE_STUDENT and hasattr(user, "student_profile"):
+            queryset = queryset.filter(student=user.student_profile)
+        elif user.role != User.ROLE_ADMIN:
+            return queryset.none()
+
+        student_id = self.request.query_params.get("student")
+        group_id = self.request.query_params.get("group")
+        raw_date = self.request.query_params.get("date")
+        if student_id:
+            queryset = queryset.filter(student_id=student_id)
+        if group_id:
+            queryset = queryset.filter(lesson__group_id=group_id)
+        if raw_date:
+            try:
+                selected_date = date.fromisoformat(raw_date)
+            except ValueError:
+                raise ValidationError({"date": "Неверный формат даты. Используйте YYYY-MM-DD."}) from None
+            queryset = queryset.filter(lesson__lesson_date=selected_date)
+        return queryset.order_by("-lesson__lesson_date", "student__user__full_name", "sequence", "id")
+
+    def create(self, request, *args, **kwargs):
+        if request.user.role not in {User.ROLE_ADMIN, User.ROLE_MENTOR}:
+            raise PermissionDenied("Студент не может выставлять оценки.")
+        serializer = self.get_serializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        values = dict(serializer.validated_data)
+        student = values.pop("student")
+        group = values.pop("group")
+        lesson_date = values.pop("date")
+        with transaction.atomic():
+            group = Group.objects.select_for_update().get(pk=group.pk)
+            lesson = group.lessons.filter(lesson_date=lesson_date).order_by("id").first()
+            if lesson is None:
+                lesson = Lesson.objects.create(group=group, lesson_date=lesson_date)
+            lesson = Lesson.objects.select_for_update().get(pk=lesson.pk)
+            sequence = (
+                LessonRecord.objects.filter(student=student, lesson=lesson)
+                .aggregate(value=Max("sequence"))["value"]
+                or 0
+            ) + 1
+            record = LessonRecord.objects.create(
+                student=student,
+                lesson=lesson,
+                author=request.user,
+                sequence=sequence,
+                **values,
+            )
+        return Response(self.get_serializer(record).data, status=status.HTTP_201_CREATED)
+
+    def update(self, request, *args, **kwargs):
+        if request.user.role not in {User.ROLE_ADMIN, User.ROLE_MENTOR}:
+            raise PermissionDenied("Студент не может изменять оценки.")
+        record = self.get_object()
+        serializer = self.get_serializer(record, data=request.data, partial=True)
+        serializer.is_valid(raise_exception=True)
+        for field in ("grade", "comment"):
+            if field in serializer.validated_data:
+                setattr(record, field, serializer.validated_data[field])
+        record.save(update_fields=["grade", "comment", "updated_at"])
+        return Response(self.get_serializer(record).data)
+
+    def partial_update(self, request, *args, **kwargs):
+        return self.update(request, *args, **kwargs)
+
+    def destroy(self, request, *args, **kwargs):
+        if request.user.role not in {User.ROLE_ADMIN, User.ROLE_MENTOR}:
+            raise PermissionDenied("Студент не может удалять оценки.")
+        return super().destroy(request, *args, **kwargs)
+
+
+class BadgeViewSet(viewsets.ModelViewSet):
+    serializer_class = BadgeSerializer
+    http_method_names = ["get", "post", "patch", "head", "options"]
+
+    def get_queryset(self):
+        require_agrarian_college(self.request)
+        queryset = Badge.objects.all()
+        if self.request.user.role != User.ROLE_ADMIN:
+            queryset = queryset.filter(is_active=True)
+        return queryset
+
+    def create(self, request, *args, **kwargs):
+        if request.user.role != User.ROLE_ADMIN:
+            raise PermissionDenied("Только администратор может создавать типы значков.")
+        return super().create(request, *args, **kwargs)
+
+    def update(self, request, *args, **kwargs):
+        if request.user.role != User.ROLE_ADMIN:
+            raise PermissionDenied("Только администратор может изменять типы значков.")
+        return super().update(request, *args, **kwargs)
+
+    def partial_update(self, request, *args, **kwargs):
+        return self.update(request, *args, **kwargs)
+
+
+class StudentBadgeViewSet(viewsets.ModelViewSet):
+    serializer_class = StudentBadgeSerializer
+    http_method_names = ["get", "post", "patch", "delete", "head", "options"]
+
+    def get_queryset(self):
+        require_agrarian_college(self.request)
+        queryset = StudentBadge.objects.filter(
+            student__organization_type="college",
+            student__college_branch="agrarian",
+            group__organization_type="college",
+            group__college_branch="agrarian",
+        ).select_related("student__user", "badge", "group", "teacher")
+        user = self.request.user
+        if user.role == User.ROLE_MENTOR and hasattr(user, "mentor_profile"):
+            queryset = queryset.filter(group__mentor=user.mentor_profile)
+        elif user.role == User.ROLE_STUDENT and hasattr(user, "student_profile"):
+            queryset = queryset.filter(student=user.student_profile)
+        elif user.role != User.ROLE_ADMIN:
+            return queryset.none()
+        if self.request.query_params.get("student"):
+            queryset = queryset.filter(student_id=self.request.query_params["student"])
+        if self.request.query_params.get("group"):
+            queryset = queryset.filter(group_id=self.request.query_params["group"])
+        return queryset
+
+    def create(self, request, *args, **kwargs):
+        if request.user.role not in {User.ROLE_ADMIN, User.ROLE_MENTOR}:
+            raise PermissionDenied("Студент не может выдавать себе значки.")
+        serializer = self.get_serializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        award = serializer.save(teacher=request.user)
+        return Response(self.get_serializer(award).data, status=status.HTTP_201_CREATED)
+
+    def update(self, request, *args, **kwargs):
+        if request.user.role not in {User.ROLE_ADMIN, User.ROLE_MENTOR}:
+            raise PermissionDenied("Студент не может изменять значки.")
+        award = self.get_object()
+        serializer = self.get_serializer(award, data=request.data, partial=True)
+        serializer.is_valid(raise_exception=True)
+        serializer.save()
+        return Response(self.get_serializer(award).data)
+
+    def partial_update(self, request, *args, **kwargs):
+        return self.update(request, *args, **kwargs)
+
+    def destroy(self, request, *args, **kwargs):
+        if request.user.role not in {User.ROLE_ADMIN, User.ROLE_MENTOR}:
+            raise PermissionDenied("Студент не может удалять значки.")
+        return super().destroy(request, *args, **kwargs)
+
+
 class LessonViewSet(viewsets.ModelViewSet):
     serializer_class = LessonSerializer
 
     def get_queryset(self):
-        return lessons_for_user(self.request.user)
+        organization = organization_for_request(self.request)
+        queryset = lessons_for_user(self.request.user).filter(group__organization_type=organization)
+        if organization == "college":
+            queryset = queryset.filter(group__college_branch=college_branch_for_request(self.request))
+        return queryset
 
     def create(self, request, *args, **kwargs):
         if request.user.role not in {User.ROLE_ADMIN, User.ROLE_MENTOR}:
@@ -921,7 +1680,7 @@ class LessonViewSet(viewsets.ModelViewSet):
         serializer = self.get_serializer(data=request.data)
         serializer.is_valid(raise_exception=True)
         group = serializer.validated_data["group"]
-        get_manageable_group(request.user, group.pk)
+        get_object_or_404(manageable_groups_for_user(request.user), pk=group.pk, organization_type=organization_for_request(request))
         self.perform_create(serializer)
         headers = self.get_success_headers(serializer.data)
         return Response(serializer.data, status=status.HTTP_201_CREATED, headers=headers)
@@ -940,15 +1699,15 @@ class LessonViewSet(viewsets.ModelViewSet):
         if request.user.role not in {User.ROLE_ADMIN, User.ROLE_MENTOR}:
             raise PermissionDenied
         lesson = self.get_object()
-        get_manageable_group(request.user, lesson.group_id)
+        get_object_or_404(manageable_groups_for_user(request.user), pk=lesson.group_id, organization_type=organization_for_request(request))
         return super().destroy(request, *args, **kwargs)
 
     def _update_lesson(self, request, partial):
         lesson = self.get_object()
-        get_manageable_group(request.user, lesson.group_id)
+        get_object_or_404(manageable_groups_for_user(request.user), pk=lesson.group_id, organization_type=organization_for_request(request))
         serializer = self.get_serializer(lesson, data=request.data, partial=partial)
         serializer.is_valid(raise_exception=True)
         group = serializer.validated_data.get("group", lesson.group)
-        get_manageable_group(request.user, group.pk)
+        get_object_or_404(manageable_groups_for_user(request.user), pk=group.pk, organization_type=organization_for_request(request))
         self.perform_update(serializer)
         return Response(serializer.data)

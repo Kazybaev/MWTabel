@@ -1,4 +1,7 @@
+import { useRef } from "react";
+
 import { formatMonthLabel } from "../lib/format";
+import { AgrarianGradeCellContent } from "./AgrarianGradeCellContent";
 import { Button, Panel } from "./Ui";
 
 function cellKey(studentId, date) {
@@ -54,7 +57,9 @@ export function GradebookMatrix({
   adminMode = false,
   lockedMode = false,
   studentMode = false,
+  onOpenAgrarianCell,
 }) {
+  const scrollContainerRef = useRef(null);
   const saveMessage =
     {
       pending: "Есть изменения. Сохраняем автоматически...",
@@ -62,6 +67,16 @@ export function GradebookMatrix({
       error: "Не удалось сохранить. Следующее изменение попробует снова.",
       synced: dirty ? "Изменения готовы к сохранению..." : "Все изменения сохраняются автоматически.",
     }[saveStatus] || "Все изменения сохраняются автоматически.";
+
+  function scrollTable(direction) {
+    const container = scrollContainerRef.current;
+    if (!container) return;
+
+    container.scrollBy({
+      left: direction * Math.max(container.clientWidth * 0.72, 280),
+      behavior: "smooth",
+    });
+  }
 
   return (
     <div
@@ -123,7 +138,21 @@ export function GradebookMatrix({
           </div>
         }
       >
-        <div className={`gradebook-scroll gradebook-scroll--matrix ${lockedMode ? "gradebook-scroll--locked" : ""}`.trim()}>
+        {studentMode ? (
+          <div className="gradebook-scroll-controls" aria-label="Управление прокруткой табеля">
+            <span>Листайте табель вправо и влево</span>
+            <div className="gradebook-scroll-controls__buttons">
+              <button type="button" onClick={() => scrollTable(-1)} aria-label="Прокрутить табель влево">
+                <svg viewBox="0 0 24 24" aria-hidden="true"><path d="m15 18-6-6 6-6" /></svg>
+              </button>
+              <button type="button" onClick={() => scrollTable(1)} aria-label="Прокрутить табель вправо">
+                <svg viewBox="0 0 24 24" aria-hidden="true"><path d="m9 18 6-6-6-6" /></svg>
+              </button>
+            </div>
+          </div>
+        ) : null}
+
+        <div ref={scrollContainerRef} className={`gradebook-scroll gradebook-scroll--matrix ${lockedMode ? "gradebook-scroll--locked" : ""} ${studentMode ? "gradebook-scroll--student" : ""}`.trim()} tabIndex="0" aria-label="Таблица оценок с горизонтальной прокруткой">
           <table className="gradebook-table">
             <thead>
               <tr>
@@ -176,7 +205,20 @@ export function GradebookMatrix({
                           .filter(Boolean)
                           .join(" ")}
                       >
-                        {data.can_edit ? (
+                        {data.agrarian_features && data.can_edit ? (
+                          <button
+                            type="button"
+                            className="agrarian-cell-button"
+                            onClick={() => onOpenAgrarianCell?.(row.student, cell)}
+                            aria-label={`Оценки и достижения: ${row.student.full_name}, ${cell.date}`}
+                          >
+                            <AgrarianGradeCellContent
+                              entries={cell.grade_entries}
+                              bestGrade={cell.best_grade}
+                              count={cell.grade_count}
+                            />
+                          </button>
+                        ) : data.can_edit ? (
                           <select
                             className={[
                               "grade-select",
@@ -208,7 +250,7 @@ export function GradebookMatrix({
           </table>
         </div>
 
-        {data.can_edit ? (
+        {data.can_edit && !data.agrarian_features ? (
           <div className="gradebook-toolbar">
             <span className={`gradebook-toolbar__status gradebook-toolbar__status--${saveStatus}`}>{saveMessage}</span>
           </div>

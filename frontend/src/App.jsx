@@ -9,12 +9,14 @@ import { matchPath, navigateTo, parseHashLocation } from "./lib/router";
 import { DashboardPage } from "./pages/DashboardPage";
 import { ArchivedStudentsPage } from "./pages/ArchivedStudentsPage";
 import { GradebookPage } from "./pages/GradebookPage";
+import { CollegeGradebookPage } from "./pages/CollegeGradebookPage";
 import { GroupDetailPage } from "./pages/GroupDetailPage";
 import { GroupsPage } from "./pages/GroupsPage";
 import { LoginPage } from "./pages/LoginPage";
 import { MentorsPage } from "./pages/MentorsPage";
 import { ReportConversationsPage } from "./pages/ReportConversationsPage";
 import { StudentsPage } from "./pages/StudentsPage";
+import { StudentGradebookPage } from "./pages/StudentGradebookPage";
 
 const emptyMeta = {
   study_day_choices: [],
@@ -31,6 +33,20 @@ function defaultPathForUser(user) {
   }
 
   return "/dashboard";
+}
+
+function organizationForUser(user, { useStored = true } = {}) {
+  const organizations = user?.organizations || [];
+  if (organizations.length === 1) {
+    return organizations[0];
+  }
+
+  const storedOrganization = window.localStorage.getItem("tabel.organization");
+  if (useStored && storedOrganization && organizations.includes(storedOrganization)) {
+    return storedOrganization;
+  }
+
+  return organizations.includes("academy") ? "academy" : organizations[0] || "academy";
 }
 
 function NotFoundPage() {
@@ -53,6 +69,9 @@ function buildNotice(message, tone = "info") {
 
 function App() {
   const [session, setSession] = useState(() => readStoredSession());
+  const [theme, setTheme] = useState(() => window.localStorage.getItem("tabel.theme") || "light");
+  const [organization, setOrganization] = useState(() => window.localStorage.getItem("tabel.organization") || "academy");
+  const [collegeBranch, setCollegeBranch] = useState(() => window.localStorage.getItem("tabel.collegeBranch") || "kuwait");
   const [route, setRoute] = useState(() => parseHashLocation());
   const [meta, setMeta] = useState(emptyMeta);
   const [mentorGroups, setMentorGroups] = useState([]);
@@ -60,6 +79,12 @@ function App() {
   const [authLoading, setAuthLoading] = useState(false);
   const [authError, setAuthError] = useState("");
   const [bootstrapping, setBootstrapping] = useState(Boolean(readStoredSession()?.access));
+
+  useEffect(() => {
+    const nextTheme = theme === "dark" ? "dark" : "light";
+    document.documentElement.dataset.theme = nextTheme;
+    window.localStorage.setItem("tabel.theme", nextTheme);
+  }, [theme]);
 
   function updateSession(nextSession) {
     if (!nextSession) {
@@ -84,9 +109,23 @@ function App() {
     return apiRequest(path, {
       ...options,
       session,
+      organization,
+      collegeBranch,
       onSessionChange: updateSession,
       onUnauthorized: handleUnauthorized,
     });
+  }
+
+  function changeOrganization(value) {
+    window.localStorage.setItem("tabel.organization", value);
+    setOrganization(value);
+    window.location.reload();
+  }
+
+  function changeCollegeBranch(value) {
+    window.localStorage.setItem("tabel.collegeBranch", value);
+    setCollegeBranch(value);
+    window.location.reload();
   }
 
   const syncUserProfile = useEffectEvent(async () => {
@@ -101,6 +140,13 @@ function App() {
         onSessionChange: updateSession,
         onUnauthorized: handleUnauthorized,
       });
+      const userOrganization = organizationForUser(user);
+      if (user.college_branch) {
+        window.localStorage.setItem("tabel.collegeBranch", user.college_branch);
+        setCollegeBranch(user.college_branch);
+      }
+      window.localStorage.setItem("tabel.organization", userOrganization);
+      setOrganization(userOrganization);
       updateSession({ ...session, user });
     } catch {
       // handled by apiRequest
@@ -219,6 +265,13 @@ function App() {
         session: nextSession,
       });
       const finalSession = { ...nextSession, user };
+      const userOrganization = organizationForUser(user, { useStored: false });
+      if (user.college_branch) {
+        window.localStorage.setItem("tabel.collegeBranch", user.college_branch);
+        setCollegeBranch(user.college_branch);
+      }
+      window.localStorage.setItem("tabel.organization", userOrganization);
+      setOrganization(userOrganization);
       updateSession(finalSession);
       setNotice(buildNotice("Вы вошли в систему.", "success"));
       startTransition(() => navigateTo(defaultPathForUser(user)));
@@ -251,11 +304,13 @@ function App() {
   function renderAuthenticatedPage() {
     const gradebookRoute = matchPath("/groups/:id/gradebook", route.path);
     const groupRoute = matchPath("/groups/:id", route.path);
+    const studentGradebookRoute = matchPath("/students/:id/gradebook", route.path);
 
     if (route.path === "/dashboard") {
       if (session.user.role === "MENTOR") {
         return (
           <GroupsPage
+            organization={organization}
             api={callApi}
             meta={meta}
             sessionToken={session.access}
@@ -271,6 +326,7 @@ function App() {
     if (route.path === "/groups") {
       return (
         <GroupsPage
+            organization={organization}
           api={callApi}
           meta={meta}
           sessionToken={session.access}
@@ -281,7 +337,19 @@ function App() {
     }
 
     if (route.path === "/students") {
-      return <StudentsPage api={callApi} sessionToken={session.access} user={session.user} onNotice={setNotice} />;
+      return <StudentsPage api={callApi} sessionToken={session.access} user={session.user} onNotice={setNotice} organization={organization} collegeBranch={collegeBranch} />;
+    }
+
+    if (studentGradebookRoute) {
+      return (
+        <StudentGradebookPage
+          api={callApi}
+          sessionToken={session.access}
+          studentId={Number(studentGradebookRoute.id)}
+          routeMonth={route.query.month}
+          onNotice={setNotice}
+        />
+      );
     }
 
     if (route.path === "/archive") {
@@ -289,14 +357,17 @@ function App() {
     }
 
     if (route.path === "/mentors") {
-      return <MentorsPage api={callApi} sessionToken={session.access} user={session.user} onNotice={setNotice} />;
+      return <MentorsPage api={callApi} sessionToken={session.access} user={session.user} onNotice={setNotice} organization={organization} />;
     }
 
     if (route.path === "/reports") {
-      return <ReportConversationsPage api={callApi} sessionToken={session.access} user={session.user} />;
+      return <ReportConversationsPage api={callApi} sessionToken={session.access} user={session.user} organization={organization} />;
     }
 
     if (route.path === "/my-grades") {
+      if (organization === "college") {
+        return <CollegeGradebookPage api={callApi} sessionToken={session.access} routeMonth={route.query.month} />;
+      }
       return (
         <GradebookPage
           api={callApi}
@@ -318,6 +389,7 @@ function App() {
           groupId={Number(gradebookRoute.id)}
           routeMonth={route.query.month}
           onNotice={setNotice}
+          archived={route.query.archived === "1"}
         />
       );
     }
@@ -342,6 +414,7 @@ function App() {
           sessionToken={session.access}
           user={session.user}
           groupId={Number(groupRoute.id)}
+          archived={route.query.archived === "1"}
           onNotice={setNotice}
         />
       );
@@ -377,6 +450,12 @@ function App() {
       onLogout={handleLogout}
       mentorGroups={mentorGroups}
       lockedContent={lockedContent}
+      organization={organization}
+      onOrganizationChange={changeOrganization}
+      collegeBranch={collegeBranch}
+      onCollegeBranchChange={changeCollegeBranch}
+      theme={theme}
+      onThemeChange={() => setTheme((current) => (current === "dark" ? "light" : "dark"))}
     >
       {renderAuthenticatedPage()}
     </AppShell>

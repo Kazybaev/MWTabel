@@ -3,13 +3,13 @@ services:
     image: postgres:16-alpine
     restart: unless-stopped
     environment:
-      POSTGRES_DB: ${DB_POSTGRES:-tabel}
-      POSTGRES_USER: ${DB_USER:-tabel}
-      POSTGRES_PASSWORD: ${DB_PASSWORD:-tabel}
+      POSTGRES_DB: ${DB_POSTGRES:?DB_POSTGRES is required}
+      POSTGRES_USER: ${DB_USER:?DB_USER is required}
+      POSTGRES_PASSWORD: ${DB_PASSWORD:?DB_PASSWORD is required}
     volumes:
       - postgres_data:/var/lib/postgresql/data
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U ${DB_USER:-tabel} -d ${DB_POSTGRES:-tabel}"]
+      test: ["CMD-SHELL", "pg_isready -U ${DB_USER} -d ${DB_POSTGRES}"]
       interval: 10s
       timeout: 5s
       retries: 5
@@ -20,25 +20,94 @@ services:
       dockerfile: Dockerfile
     restart: unless-stopped
     env_file:
-      - .env
+      - ${ENV_FILE:-.env}
     environment:
       DEBUG: "False"
       DB_ENGINE: postgresql
       DB_HOST: db
       DB_PORT: 5432
       USE_X_FORWARDED_HOST: "True"
+      AUTO_MONTHLY_REPORTS: "false"
+      REPORT_SCHEDULER_RUN_ON_START: "false"
+      DIFY_API_KEY: ${DIFY_API_KEY:?DIFY_API_KEY must be configured}
     depends_on:
       db:
         condition: service_healthy
+    networks:
+      - default
+      - dify_internal
+    healthcheck:
+      test: ["CMD", "curl", "-fsS", "http://localhost:8000/api-info/"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
     volumes:
       - static_volume:/app/tabel_project/staticfiles
       - frontend_dist:/vol/frontend
+
+  report-worker:
+    profiles: ["reports"]
+    build:
+      context: .
+      dockerfile: Dockerfile
+    restart: unless-stopped
+    entrypoint: ["/report-worker-entrypoint.sh"]
+    command: ["python", "manage.py", "process_report_queue"]
+    env_file:
+      - ${ENV_FILE:-.env}
+    environment:
+      DEBUG: "False"
+      DB_ENGINE: postgresql
+      DB_HOST: db
+      DB_PORT: 5432
+      AUTO_MONTHLY_REPORTS: "false"
+      REPORT_SCHEDULER_RUN_ON_START: "false"
+      REPORT_WORKER_ENABLED: ${REPORT_WORKER_ENABLED:-false}
+      REPORT_WORKER_MODE: continuous
+      REPORT_LEGACY_QUEUE_REVIEWED: ${REPORT_LEGACY_QUEUE_REVIEWED:-false}
+      DIFY_API_KEY: ${DIFY_API_KEY:?DIFY_API_KEY must be configured}
+    depends_on:
+      db:
+        condition: service_healthy
+    networks:
+      - default
+      - dify_internal
+
+  report-recovery-worker:
+    profiles: ["report-recovery"]
+    build:
+      context: .
+      dockerfile: Dockerfile
+    restart: "no"
+    entrypoint: ["/report-worker-entrypoint.sh"]
+    command: ["python", "manage.py", "process_report_queue", "--once"]
+    env_file:
+      - ${ENV_FILE:-.env}
+    environment:
+      DEBUG: "False"
+      DB_ENGINE: postgresql
+      DB_HOST: db
+      DB_PORT: 5432
+      AUTO_MONTHLY_REPORTS: "false"
+      REPORT_SCHEDULER_RUN_ON_START: "false"
+      REPORT_WORKER_ENABLED: ${REPORT_WORKER_ENABLED:-false}
+      REPORT_WORKER_MODE: recovery
+      REPORT_RECOVERY_BATCH_IDS: ${REPORT_RECOVERY_BATCH_IDS:-}
+      DIFY_API_KEY: ${DIFY_API_KEY:?DIFY_API_KEY must be configured}
+    depends_on:
+      db:
+        condition: service_healthy
+    networks:
+      - default
+      - dify_internal
 
   nginx:
     image: nginx:1.27-alpine
     restart: unless-stopped
     depends_on:
-      - web
+      web:
+        condition: service_healthy
     ports:
       - "80:80"
       - "443:443" 
@@ -52,3 +121,8 @@ volumes:
   postgres_data:
   static_volume:
   frontend_dist:
+
+networks:
+  dify_internal:
+    external: true
+    name: docker_default

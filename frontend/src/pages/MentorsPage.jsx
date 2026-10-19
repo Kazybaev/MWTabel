@@ -3,16 +3,19 @@ import { useDeferredValue, useState } from "react";
 import { useResource } from "../lib/useResource";
 import { Badge, Button, EmptyState, ErrorBlock, LoadingBlock, Modal, Panel, TextField } from "../components/Ui";
 
-function createEmptyMentor() {
+function createEmptyMentor(organization = "academy") {
   return {
     full_name: "",
     username: "",
     email: "",
     password: "",
+    organizations: [organization],
   };
 }
 
-export function MentorsPage({ api, sessionToken, user, onNotice }) {
+const organizationLabels = { academy: "Академия", college: "Колледж" };
+
+export function MentorsPage({ api, sessionToken, user, onNotice, organization = "academy" }) {
   const { data, error, loading, reload } = useResource(() => api("/api/mentors/"), [sessionToken]);
   const [search, setSearch] = useState("");
   const [editorOpen, setEditorOpen] = useState(false);
@@ -28,7 +31,7 @@ export function MentorsPage({ api, sessionToken, user, onNotice }) {
 
   function openCreate() {
     setEditingId(null);
-    setDraft(createEmptyMentor());
+    setDraft(createEmptyMentor(organization));
     setEditorOpen(true);
   }
 
@@ -39,6 +42,7 @@ export function MentorsPage({ api, sessionToken, user, onNotice }) {
       username: mentor.username,
       email: mentor.email || "",
       password: "",
+      organizations: mentor.organizations || [mentor.organization_type],
     });
     setEditorOpen(true);
   }
@@ -66,6 +70,21 @@ export function MentorsPage({ api, sessionToken, user, onNotice }) {
     } finally {
       setSaving(false);
     }
+  }
+
+  function toggleOrganization(value) {
+    setDraft((current) => {
+      const selected = current.organizations.includes(value);
+      if (selected && current.organizations.length === 1) {
+        return current;
+      }
+      return {
+        ...current,
+        organizations: selected
+          ? current.organizations.filter((item) => item !== value)
+          : [...current.organizations, value],
+      };
+    });
   }
 
   async function handleDelete() {
@@ -132,6 +151,7 @@ export function MentorsPage({ api, sessionToken, user, onNotice }) {
               <div key={mentor.id} className="list-card list-card--actions">
                 <div>
                   <strong>{mentor.full_name}</strong>
+                  <p>{(mentor.organizations || [mentor.organization_type]).map((item) => organizationLabels[item]).join(" · ")}</p>
                   <p>{mentor.email || "Доступ к аккаунту ментора настроен"}</p>
                 </div>
                 <div className="list-card__actions">
@@ -197,6 +217,23 @@ export function MentorsPage({ api, sessionToken, user, onNotice }) {
             autoComplete="off"
             disableAutoFill
           />
+          <div className="field form-grid__full">
+            <span className="field__label">Место работы</span>
+            <div className="organization-switcher" role="group" aria-label="Место работы ментора">
+              {Object.entries(organizationLabels).map(([value, label]) => (
+                <button
+                  key={value}
+                  type="button"
+                  className={draft.organizations.includes(value) ? "organization-switcher__button organization-switcher__button--active" : "organization-switcher__button"}
+                  aria-pressed={draft.organizations.includes(value)}
+                  onClick={() => toggleOrganization(value)}
+                >
+                  {label}
+                </button>
+              ))}
+            </div>
+            <small className="field__help">Можно выбрать Академию, Колледж или оба направления.</small>
+          </div>
           <TextField
             label="Пароль"
             name="mentor_profile_secret_value"

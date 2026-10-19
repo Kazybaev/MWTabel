@@ -201,6 +201,34 @@ export function SelectField({ label, value, onChange, options, required = false 
   );
 }
 
+export function MultiSelectField({ label, values = [], onChange, options, max, required = false }) {
+  const selectedLabels = options.filter((option) => values.includes(String(option.value))).map((option) => option.label);
+  function toggle(value) {
+    const normalized = String(value);
+    if (values.includes(normalized)) onChange(values.filter((item) => item !== normalized));
+    else if (!max || values.length < max) onChange([...values, normalized]);
+  }
+  return (
+    <div className="form-field">
+      <span>{label}</span>
+      <details className="multi-select-field">
+        <summary>{selectedLabels.length ? selectedLabels.join(", ") : "Выберите варианты"}<small>{max ? `${values.length}/${max}` : `Выбрано: ${values.length}`}</small></summary>
+        <div className="multi-select-field__menu">
+          {options.map((option) => {
+            const checked = values.includes(String(option.value));
+            const disabled = Boolean(max) && !checked && values.length >= max;
+            return <label key={option.value} className={disabled ? "multi-select-field__option multi-select-field__option--disabled" : "multi-select-field__option"}>
+              <input type="checkbox" checked={checked} disabled={disabled} onChange={() => toggle(option.value)} />
+              <span>{option.label}</span>
+            </label>;
+          })}
+        </div>
+      </details>
+      <small>{required ? (max ? `Выберите от 1 до ${max} вариантов.` : "Выберите один или несколько вариантов.") : (max ? `Можно выбрать до ${max} вариантов.` : "Можно выбрать любое количество вариантов.")}</small>
+    </div>
+  );
+}
+
 export function Modal({ open, title, description, children, footer, onClose }) {
   if (!open) {
     return null;

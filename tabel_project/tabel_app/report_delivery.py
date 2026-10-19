@@ -8,15 +8,23 @@ from typing import Any
 from django.db import transaction
 from django.utils import timezone
 
-from .models import MonthlyStudentReportAttempt, MonthlyStudentReportDispatch
+from .models import (
+    MonthlyStudentReportAttempt,
+    MonthlyStudentReportBatchItem,
+    MonthlyStudentReportDispatch,
+    StudentProfile,
+)
 
 
 logger = logging.getLogger("tabel_app.reports")
 
 
 def build_report_message_text(payload: dict[str, Any]) -> str:
+    if payload.get("message_text"):
+        return payload["message_text"]
     student = payload.get("student", {})
     group = payload.get("group", {})
+    groups = payload.get("groups") or []
     period = payload.get("period", {})
     summary = payload.get("summary", {})
     month_names = {
@@ -50,7 +58,7 @@ def build_report_message_text(payload: dict[str, Any]) -> str:
     return (
         "Саламатсызбы!\n"
         "Сиз менен Motion Web IT академиясынан байланышып жатабыз ✅\n\n"
-        f"Сизге {group.get('course_name', '')}-группанын студенти "
+        f"Сизге {', '.join(item.get('course_name', '') for item in groups) or group.get('course_name', '')}-группанын студенти "
         f"{student.get('full_name', '')} окуусу тууралуу маалымат бере кетели 📊\n\n"
         f"{month_label} айындагы баалары:\n"
         f"{grades_text}\n\n"
@@ -67,20 +75,71 @@ def record_meta_delivery_callback(
     report_payload = delivery["report"]
     student_id = int(report_payload["student"]["id"])
     month = datetime.strptime(report_payload["period"]["month"], "%Y-%m").date().replace(day=1)
+    correlation = report_payload.get("correlation")
+    if not isinstance(correlation, dict):
+        raise ValueError("delivery.report.correlation is required")
+    dispatch_id = int(correlation["dispatch_id"])
+    attempt_id = int(correlation["attempt_id"])
+    batch_item_id = correlation.get("batch_item_id")
+    if batch_item_id is not None:
+        batch_item_id = int(batch_item_id)
+
+    if not isinstance(meta_response, dict):
+        raise TypeError("meta_response must be a JSON object")
+    messages = meta_response.get("messages")
+    first_message = messages[0] if isinstance(messages, list) and messages and isinstance(messages[0], dict) else {}
+    meta_message_id = str(first_message.get("id") or "").strip()
+    message_status = str(first_message.get("message_status") or "").strip().lower()
+    if 200 <= meta_status_code < 300 and (not meta_message_id or not message_status):
+        raise ValueError("Meta message id and message_status are required for a successful HTTP response")
+    if not message_status:
+        message_status = "failed"
     received_at = timezone.now()
 
     with transaction.atomic():
-        dispatch = (
-            MonthlyStudentReportDispatch.objects.select_for_update()
-            .select_related("student__user")
-            .get(student_id=student_id, month=month)
+        attempt = (
+            MonthlyStudentReportAttempt.objects.select_for_update()
+            .select_related("dispatch__student__user")
+            .get(pk=attempt_id, dispatch_id=dispatch_id)
         )
-        stored_response = dispatch.response_payload if isinstance(dispatch.response_payload, dict) else {}
+        dispatch = MonthlyStudentReportDispatch.objects.select_for_update().get(pk=attempt.dispatch_id)
+        if dispatch.student_id != student_id or dispatch.month != month:
+            raise ValueError("Callback correlation does not match student and month")
+        item = None
+        if batch_item_id is not None:
+            item = MonthlyStudentReportBatchItem.objects.select_for_update().get(
+                pk=batch_item_id,
+                dispatch=dispatch,
+                attempt=attempt,
+                student_id=student_id,
+                month=month,
+            )
+        elif MonthlyStudentReportBatchItem.objects.filter(attempt=attempt).exists():
+            raise ValueError("Callback correlation is missing the linked batch item")
+        duplicate_owner = bool(meta_message_id) and MonthlyStudentReportAttempt.objects.filter(
+            meta_message_id=meta_message_id
+        ).exclude(pk=attempt.pk).exists()
+        if duplicate_owner:
+            raise ValueError("Meta message id is already assigned to another attempt")
+
+        stored_response = attempt.response_payload if isinstance(attempt.response_payload, dict) else {}
         previous_meta = stored_response.get("meta") if isinstance(stored_response.get("meta"), dict) else {}
         duplicate = (
-            previous_meta.get("status_code") == meta_status_code
+            attempt.meta_message_id == meta_message_id
+            and previous_meta.get("status_code") == meta_status_code
             and previous_meta.get("response") == meta_response
         )
+        if previous_meta.get("callback_received") and not duplicate:
+            raise ValueError("Attempt already has a different successful callback")
+        if duplicate:
+            return dispatch, True
+
+        if 200 <= meta_status_code < 300 and message_status == "accepted":
+            delivery_status = MonthlyStudentReportDispatch.STATUS_ACCEPTED
+        elif 200 <= meta_status_code < 300 and message_status == "delivered":
+            delivery_status = MonthlyStudentReportDispatch.STATUS_DELIVERED
+        else:
+            delivery_status = MonthlyStudentReportDispatch.STATUS_FAILED
 
         response_payload = dict(stored_response)
         response_payload["meta"] = {
@@ -89,30 +148,39 @@ def record_meta_delivery_callback(
             "status_code": meta_status_code,
             "request": delivery.get("meta_request", {}),
             "response": meta_response,
+            "message_id": meta_message_id,
+            "message_status": message_status,
             "rendered_text": delivery.get("rendered_text") or build_report_message_text(report_payload),
             "received_at": received_at.isoformat(),
         }
 
-        succeeded = 200 <= meta_status_code < 300
-        dispatch.response_payload = response_payload
-        dispatch.status = (
-            MonthlyStudentReportDispatch.STATUS_SUCCEEDED
-            if succeeded
-            else MonthlyStudentReportDispatch.STATUS_FAILED
+        error_message = "" if delivery_status != MonthlyStudentReportDispatch.STATUS_FAILED else (
+            f"Meta returned HTTP {meta_status_code} with message_status '{message_status}'."
         )
-        dispatch.error_message = "" if succeeded else f"Meta returned HTTP {meta_status_code}."
-        if succeeded and dispatch.sent_at is None:
-            dispatch.sent_at = received_at
-        dispatch.save(update_fields=["status", "response_payload", "error_message", "sent_at", "updated_at"])
-        attempt = dispatch.delivery_attempts.order_by("-attempt_number", "-id").first()
-        if attempt is not None:
-            attempt.response_payload = response_payload
-            attempt.status = dispatch.status
-            attempt.error_message = dispatch.error_message
-            attempt.sent_at = dispatch.sent_at
-            attempt.save(
-                update_fields=["status", "response_payload", "error_message", "sent_at", "updated_at"]
-            )
+        sent_at = received_at if delivery_status in MonthlyStudentReportDispatch.SUCCESSFUL_STATUSES else None
+        attempt.response_payload = response_payload
+        attempt.status = delivery_status
+        attempt.error_message = error_message
+        attempt.sent_at = attempt.sent_at or sent_at
+        attempt.meta_message_id = meta_message_id or None
+        attempt.message_status = message_status
+        attempt.save(update_fields=[
+            "status", "response_payload", "error_message", "sent_at", "meta_message_id", "message_status", "updated_at"
+        ])
+
+        if attempt.attempt_number == dispatch.attempts:
+            dispatch.response_payload = response_payload
+            dispatch.status = delivery_status
+            dispatch.error_message = error_message
+            dispatch.sent_at = dispatch.sent_at or sent_at
+            dispatch.save(update_fields=["status", "response_payload", "error_message", "sent_at", "updated_at"])
+
+        if item is not None:
+            item.status = delivery_status
+            item.error_message = error_message
+            item.finished_at = received_at
+            item.worker_token = None
+            item.save(update_fields=["status", "error_message", "finished_at", "worker_token", "updated_at"])
 
     logger.info(
         "Meta callback stored: dispatch_id=%s student_id=%s month=%s status=%s duplicate=%s",
@@ -122,6 +190,10 @@ def record_meta_delivery_callback(
         meta_status_code,
         duplicate,
     )
+    if batch_item_id is not None:
+        from .report_queue import refresh_batch_status
+
+        refresh_batch_status(item.batch_id)
     return dispatch, duplicate
 
 
@@ -167,13 +239,19 @@ def serialize_report_attempt(attempt: MonthlyStudentReportAttempt) -> dict[str, 
     }
 
 
-def build_report_conversations() -> list[dict[str, Any]]:
-    attempts = list(
-        MonthlyStudentReportAttempt.objects.select_related(
+def build_report_conversations(
+    organization_type: str | None = None,
+    college_branch: str | None = None,
+) -> list[dict[str, Any]]:
+    attempts_queryset = MonthlyStudentReportAttempt.objects.select_related(
             "dispatch__student__user",
             "dispatch__student__group",
-        ).order_by("dispatch__student_id", "-created_at", "-id")
-    )
+        )
+    if organization_type:
+        attempts_queryset = attempts_queryset.filter(dispatch__student__organization_type=organization_type)
+    if college_branch:
+        attempts_queryset = attempts_queryset.filter(dispatch__student__college_branch=college_branch)
+    attempts = list(attempts_queryset.order_by("dispatch__student_id", "-created_at", "-id"))
     message_counts = Counter(attempt.dispatch.student_id for attempt in attempts)
     conversations = []
     seen_students = set()
@@ -193,6 +271,27 @@ def build_report_conversations() -> list[dict[str, Any]]:
                 "latest_month": dispatch.month.strftime("%Y-%m"),
                 "latest_at": attempt.updated_at,
                 "messages_count": message_counts[dispatch.student_id],
+            }
+        )
+    student_queryset = StudentProfile.objects.select_related("user", "group").filter(archived_at__isnull=True)
+    if organization_type:
+        student_queryset = student_queryset.filter(organization_type=organization_type)
+    if college_branch:
+        student_queryset = student_queryset.filter(college_branch=college_branch)
+    for student in student_queryset:
+        if student.pk in seen_students:
+            continue
+        conversations.append(
+            {
+                "student_id": student.pk,
+                "student_name": student.user.full_name,
+                "parent_name": student.parent_name,
+                "parent_phone": str(student.parent_phone),
+                "group_name": student.group.course_name,
+                "latest_status": "not_sent",
+                "latest_month": None,
+                "latest_at": None,
+                "messages_count": 0,
             }
         )
     return conversations

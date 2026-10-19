@@ -1,6 +1,7 @@
 import { useEffect, useEffectEvent, useRef, useState } from "react";
 
 import { GradebookMatrix } from "../components/GradebookMatrix";
+import { AgrarianRecordModal } from "../components/AgrarianRecordModal";
 import { Button, EmptyState, ErrorBlock, LoadingBlock } from "../components/Ui";
 import { buildGradeMap, toMonthValue } from "../lib/format";
 import { navigateTo } from "../lib/router";
@@ -37,13 +38,14 @@ function serializeGradeMap(gradeMap = {}) {
   );
 }
 
-export function GradebookPage({ api, sessionToken, user, groupId, routeMonth, onNotice, mode = "group" }) {
+export function GradebookPage({ api, sessionToken, user, groupId, routeMonth, onNotice, mode = "group", archived = false }) {
   const resolvedGroupId = mode === "student" ? user.group_id : groupId;
   const monthValue = routeMonth || toMonthValue();
   const lockedGradebook = mode === "student" || user.role === "MENTOR" || user.role === "ADMIN";
   const [draftGrades, setDraftGrades] = useState({});
   const [persistedGrades, setPersistedGrades] = useState({});
   const [saveStatus, setSaveStatus] = useState("synced");
+  const [agrarianTarget, setAgrarianTarget] = useState(null);
   const saveTimerRef = useRef(null);
   const saveRequestIdRef = useRef(0);
   const latestDraftSignatureRef = useRef(serializeGradeMap({}));
@@ -53,9 +55,9 @@ export function GradebookPage({ api, sessionToken, user, groupId, routeMonth, on
       if (!resolvedGroupId) {
         return Promise.resolve(null);
       }
-      return api(`/api/groups/${resolvedGroupId}/gradebook/?month=${monthValue}`);
+      return api(`/api/groups/${resolvedGroupId}/gradebook/?month=${monthValue}${archived ? "&archived=1" : ""}`);
     },
-    [sessionToken, resolvedGroupId, monthValue],
+    [sessionToken, resolvedGroupId, monthValue, archived],
   );
 
   useEffect(() => {
@@ -94,7 +96,7 @@ export function GradebookPage({ api, sessionToken, user, groupId, routeMonth, on
   }
 
   const persistSnapshot = useEffectEvent(async (snapshot, requestId) => {
-    if (!resolvedGroupId || !data?.can_edit) {
+    if (!resolvedGroupId || !data?.can_edit || data?.agrarian_features) {
       return;
     }
 
@@ -181,6 +183,7 @@ export function GradebookPage({ api, sessionToken, user, groupId, routeMonth, on
   }
 
   return (
+    <>
     <GradebookMatrix
       data={data}
       draftGrades={draftGrades}
@@ -194,6 +197,21 @@ export function GradebookPage({ api, sessionToken, user, groupId, routeMonth, on
       adminMode={user.role === "ADMIN"}
       lockedMode={lockedGradebook}
       studentMode={mode === "student"}
+      onOpenAgrarianCell={(student, cell) => setAgrarianTarget({
+        student,
+        groupId: resolvedGroupId,
+        date: cell.date,
+        entries: cell.grade_entries || [],
+      })}
     />
+    <AgrarianRecordModal
+      api={api}
+      target={agrarianTarget}
+      gradeChoices={data.grade_choices}
+      onClose={() => setAgrarianTarget(null)}
+      onChanged={reload}
+      onNotice={onNotice}
+    />
+    </>
   );
 }
