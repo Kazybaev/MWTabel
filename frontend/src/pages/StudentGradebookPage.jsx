@@ -97,6 +97,7 @@ function StudentGradebookEditor({ api, data, month, onNotice, setData }) {
       </section>
 
       <div className="metric-grid student-gradebook__summary">
+        {!data.can_edit ? <Badge tone="slate">Архив · Только просмотр</Badge> : null}
         <Badge tone="blue">Предметов: {data.student.groups_count}</Badge>
         <Badge tone="teal">Оценок: {data.rows.reduce((sum, row) => sum + row.grades_count, 0)}</Badge>
         <Badge tone="sand">Посещений: {data.rows.reduce((sum, row) => sum + row.attendance_count, 0)}</Badge>
@@ -106,7 +107,7 @@ function StudentGradebookEditor({ api, data, month, onNotice, setData }) {
       <Panel
         eyebrow="Все предметы"
         title="Оценки и посещаемость"
-        description="Каждая строка — отдельная группа студента. Измените оценку в нужный день и сохраните табель."
+        description={data.can_edit ? "Каждая строка — отдельная группа студента. Измените оценку в нужный день и сохраните табель." : "Архивный табель: оценки и посещаемость сохранены. Доступен только просмотр."}
         actions={
           <div className="month-actions">
             <Button variant="ghost" onClick={() => navigateTo(`/students/${data.student.id}/gradebook`, { month: data.previous_month })}>← Пред.</Button>
@@ -160,6 +161,7 @@ function StudentGradebookEditor({ api, data, month, onNotice, setData }) {
                           {data.agrarian_features ? (
                             <button
                               type="button"
+                              disabled={!data.can_edit}
                               className="agrarian-cell-button"
                               onClick={() => setAgrarianTarget({
                                 student: data.student,
@@ -176,6 +178,7 @@ function StudentGradebookEditor({ api, data, month, onNotice, setData }) {
                               />
                             </button>
                           ) : <select
+                            disabled={!data.can_edit}
                             className={`grade-select grade-select--${tone} ${value ? "grade-select--filled" : "grade-select--empty"}`}
                             value={value}
                             onChange={(event) => updateGrade(row.group_id, day.date, event.target.value)}
@@ -196,7 +199,7 @@ function StudentGradebookEditor({ api, data, month, onNotice, setData }) {
         ) : (
           <EmptyState title="Группы не назначены" description="Добавьте студенту хотя бы одну группу, чтобы открыть персональный табель." />
         )}
-        {!data.agrarian_features ? <div className="student-gradebook__savebar">
+        {data.can_edit && !data.agrarian_features ? <div className="student-gradebook__savebar">
           <span>{dirty ? "Есть несохранённые изменения" : "Все изменения сохранены"}</span>
           <Button onClick={saveGrades} disabled={!dirty || saving}>{saving ? "Сохраняем..." : "Сохранить табель"}</Button>
         </div> : null}

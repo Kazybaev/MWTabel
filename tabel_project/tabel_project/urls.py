@@ -11,5 +11,5 @@ urlpatterns = [
     path("api/docs/", SpectacularSwaggerView.as_view(url_name="api-schema"), name="api-docs"),
     path("api/redoc/", SpectacularRedocView.as_view(url_name="api-schema"), name="api-redoc"),
     path("", include("tabel_app.urls")),
-    re_path(r"^(?!api/|admin/).*$", frontend_app_view, name="frontend-app"),
+    re_path(r"^(?!api/|admin/)(?P<path>.*)$", frontend_app_view, name="frontend-app"),
 ]

@@ -50,7 +50,7 @@ def move_student_records_to_group(student, old_group, new_group):
     records = list(
         LessonRecord.objects.select_related("lesson")
         .filter(student=student, lesson__group=old_group)
-        .order_by("lesson__lesson_date", "lesson_id")
+        .order_by("lesson__lesson_date", "lesson_id", "sequence", "id")
     )
 
     for record in records:
@@ -67,18 +67,16 @@ def move_student_records_to_group(student, old_group, new_group):
                 topic=source_lesson.topic,
             )
 
-        target_record, _ = LessonRecord.objects.update_or_create(
-            student=student,
-            lesson=target_lesson,
-            sequence=record.sequence,
-            defaults={
-                "grade": record.grade,
-                "comment": record.comment,
-                "author": record.author,
-            },
+        # Several source lessons can share a date. Keep every entry, including
+        # entries already present in the destination, rather than overwriting it.
+        used_sequences = set(
+            LessonRecord.objects.filter(student=student, lesson=target_lesson)
+            .values_list("sequence", flat=True)
         )
-        if target_record.pk != record.pk:
-            record.delete()
+        if record.sequence in used_sequences:
+            record.sequence = max(used_sequences) + 1
+        record.lesson = target_lesson
+        record.save(update_fields=["lesson", "sequence"])
 
 
 class ReportDispatchRequestSerializer(serializers.Serializer):

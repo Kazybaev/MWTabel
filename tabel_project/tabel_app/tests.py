@@ -1,6 +1,7 @@
 import os
 from datetime import date
 from pathlib import Path
+from tempfile import TemporaryDirectory
 from unittest.mock import patch
 
 from django.test import SimpleTestCase, override_settings
@@ -37,6 +38,22 @@ SQLITE_TEST_DATABASES = {
         "NAME": ":memory:",
     }
 }
+
+
+class FrontendAssetRoutingTests(SimpleTestCase):
+    def test_asset_url_serves_javascript_instead_of_html(self):
+        with TemporaryDirectory() as directory:
+            root = Path(directory)
+            (root / "assets").mkdir()
+            (root / "index.html").write_text("<html>Application</html>", encoding="utf-8")
+            (root / "assets" / "app.js").write_text("window.appLoaded = true;", encoding="utf-8")
+            with patch("tabel_app.views.FRONTEND_DIST_DIR", root):
+                response = self.client.get("/assets/app.js")
+                self.assertEqual(response.status_code, 200)
+                self.assertIn("javascript", response["Content-Type"])
+                self.assertEqual(b"".join(response.streaming_content), b"window.appLoaded = true;")
+                response.close()
+                self.assertEqual(self.client.get("/assets/missing.js").status_code, 404)
 
 
 @override_settings(DEBUG=False)
@@ -283,6 +300,102 @@ class TabelApiTests(APITestCase):
         self.assertTrue(
             LessonRecord.objects.filter(student=self.student, lesson=moved_lesson, grade="5").exists()
         )
+
+    def test_restore_preserves_all_entries_when_lessons_share_a_date(self):
+        extra_lesson = Lesson.objects.create(
+            group=self.group, lesson_date=self.lesson.lesson_date, topic="Extra lesson",
+        )
+        records = [
+            LessonRecord.objects.create(
+                student=self.student, lesson=lesson, grade=grade,
+                comment=grade, author=self.mentor.user,
+            )
+            for lesson, grade in [(self.lesson, "5"), (extra_lesson, "Н")]
+        ]
+        new_group = Group.objects.create(
+            course_name="Restore destination", mentor=self.mentor, study_days=Group.TUE_THU_SUN,
+        )
+        target_lesson = Lesson.objects.create(group=new_group, lesson_date=self.lesson.lesson_date)
+        existing = LessonRecord.objects.create(student=self.student, lesson=target_lesson, grade="4")
+        client = self.auth_client("admin", "admin-pass-123")
+        self.assertEqual(client.post(f"/api/students/{self.student.pk}/archive/").status_code, 200)
+        for record in records:
+            record.refresh_from_db()
+            self.assertEqual(record.comment, record.grade)
+        response = client.post(
+            f"/api/students/{self.student.pk}/restore/", {"group": new_group.pk}, format="json",
+        )
+        self.assertEqual(response.status_code, 200)
+        existing.refresh_from_db()
+        self.assertEqual(existing.grade, "4")
+        for record in records:
+            created_at, updated_at = record.created_at, record.updated_at
+            record.refresh_from_db()
+            self.assertEqual(record.lesson_id, target_lesson.pk)
+            self.assertEqual(record.comment, record.grade)
+            self.assertEqual(record.author_id, self.mentor.user_id)
+            self.assertEqual((record.created_at, record.updated_at), (created_at, updated_at))
+        self.assertEqual(LessonRecord.objects.filter(student=self.student).count(), 3)
+        month = self.lesson.lesson_date.strftime("%Y-%m")
+        gradebook = client.get(f"/api/groups/{new_group.pk}/gradebook/?month={month}")
+        self.assertEqual(gradebook.status_code, 200)
+        self.assertEqual(gradebook.data["rows"][0]["student"]["id"], self.student.pk)
+
+    def test_restore_to_same_group_keeps_original_records(self):
+        record = LessonRecord.objects.create(student=self.student, lesson=self.lesson, grade="Н", comment="Absent")
+        client = self.auth_client("admin", "admin-pass-123")
+        client.post(f"/api/students/{self.student.pk}/archive/")
+        response = client.post(
+            f"/api/students/{self.student.pk}/restore/", {"group": self.group.pk}, format="json",
+        )
+        self.assertEqual(response.status_code, 200)
+        record.refresh_from_db()
+        self.assertEqual(record.lesson_id, self.lesson.pk)
+        self.assertEqual((record.grade, record.comment), ("Н", "Absent"))
+
+    def test_group_archive_restore_is_scoped_and_preserves_student_history(self):
+        for organization, branch in [("academy", "kuwait"), ("college", "kuwait"), ("college", "agrarian")]:
+            with self.subTest(organization=organization, branch=branch):
+                self.group.organization_type = organization
+                self.group.college_branch = branch
+                self.group.save()
+                for student in [self.student, self.second_student]:
+                    student.refresh_from_db()
+                    student.organization_type = organization
+                    student.college_branch = branch
+                    student.save()
+                    if organization == "college":
+                        student.college_groups.set([self.group])
+                record = LessonRecord.objects.create(student=self.student, lesson=self.lesson, grade="5")
+                client = self.auth_client("admin", "admin-pass-123")
+                headers = {"HTTP_X_ORGANIZATION_TYPE": organization, "HTTP_X_COLLEGE_BRANCH": branch}
+                client.post(f"/api/students/{self.second_student.pk}/archive/", **headers)
+                response = client.post(f"/api/groups/{self.group.pk}/archive/", **headers)
+                self.assertEqual(response.status_code, 200)
+                archived = client.get("/api/groups/archived/", **headers)
+                self.assertIn(self.group.pk, [group["id"] for group in archived.data])
+                wrong_headers = {"HTTP_X_ORGANIZATION_TYPE": "college" if organization == "academy" else "academy"}
+                self.assertEqual(client.post(f"/api/groups/{self.group.pk}/restore/", **wrong_headers).status_code, 404)
+                if organization == "college":
+                    wrong_branch = {**headers, "HTTP_X_COLLEGE_BRANCH": "agrarian" if branch == "kuwait" else "kuwait"}
+                    self.assertEqual(client.post(f"/api/groups/{self.group.pk}/restore/", **wrong_branch).status_code, 404)
+                personal = client.get(f"/api/students/{self.student.pk}/gradebook/", **headers)
+                self.assertEqual(personal.status_code, 200)
+                self.assertFalse(personal.data["can_edit"])
+                self.assertEqual(client.post(f"/api/students/{self.student.pk}/gradebook/", {}, format="json", **headers).status_code, 404)
+                response = client.post(f"/api/groups/{self.group.pk}/restore/", **headers)
+                self.assertEqual(response.status_code, 200)
+                self.assertEqual(response.data["students_count"], 1)
+                self.student.refresh_from_db()
+                self.second_student.refresh_from_db()
+                self.student.user.refresh_from_db()
+                self.assertIsNone(self.student.archived_at)
+                self.assertTrue(self.student.user.is_active)
+                self.assertIsNotNone(self.second_student.archived_at)
+                record.refresh_from_db()
+                self.assertEqual((record.lesson_id, record.grade), (self.lesson.pk, "5"))
+                record.delete()
+                client.post(f"/api/students/{self.second_student.pk}/restore/", {"group": self.group.pk}, format="json", **headers)
 
     def test_only_archived_students_can_be_deleted_permanently(self):
         client = self.auth_client("admin", "admin-pass-123")

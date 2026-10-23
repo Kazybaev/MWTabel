@@ -626,7 +626,7 @@ def build_admin_student_gradebook_payload(student, organization_type, selected_m
         ],
         "rows": rows,
         "grade_choices": serialize_choice_pairs(LessonRecord.GRADE_CHOICES),
-        "can_edit": True,
+        "can_edit": student.archived_at is None and all(group.archived_at is None for group in groups),
         "agrarian_features": student.college_branch == "agrarian",
     }
 
@@ -635,6 +635,8 @@ def save_admin_student_gradebook(student, organization_type, selected_month, ent
     if not isinstance(entries, list):
         raise ValidationError({"entries": "Список оценок должен быть массивом."})
     groups = list(groups_for_student_gradebook(student, organization_type))
+    if student.archived_at is not None or any(group.archived_at is not None for group in groups):
+        raise ValidationError("Архивный табель доступен только для просмотра.")
     groups_by_id = {group.pk: group for group in groups}
     invalid_group_ids = {
         entry.get("group") for entry in entries if entry.get("group") not in groups_by_id
@@ -1267,6 +1269,8 @@ class StudentProfileViewSet(viewsets.ModelViewSet):
         if organization == "college":
             queryset = queryset.filter(college_branch=college_branch_for_request(self.request))
         if self.request.user.role == User.ROLE_ADMIN:
+            if self.action == "gradebook" and self.request.method == "GET":
+                return queryset
             if self.action in {"archived", "restore", "destroy"}:
                 return queryset.filter(archived_at__isnull=False)
             return queryset.filter(archived_at__isnull=True)
@@ -1357,6 +1361,7 @@ class StudentProfileViewSet(viewsets.ModelViewSet):
         group = get_object_or_404(
             Group,
             pk=group_id,
+            archived_at__isnull=True,
             organization_type=organization,
             **({"college_branch": college_branch_for_request(request)} if organization == "college" else {}),
         )
@@ -1366,9 +1371,10 @@ class StudentProfileViewSet(viewsets.ModelViewSet):
             instance.archived_at = None
             instance.save(update_fields=["group", "archived_at"])
             if instance.organization_type == "college":
-                instance.college_groups.set([group])
-            else:
-                move_student_records_to_group(instance, old_group, group)
+                if old_group != group:
+                    instance.college_groups.remove(old_group)
+                instance.college_groups.add(group)
+            move_student_records_to_group(instance, old_group, group)
             instance.user.is_active = True
             instance.user.save(update_fields=["is_active"])
         return Response(self.get_serializer(instance).data)
@@ -1398,7 +1404,9 @@ class GroupViewSet(viewsets.ModelViewSet):
         organization = organization_for_request(self.request)
         branch_filter = {"college_branch": college_branch_for_request(self.request)} if organization == "college" else {}
         include_archived = self.request.query_params.get("archived") == "1" and self.request.user.role == User.ROLE_ADMIN
-        if self.action == "archived" or include_archived:
+        if self.action in {"archived", "restore"} or include_archived:
+            if self.request.user.role != User.ROLE_ADMIN:
+                raise PermissionDenied
             return annotate_group_students_count(
                 Group.objects.filter(archived_at__isnull=False, organization_type=organization, **branch_filter),
                 organization,
@@ -1470,6 +1478,29 @@ class GroupViewSet(viewsets.ModelViewSet):
         if request.user.role != User.ROLE_ADMIN:
             raise PermissionDenied
         return Response(self.get_serializer(self.get_queryset(), many=True).data)
+
+    @action(detail=True, methods=["post"])
+    def restore(self, request, pk=None):
+        if request.user.role != User.ROLE_ADMIN:
+            raise PermissionDenied
+        group = self.get_object()
+        with transaction.atomic():
+            group = get_object_or_404(Group.objects.select_for_update(), pk=group.pk, archived_at__isnull=False)
+            archived_at = group.archived_at
+            relation = group.college_students if group.organization_type == "college" else group.students
+            # Restore only students archived by this group operation. Students
+            # archived individually beforehand must remain in the archive.
+            students = list(relation.filter(archived_at=archived_at).select_related("user"))
+            group.archived_at = None
+            group.save(update_fields=["archived_at"])
+            for student in students:
+                student.archived_at = None
+                student.save(update_fields=["archived_at"])
+                student.user.is_active = True
+                student.user.save(update_fields=["is_active"])
+        if hasattr(group, "students_count"):
+            del group.students_count
+        return Response(self.get_serializer(group).data)
 
     @action(detail=True, methods=["get", "post"])
     def gradebook(self, request, pk=None):
