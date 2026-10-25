@@ -465,7 +465,7 @@ export function ReportConversationsPage({ api, sessionToken, user, organization 
               <Button
                 variant="danger"
                 onClick={() => handleWahaParentAction(wahaParentResult.id, "confirm")}
-                disabled={!wahaParentConfig.data?.ready || !wahaParentResult.queued}
+                disabled={!wahaParentConfig.data?.ready || !wahaParentResult.draft}
                 title={!wahaParentConfig.data?.ready ? "Production-отправка выключена конфигурацией." : ""}
               >
                 Подтвердить отправку родителям
