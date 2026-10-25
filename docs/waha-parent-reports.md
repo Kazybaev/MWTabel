@@ -8,8 +8,9 @@ send it.
 
 ## Eligibility and duplicate protection
 
-- The report month must have lessons, and today must be the latest lesson date
-  in the student's group for that month.
+- The report month must have lessons. Draft preparation and confirmation are
+  allowed on any date; they are not restricted to the group's latest lesson
+  date.
 - At least one lesson record for the student must exist in the report month;
   the record does not have to be from the latest lesson.
 - The destination is `StudentProfile.parent_phone`, never the test recipient.
