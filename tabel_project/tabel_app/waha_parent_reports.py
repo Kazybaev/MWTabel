@@ -198,8 +198,6 @@ def _eligibility_error(
         return "No marked lesson records exist for this report month."
     if trigger_date is None:
         return "No lessons exist in the student's group for this report month."
-    if timezone.localdate() != trigger_date:
-        return f"Reports can only be sent on the group's last lesson date ({trigger_date.isoformat()})."
     return ""
 
 

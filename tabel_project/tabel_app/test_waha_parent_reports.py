@@ -110,7 +110,7 @@ class WahaParentReportTests(TestCase):
         self.assertNotIn("+996700000001", item.message_text)
         send.assert_not_called()
 
-    def test_preparation_requires_month_mark_and_group_last_lesson_date(self):
+    def test_preparation_requires_month_mark_but_not_group_last_lesson_date(self):
         self.lesson.records.all().delete()
         with patch("tabel_app.waha_parent_reports.timezone.localdate", return_value=date(2026, 8, 31)):
             no_mark_batch = self.prepare_batch()
@@ -118,9 +118,21 @@ class WahaParentReportTests(TestCase):
         self.assertIn("No marked lesson", no_mark_batch.items.get().error_message)
 
         LessonRecord.objects.create(student=self.student, lesson=self.lesson, grade="5")
-        early_batch = self.prepare_batch(today=date(2026, 8, 30))
-        self.assertEqual(early_batch.items.get().status, WahaParentReportBatchItem.STATUS_SKIPPED)
-        self.assertIn("last lesson date", early_batch.items.get().error_message)
+        batch = self.prepare_batch(today=date(2026, 8, 30))
+        self.assertEqual(batch.items.get().status, WahaParentReportBatchItem.STATUS_DRAFT)
+
+    def test_confirmation_is_not_limited_to_group_last_lesson_date(self):
+        with patch("tabel_app.waha_parent_reports.timezone.localdate", return_value=date(2026, 8, 30)):
+            batch = self.prepare_batch(today=date(2026, 8, 30))
+
+        with patch("tabel_app.waha_parent_reports.timezone.localdate", return_value=date(2026, 9, 15)):
+            confirmed = self.confirm_batch(batch)
+
+        self.assertEqual(confirmed.status, "queued")
+        self.assertEqual(
+            confirmed.items.get().status,
+            WahaParentReportBatchItem.STATUS_QUEUED,
+        )
 
     def test_confirm_requires_both_explicit_feature_flags(self):
         batch = self.prepare_batch()
