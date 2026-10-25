@@ -18,6 +18,8 @@ from .models import (
     MonthlyStudentReportBatchItem,
     MonthlyStudentReportDispatch,
     StudentProfile,
+    WahaParentReportBatchItem,
+    WahaTestReportBatchItem,
 )
 
 
@@ -608,6 +610,39 @@ def send_student_month_report(
 
     try:
         with transaction.atomic():
+            StudentProfile.objects.select_for_update().get(pk=student.pk)
+            if WahaParentReportBatchItem.objects.filter(
+                student=student,
+                month=month_start,
+                status__in=WahaParentReportBatchItem.ACTIVE_STATUSES
+                + (
+                    WahaParentReportBatchItem.STATUS_ACCEPTED,
+                    WahaParentReportBatchItem.STATUS_UNKNOWN,
+                    WahaParentReportBatchItem.STATUS_FAILED,
+                ),
+            ).exists():
+                return {
+                    "student_id": student.pk,
+                    "student_name": student.user.full_name,
+                    "status": "skipped",
+                    "reason": "waha_parent_report_exists",
+                }
+            if WahaTestReportBatchItem.objects.filter(
+                student=student,
+                month=month_start,
+                status__in=(
+                    WahaTestReportBatchItem.STATUS_QUEUED,
+                    WahaTestReportBatchItem.STATUS_PROCESSING,
+                    WahaTestReportBatchItem.STATUS_ACCEPTED,
+                    WahaTestReportBatchItem.STATUS_UNKNOWN,
+                ),
+            ).exists():
+                return {
+                    "student_id": student.pk,
+                    "student_name": student.user.full_name,
+                    "status": "skipped",
+                    "reason": "waha_test_report_exists",
+                }
             dispatch, _ = MonthlyStudentReportDispatch.objects.select_for_update().get_or_create(
                 student=student,
                 month=month_start,

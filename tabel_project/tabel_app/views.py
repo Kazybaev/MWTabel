@@ -34,11 +34,27 @@ from .models import (
     StudentProfile,
     StudentBadge,
     User,
+    WahaParentReportBatch,
+    WahaTestReportBatch,
 )
 from .report_delivery import build_report_conversations, record_meta_delivery_callback, serialize_report_attempt
 from .report import force_send_all_monthly_reports, is_absence_grade, send_student_month_report
 from .organization import college_branch_for_request, organization_for_request, require_agrarian_college
 from .report_queue import enqueue_monthly_report_batch, serialize_report_batch
+from .waha_reports import (
+    WahaTestConfigurationError,
+    enqueue_waha_test_batch,
+    get_waha_test_configuration,
+    serialize_waha_test_batch,
+)
+from .waha_parent_reports import (
+    WahaParentConfigurationError,
+    cancel_waha_parent_batch,
+    confirm_waha_parent_batch,
+    get_waha_parent_configuration,
+    prepare_waha_parent_batch,
+    serialize_waha_parent_batch,
+)
 from .serializers import (
     AgrarianGradeRecordSerializer,
     BadgeSerializer,
@@ -53,6 +69,8 @@ from .serializers import (
     ReportBulkDispatchRequestSerializer,
     ReportDeliveryCallbackSerializer,
     ReportResendRequestSerializer,
+    WahaTestReportRequestSerializer,
+    WahaParentReportRequestSerializer,
     StudentProfileSerializer,
     StudentBadgeSerializer,
     UserSerializer,
@@ -1182,6 +1200,189 @@ class ReportBatchDetailAPIView(APIView):
             organization_type=organization_for_request(request),
         )
         return Response(serialize_report_batch(batch))
+
+
+class WahaTestReportConfigAPIView(APIView):
+    permission_classes = [permissions.IsAuthenticated]
+
+    def get(self, request, *args, **kwargs):
+        if request.user.role != User.ROLE_ADMIN:
+            raise PermissionDenied
+        return Response(get_waha_test_configuration())
+
+
+class WahaTestReportBatchAPIView(APIView):
+    permission_classes = [permissions.IsAuthenticated]
+
+    def post(self, request, *args, **kwargs):
+        if request.user.role != User.ROLE_ADMIN:
+            raise PermissionDenied
+        config = get_waha_test_configuration()
+        if not config["ready"]:
+            return Response(
+                {"detail": "WAHA test mode is not fully configured.", "configuration": config},
+                status=status.HTTP_503_SERVICE_UNAVAILABLE,
+            )
+
+        serializer = WahaTestReportRequestSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        month_start = parse_month_value(serializer.validated_data["month"])
+        if month_start is None:
+            raise ValidationError({"month": "Use YYYY-MM format for the report month."})
+        organization = organization_for_request(request)
+        student_ids = serializer.validated_data["student_ids"]
+        students_queryset = students_for_user(request.user).filter(
+            organization_type=organization,
+            archived_at__isnull=True,
+            group__archived_at__isnull=True,
+            pk__in=student_ids,
+        ).select_related("user", "group", "group__mentor__user")
+        if organization == "college":
+            students_queryset = students_queryset.filter(college_branch=college_branch_for_request(request))
+        students = list(students_queryset.order_by("pk"))
+        if {student.pk for student in students} != set(student_ids):
+            raise ValidationError({"student_ids": "One or more students are unavailable in this organization."})
+
+        try:
+            batch = enqueue_waha_test_batch(
+                created_by=request.user,
+                students=students,
+                month=month_start,
+                organization_type=organization,
+            )
+        except WahaTestConfigurationError as exc:
+            return Response({"detail": str(exc)}, status=status.HTTP_503_SERVICE_UNAVAILABLE)
+        except ValueError as exc:
+            raise ValidationError({"student_ids": str(exc)}) from exc
+        return Response(serialize_waha_test_batch(batch), status=status.HTTP_202_ACCEPTED)
+
+    def get(self, request, batch_id=None, *args, **kwargs):
+        if request.user.role != User.ROLE_ADMIN:
+            raise PermissionDenied
+        batch = get_object_or_404(
+            WahaTestReportBatch,
+            pk=batch_id,
+            organization_type=organization_for_request(request),
+        )
+        return Response(serialize_waha_test_batch(batch))
+
+
+class WahaParentReportConfigAPIView(APIView):
+    permission_classes = [permissions.IsAuthenticated]
+
+    def get(self, request, *args, **kwargs):
+        if request.user.role != User.ROLE_ADMIN:
+            raise PermissionDenied
+        return Response(get_waha_parent_configuration())
+
+
+class WahaParentReportBatchAPIView(APIView):
+    permission_classes = [permissions.IsAuthenticated]
+
+    def post(self, request, *args, **kwargs):
+        if request.user.role != User.ROLE_ADMIN:
+            raise PermissionDenied
+        serializer = WahaParentReportRequestSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        month_start = parse_month_value(serializer.validated_data["month"])
+        if month_start is None:
+            raise ValidationError({"month": "Use YYYY-MM format for the report month."})
+
+        organization = organization_for_request(request)
+        college_branch = college_branch_for_request(request) if organization == "college" else None
+        group_ids = serializer.validated_data.get("group_ids")
+        student_ids = serializer.validated_data.get("student_ids")
+        if organization == "college" and (group_ids or student_ids):
+            raise ValidationError("Для колледжа доступно формирование пакета по всем студентам.")
+        students_queryset = students_for_user(request.user).filter(
+            organization_type=organization,
+            archived_at__isnull=True,
+            group__archived_at__isnull=True,
+        )
+        if organization == "college":
+            students_queryset = students_queryset.filter(college_branch=college_branch)
+        if group_ids:
+            students_queryset = students_queryset.filter(group_id__in=group_ids)
+        if student_ids:
+            students_queryset = students_queryset.filter(pk__in=student_ids)
+        students = list(students_queryset.order_by("group__course_name", "user__full_name"))
+        if student_ids and {student.pk for student in students} != set(student_ids):
+            raise ValidationError({"student_ids": "One or more students are unavailable in this organization."})
+        if group_ids:
+            available_group_ids = set(
+                Group.objects.filter(
+                    organization_type=organization,
+                    archived_at__isnull=True,
+                    pk__in=group_ids,
+                ).values_list("pk", flat=True)
+            )
+            if available_group_ids != set(group_ids):
+                raise ValidationError({"group_ids": "One or more groups are unavailable in this organization."})
+        if len(students) > 1000:
+            raise ValidationError({"detail": "A batch can contain at most 1000 students."})
+        try:
+            batch = prepare_waha_parent_batch(
+                created_by=request.user,
+                month=month_start,
+                organization_type=organization,
+                college_branch=college_branch,
+                students=students,
+                requested_filters={"group_ids": group_ids or [], "student_ids": student_ids or []},
+            )
+        except ValueError as exc:
+            raise ValidationError({"detail": str(exc)}) from exc
+        return Response(
+            serialize_waha_parent_batch(batch, include_message_text=True),
+            status=status.HTTP_201_CREATED,
+        )
+
+    def get(self, request, batch_id=None, *args, **kwargs):
+        if request.user.role != User.ROLE_ADMIN:
+            raise PermissionDenied
+        organization = organization_for_request(request)
+        queryset = WahaParentReportBatch.objects.filter(organization_type=organization)
+        if organization == "college":
+            queryset = queryset.filter(college_branch=college_branch_for_request(request))
+        if batch_id is not None:
+            batch = get_object_or_404(queryset, pk=batch_id)
+            if request.query_params.get("summary") == "true":
+                return Response(serialize_waha_parent_batch(batch, include_items=False))
+            include_preview = request.query_params.get("preview") == "true"
+            return Response(serialize_waha_parent_batch(batch, include_message_text=include_preview))
+        return Response([
+            serialize_waha_parent_batch(batch, include_items=False)
+            for batch in queryset[:1]
+        ])
+
+
+class WahaParentReportBatchActionAPIView(APIView):
+    permission_classes = [permissions.IsAuthenticated]
+
+    def post(self, request, batch_id, action_name, *args, **kwargs):
+        if request.user.role != User.ROLE_ADMIN:
+            raise PermissionDenied
+        get_object_or_404(
+            WahaParentReportBatch,
+            pk=batch_id,
+            organization_type=organization_for_request(request),
+            **(
+                {"college_branch": college_branch_for_request(request)}
+                if organization_for_request(request) == "college"
+                else {}
+            ),
+        )
+        try:
+            if action_name == "confirm":
+                batch = confirm_waha_parent_batch(batch_id)
+            elif action_name == "cancel":
+                batch = cancel_waha_parent_batch(batch_id)
+            else:
+                raise Http404
+        except WahaParentConfigurationError as exc:
+            return Response({"detail": str(exc)}, status=status.HTTP_503_SERVICE_UNAVAILABLE)
+        except ValueError as exc:
+            raise ValidationError({"detail": str(exc)}) from exc
+        return Response(serialize_waha_parent_batch(batch))
 
 
 class ReportConversationDetailAPIView(APIView):
