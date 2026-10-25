@@ -17,6 +17,8 @@ from .models import (
     MonthlyStudentReportDispatch,
     StudentProfile,
     User,
+    WahaParentReportBatchItem,
+    WahaTestReportBatchItem,
 )
 
 
@@ -58,7 +60,7 @@ def enqueue_monthly_report_batch(
             students = students.filter(group_id__in=group_ids)
         if student_ids:
             students = students.filter(pk__in=student_ids)
-        students_to_queue = list(students.order_by("group__course_name", "user__full_name"))
+        students_to_queue = list(students.order_by("group__course_name", "user__full_name", "pk"))
         student_ids_to_queue = [student.pk for student in students_to_queue]
         existing_dispatches = {
             dispatch.student_id: dispatch
@@ -74,6 +76,32 @@ def enqueue_monthly_report_batch(
                 month=month,
                 status__in=MonthlyStudentReportBatchItem.ACTIVE_STATUSES,
             ).only("student_id", "batch_id")
+        }
+        active_parent_items = {
+            item.student_id
+            for item in WahaParentReportBatchItem.objects.filter(
+                student_id__in=student_ids_to_queue,
+                month=month,
+                status__in=WahaParentReportBatchItem.ACTIVE_STATUSES
+                + (
+                    WahaParentReportBatchItem.STATUS_ACCEPTED,
+                    WahaParentReportBatchItem.STATUS_UNKNOWN,
+                    WahaParentReportBatchItem.STATUS_FAILED,
+                ),
+            ).only("student_id")
+        }
+        waha_test_items = {
+            item.student_id
+            for item in WahaTestReportBatchItem.objects.filter(
+                student_id__in=student_ids_to_queue,
+                month=month,
+                status__in=(
+                    WahaTestReportBatchItem.STATUS_QUEUED,
+                    WahaTestReportBatchItem.STATUS_PROCESSING,
+                    WahaTestReportBatchItem.STATUS_ACCEPTED,
+                    WahaTestReportBatchItem.STATUS_UNKNOWN,
+                ),
+            ).only("student_id")
         }
         batch = MonthlyStudentReportBatch.objects.create(
             month=month,
@@ -104,6 +132,12 @@ def enqueue_monthly_report_batch(
             elif student.pk in active_items:
                 item_status = MonthlyStudentReportBatchItem.STATUS_SKIPPED
                 error_message = f"Already queued in active batch {active_items[student.pk]}."
+            elif student.pk in active_parent_items:
+                item_status = MonthlyStudentReportBatchItem.STATUS_SKIPPED
+                error_message = "A WAHA parent report is prepared, active, or requires manual review."
+            elif student.pk in waha_test_items:
+                item_status = MonthlyStudentReportBatchItem.STATUS_SKIPPED
+                error_message = "A WAHA test attempt exists for this student and month; review it before using Dify/Meta."
 
             if item_status != MonthlyStudentReportBatchItem.STATUS_QUEUED:
                 dedupe_key = None

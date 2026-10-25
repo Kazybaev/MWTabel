@@ -97,6 +97,45 @@ class ReportBulkDispatchRequestSerializer(serializers.Serializer):
     confirm_retry_failed = serializers.BooleanField(required=False, default=False)
 
 
+class WahaTestReportRequestSerializer(serializers.Serializer):
+    month = serializers.RegexField(regex=r"^\d{4}-\d{2}$")
+    student_ids = serializers.ListField(
+        child=serializers.IntegerField(min_value=1),
+        min_length=1,
+        max_length=10,
+    )
+
+    def validate_student_ids(self, value):
+        if len(value) != len(set(value)):
+            raise serializers.ValidationError("Student IDs must be unique.")
+        return value
+
+
+class WahaParentReportRequestSerializer(serializers.Serializer):
+    month = serializers.RegexField(regex=r"^\d{4}-\d{2}$")
+    group_ids = serializers.ListField(
+        child=serializers.IntegerField(min_value=1),
+        required=False,
+        allow_empty=False,
+    )
+    student_ids = serializers.ListField(
+        child=serializers.IntegerField(min_value=1),
+        required=False,
+        allow_empty=False,
+        max_length=1000,
+    )
+
+    def validate_group_ids(self, value):
+        if len(value) != len(set(value)):
+            raise serializers.ValidationError("Group IDs must be unique.")
+        return value
+
+    def validate_student_ids(self, value):
+        if len(value) != len(set(value)):
+            raise serializers.ValidationError("Student IDs must be unique.")
+        return value
+
+
 class ReportResendRequestSerializer(serializers.Serializer):
     student_id = serializers.IntegerField()
     month = serializers.RegexField(regex=r"^\d{4}-\d{2}$")

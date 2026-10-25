@@ -19,17 +19,37 @@ services:
       context: .
       dockerfile: Dockerfile
     restart: unless-stopped
+    ports:
+      - "127.0.0.1:8010:8000"
     env_file:
       - ${ENV_FILE:-.env}
     environment:
       DEBUG: "False"
       DB_ENGINE: postgresql
+      DB_POSTGRES: ${DB_POSTGRES:?DB_POSTGRES is required}
+      DB_USER: ${DB_USER:?DB_USER is required}
+      DB_PASSWORD: ${DB_PASSWORD:?DB_PASSWORD is required}
       DB_HOST: db
       DB_PORT: 5432
+      SECRET_KEY: ${SECRET_KEY:?SECRET_KEY is required}
+      SERVE_STATIC_FILES: ${SERVE_STATIC_FILES:-false}
+      ALLOWED_HOSTS: ${ALLOWED_HOSTS:-localhost,127.0.0.1}
+      SECURE_SSL_REDIRECT: ${SECURE_SSL_REDIRECT:-true}
+      SESSION_COOKIE_SECURE: ${SESSION_COOKIE_SECURE:-true}
+      CSRF_COOKIE_SECURE: ${CSRF_COOKIE_SECURE:-true}
       USE_X_FORWARDED_HOST: "True"
       AUTO_MONTHLY_REPORTS: "false"
       REPORT_SCHEDULER_RUN_ON_START: "false"
       DIFY_API_KEY: ${DIFY_API_KEY:?DIFY_API_KEY must be configured}
+      WAHA_TEST_MODE_ENABLED: ${WAHA_TEST_MODE_ENABLED:-false}
+      WAHA_TEST_RECIPIENT: ${WAHA_TEST_RECIPIENT:-}
+      WAHA_WORKER_ENABLED: ${WAHA_WORKER_ENABLED:-false}
+      WAHA_PARENT_REPORTS_ENABLED: ${WAHA_PARENT_REPORTS_ENABLED:-false}
+      WAHA_PARENT_WORKER_ENABLED: ${WAHA_PARENT_WORKER_ENABLED:-false}
+      WAHA_CLIENT_API_KEY_CONFIGURED: ${WAHA_API_KEY:+true}
+      WAHA_SERVER_API_KEY_CONFIGURED: ${WAHA_API_KEY_HASH:+true}
+      WAHA_PARENT_CLIENT_API_KEY_CONFIGURED: ${WAHA_PARENT_API_KEY:+true}
+      WAHA_PARENT_SERVER_API_KEY_CONFIGURED: ${WAHA_PARENT_API_KEY_HASH:+true}
     depends_on:
       db:
         condition: service_healthy
@@ -59,8 +79,12 @@ services:
     environment:
       DEBUG: "False"
       DB_ENGINE: postgresql
+      DB_POSTGRES: ${DB_POSTGRES:?DB_POSTGRES is required}
+      DB_USER: ${DB_USER:?DB_USER is required}
+      DB_PASSWORD: ${DB_PASSWORD:?DB_PASSWORD is required}
       DB_HOST: db
       DB_PORT: 5432
+      SECRET_KEY: ${SECRET_KEY:?SECRET_KEY is required}
       AUTO_MONTHLY_REPORTS: "false"
       REPORT_SCHEDULER_RUN_ON_START: "false"
       REPORT_WORKER_ENABLED: ${REPORT_WORKER_ENABLED:-false}
@@ -87,8 +111,12 @@ services:
     environment:
       DEBUG: "False"
       DB_ENGINE: postgresql
+      DB_POSTGRES: ${DB_POSTGRES:?DB_POSTGRES is required}
+      DB_USER: ${DB_USER:?DB_USER is required}
+      DB_PASSWORD: ${DB_PASSWORD:?DB_PASSWORD is required}
       DB_HOST: db
       DB_PORT: 5432
+      SECRET_KEY: ${SECRET_KEY:?SECRET_KEY is required}
       AUTO_MONTHLY_REPORTS: "false"
       REPORT_SCHEDULER_RUN_ON_START: "false"
       REPORT_WORKER_ENABLED: ${REPORT_WORKER_ENABLED:-false}
@@ -101,6 +129,121 @@ services:
     networks:
       - default
       - dify_internal
+
+  waha-test:
+    profiles: ["waha-test"]
+    image: devlikeapro/waha:arm-2026.9.2
+    restart: unless-stopped
+    ports:
+      - "127.0.0.1:${WAHA_LOCAL_PORT:-3001}:3000"
+    environment:
+      WAHA_API_KEY: ${WAHA_API_KEY_HASH:-}
+      WAHA_DASHBOARD_ENABLED: "true"
+      WAHA_DASHBOARD_USERNAME: ${WAHA_DASHBOARD_USERNAME:-admin}
+      WAHA_DASHBOARD_PASSWORD: ${WAHA_DASHBOARD_PASSWORD:?WAHA_DASHBOARD_PASSWORD is required}
+      WHATSAPP_SWAGGER_ENABLED: "false"
+    volumes:
+      - waha_sessions:/app/.sessions
+    networks:
+      - default
+
+  waha-test-worker:
+    profiles: ["waha-test"]
+    build:
+      context: .
+      dockerfile: Dockerfile
+    restart: unless-stopped
+    entrypoint: ["python"]
+    command: ["manage.py", "process_waha_test_queue"]
+    env_file:
+      - ${ENV_FILE:-.env}
+    environment:
+      DEBUG: "False"
+      DB_ENGINE: postgresql
+      DB_POSTGRES: ${DB_POSTGRES:?DB_POSTGRES is required}
+      DB_USER: ${DB_USER:?DB_USER is required}
+      DB_PASSWORD: ${DB_PASSWORD:?DB_PASSWORD is required}
+      DB_HOST: db
+      DB_PORT: 5432
+      SECRET_KEY: ${SECRET_KEY:?SECRET_KEY is required}
+      AUTO_MONTHLY_REPORTS: "false"
+      REPORT_SCHEDULER_RUN_ON_START: "false"
+      WAHA_TEST_MODE_ENABLED: ${WAHA_TEST_MODE_ENABLED:-false}
+      WAHA_TEST_RECIPIENT: ${WAHA_TEST_RECIPIENT:-}
+      WAHA_WORKER_ENABLED: ${WAHA_WORKER_ENABLED:-false}
+      WAHA_API_URL: http://waha-test:3000
+      WAHA_CLIENT_API_KEY: ${WAHA_API_KEY:-}
+      WAHA_SESSION: ${WAHA_SESSION:-default}
+      WAHA_TIMEOUT_SECONDS: ${WAHA_TIMEOUT_SECONDS:-30}
+      WAHA_SEND_INTERVAL_SECONDS: ${WAHA_SEND_INTERVAL_SECONDS:-2}
+      WAHA_UNKNOWN_AFTER_SECONDS: ${WAHA_UNKNOWN_AFTER_SECONDS:-300}
+    depends_on:
+      db:
+        condition: service_healthy
+      web:
+        condition: service_healthy
+      waha-test:
+        condition: service_started
+    networks:
+      - default
+
+  waha-parent:
+    profiles: ["waha-parent"]
+    image: ${WAHA_PARENT_IMAGE:-devlikeapro/waha:latest-2026.9.2@sha256:ecadb467ff9af107e7c235a955cab99ef5a1c13656cbc78aeb3e6b4d30fae7e4}
+    restart: unless-stopped
+    ports:
+      - "127.0.0.1:${WAHA_PARENT_LOCAL_PORT:-3002}:3000"
+    environment:
+      WAHA_API_KEY: ${WAHA_PARENT_API_KEY_HASH:-}
+      WAHA_DASHBOARD_ENABLED: "true"
+      WAHA_DASHBOARD_USERNAME: ${WAHA_PARENT_DASHBOARD_USERNAME:-admin}
+      WAHA_DASHBOARD_PASSWORD: ${WAHA_PARENT_DASHBOARD_PASSWORD:?WAHA_PARENT_DASHBOARD_PASSWORD is required}
+      WHATSAPP_SWAGGER_ENABLED: "false"
+    volumes:
+      - waha_parent_sessions:/app/.sessions
+    networks:
+      - default
+
+  waha-parent-worker:
+    profiles: ["waha-parent"]
+    build:
+      context: .
+      dockerfile: Dockerfile
+    restart: unless-stopped
+    entrypoint: ["python"]
+    command: ["manage.py", "process_waha_parent_queue"]
+    env_file:
+      - ${ENV_FILE:-.env}
+    environment:
+      DEBUG: "False"
+      DB_ENGINE: postgresql
+      DB_POSTGRES: ${DB_POSTGRES:?DB_POSTGRES is required}
+      DB_USER: ${DB_USER:?DB_USER is required}
+      DB_PASSWORD: ${DB_PASSWORD:?DB_PASSWORD is required}
+      DB_HOST: db
+      DB_PORT: 5432
+      SECRET_KEY: ${SECRET_KEY:?SECRET_KEY is required}
+      AUTO_MONTHLY_REPORTS: "false"
+      REPORT_SCHEDULER_RUN_ON_START: "false"
+      WAHA_PARENT_REPORTS_ENABLED: ${WAHA_PARENT_REPORTS_ENABLED:-false}
+      WAHA_PARENT_WORKER_ENABLED: ${WAHA_PARENT_WORKER_ENABLED:-false}
+      WAHA_API_URL: ${WAHA_PARENT_API_URL:-http://waha-parent:3000}
+      WAHA_PARENT_CLIENT_API_KEY: ${WAHA_PARENT_API_KEY:-}
+      WAHA_PARENT_CLIENT_API_KEY_CONFIGURED: ${WAHA_PARENT_API_KEY:+true}
+      WAHA_PARENT_SERVER_API_KEY_CONFIGURED: ${WAHA_PARENT_API_KEY_HASH:+true}
+      WAHA_SESSION: ${WAHA_PARENT_SESSION:-default}
+      WAHA_TIMEOUT_SECONDS: ${WAHA_PARENT_TIMEOUT_SECONDS:-30}
+      WAHA_SEND_INTERVAL_SECONDS: ${WAHA_PARENT_SEND_INTERVAL_SECONDS:-2}
+      WAHA_UNKNOWN_AFTER_SECONDS: ${WAHA_PARENT_UNKNOWN_AFTER_SECONDS:-300}
+    depends_on:
+      db:
+        condition: service_healthy
+      web:
+        condition: service_healthy
+      waha-parent:
+        condition: service_started
+    networks:
+      - default
 
   nginx:
     image: nginx:1.27-alpine
@@ -121,8 +264,10 @@ volumes:
   postgres_data:
   static_volume:
   frontend_dist:
+  waha_sessions:
+  waha_parent_sessions:
 
 networks:
   dify_internal:
     external: true
-    name: docker_default
+    name: ${DIFY_DOCKER_NETWORK:-docker_default}
