@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import hashlib
 import json
 import logging
 import os
@@ -41,16 +40,6 @@ WAHA_TEST_BLOCKING_STATUSES = (
     WahaTestReportBatchItem.STATUS_ACCEPTED,
     WahaTestReportBatchItem.STATUS_UNKNOWN,
 )
-WAHA_PARENT_BLOCKING_STATUSES = (
-    WahaParentReportBatchItem.STATUS_DRAFT,
-    WahaParentReportBatchItem.STATUS_QUEUED,
-    WahaParentReportBatchItem.STATUS_PROCESSING,
-    WahaParentReportBatchItem.STATUS_ACCEPTED,
-    WahaParentReportBatchItem.STATUS_UNKNOWN,
-    WahaParentReportBatchItem.STATUS_FAILED,
-)
-
-
 class WahaParentConfigurationError(Exception):
     pass
 
@@ -64,11 +53,6 @@ def _normalize_phone(value: str) -> str:
     if not re.fullmatch(r"\+?[1-9]\d{7,14}", normalized):
         raise ValueError("Parent phone is not a valid international phone number.")
     return f"+{normalized.lstrip('+')}"
-
-
-def _dedupe_key(student: StudentProfile, month: date) -> str:
-    value = f"waha-parent:{student.pk}:{month:%Y-%m}"
-    return hashlib.sha256(value.encode("utf-8")).hexdigest()
 
 
 def _mask_phone(value: str) -> str:
@@ -95,17 +79,8 @@ def get_waha_parent_configuration() -> dict[str, Any]:
 def _cross_channel_conflicts(
     student_ids: list[int],
     month: date,
-    *,
-    current_batch_id: int | None = None,
 ) -> dict[int, str]:
     conflicts: dict[int, str] = {}
-    parent_items = WahaParentReportBatchItem.objects.filter(
-        student_id__in=student_ids,
-        month=month,
-        status__in=WAHA_PARENT_BLOCKING_STATUSES,
-    )
-    if current_batch_id is not None:
-        parent_items = parent_items.exclude(batch_id=current_batch_id)
     sources = (
         (
             MonthlyStudentReportDispatch.objects.filter(student_id__in=student_ids, month=month),
@@ -130,10 +105,6 @@ def _cross_channel_conflicts(
                 status__in=WAHA_TEST_BLOCKING_STATUSES,
             ),
             "A WAHA test attempt exists for this student and month; review it before using the parent channel.",
-        ),
-        (
-            parent_items,
-            "A WAHA parent report is already prepared, active, or has a result requiring review.",
         ),
     )
     for queryset, reason in sources:
@@ -276,7 +247,6 @@ def prepare_waha_parent_batch(
                 report_payload=payload,
                 message_text=build_report_message_text(payload),
                 status=WahaParentReportBatchItem.STATUS_DRAFT,
-                dedupe_key=_dedupe_key(locked_student, month_start),
             )
             try:
                 with transaction.atomic():
@@ -320,7 +290,6 @@ def confirm_waha_parent_batch(batch_id: int) -> WahaParentReportBatch:
         conflicts = _cross_channel_conflicts(
             student_ids,
             batch.month,
-            current_batch_id=batch.pk,
         )
         last_lesson_cache: dict[int, date | None] = {}
         for item in items:

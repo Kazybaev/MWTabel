@@ -198,7 +198,7 @@ class WahaParentReportTests(TestCase):
         self.assertEqual(result["status"], WahaParentReportBatchItem.STATUS_ACCEPTED)
         self.assertEqual(batch.items.get().status, WahaParentReportBatchItem.STATUS_ACCEPTED)
 
-    def test_unknown_delivery_is_never_requeued(self):
+    def test_unknown_delivery_is_not_requeued_but_new_batch_is_allowed(self):
         batch = self.prepare_batch()
         with patch("tabel_app.waha_parent_reports.timezone.localdate", return_value=date(2026, 8, 31)):
             self.confirm_batch(batch)
@@ -210,7 +210,26 @@ class WahaParentReportTests(TestCase):
             repeated = self.prepare_batch()
 
         self.assertEqual(result["status"], WahaParentReportBatchItem.STATUS_UNKNOWN)
-        self.assertEqual(repeated.items.get().status, WahaParentReportBatchItem.STATUS_SKIPPED)
+        self.assertEqual(repeated.items.get().status, WahaParentReportBatchItem.STATUS_DRAFT)
+        with patch("tabel_app.waha_parent_reports.timezone.localdate", return_value=date(2026, 8, 31)):
+            confirmed = self.confirm_batch(repeated)
+        self.assertEqual(
+            confirmed.items.get().status,
+            WahaParentReportBatchItem.STATUS_QUEUED,
+        )
+
+    def test_existing_parent_draft_does_not_block_another_draft(self):
+        first_batch = self.prepare_batch()
+        second_batch = self.prepare_batch()
+
+        self.assertEqual(
+            first_batch.items.get().status,
+            WahaParentReportBatchItem.STATUS_DRAFT,
+        )
+        self.assertEqual(
+            second_batch.items.get().status,
+            WahaParentReportBatchItem.STATUS_DRAFT,
+        )
 
     def test_worker_will_not_claim_queue_when_session_is_not_working(self):
         batch = self.prepare_batch()
