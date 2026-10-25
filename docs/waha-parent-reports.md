@@ -15,11 +15,14 @@ send it.
   the record does not have to be from the latest lesson.
 - The destination is `StudentProfile.parent_phone`, never the test recipient.
 - An existing Dify/Meta dispatch or active Dify batch, a WAHA test attempt, or a
-  previous WAHA parent batch blocks this student/month pair. A failed or
-  unknown WAHA result requires manual review and is not automatically retried.
-- Eligibility and channel-conflict checks run again during confirmation.
-  Student-row locks and unique active-item constraints prevent concurrent
-  Dify/WAHA preparation from silently creating duplicate active sends.
+  previous WAHA parent batch does not block preparing or confirming another
+  parent batch. This allows duplicate sends, including when a previous WAHA
+  result is accepted, failed, or unknown; inspect delivery history carefully
+  before confirming a repeated batch. Unknown WAHA results are never retried
+  automatically.
+- Eligibility and cross-channel conflict checks run again during confirmation.
+  Repeated WAHA parent batches are intentionally not deduplicated and can send
+  the same report more than once.
 - WAHA `accepted` means the HTTP request was accepted, not that WhatsApp
   delivered the message.
 - The selected recipient rule is every otherwise-eligible active student with

@@ -601,14 +601,6 @@ class WahaParentReportBatchItem(models.Model):
                 fields=("batch", "student", "month"),
                 name="unique_waha_parent_batch_student_month",
             ),
-            models.UniqueConstraint(
-                fields=("dedupe_key",),
-                condition=models.Q(
-                    dedupe_key__isnull=False,
-                    status__in=("draft", "queued", "processing"),
-                ),
-                name="unique_active_waha_parent_report_context",
-            ),
         ]
 
 
