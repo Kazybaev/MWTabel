@@ -21,6 +21,8 @@ from .models import (
     WahaParentReportBatchItem,
     WahaTestReportBatchItem,
 )
+from .report_routing import get_route_api_key, workflow_route_for_student
+from .report_delivery import format_academy_attendance_status, record_dify_provider_result
 
 
 ABSENCE_GRADE = "\u041d"
@@ -208,6 +210,10 @@ def build_student_month_report(
 
     for lesson in lessons:
         lesson_records = records_by_lesson_id.get(lesson.pk, [])
+        if student.organization_type != "college" and len(lesson_records) > 1:
+            raise ReportConfigurationError(
+                "В данных академии найдено больше одной оценки за занятие; отправка отчёта остановлена."
+            )
         grades = [(record.grade or "").strip() for record in lesson_records]
         has_attendance = any(grade and not is_absence_grade(grade) for grade in grades)
         has_absence = any(is_absence_grade(grade) for grade in grades)
@@ -260,6 +266,9 @@ def build_student_month_report(
 
     mentor_user = student.group.mentor.user
     payload = {
+        "organization": student.organization_type,
+        "college_branch": student.college_branch if student.organization_type == "college" else None,
+        "workflow_route": workflow_route_for_student(student),
         "student": {
             "id": student.pk,
             "user_id": student.user_id,
@@ -316,6 +325,8 @@ def build_student_month_report(
         },
         "lessons": lesson_rows,
     }
+    if student.organization_type == "academy":
+        payload["summary"]["attendance_status_text"] = format_academy_attendance_status(payload["summary"])
     if student.organization_type == "college":
         payload["main_group"] = {
             "id": student.group.main_group_id,
@@ -376,7 +387,7 @@ def build_dify_inputs(report_payload: dict[str, Any]) -> dict[str, Any]:
     inputs = {
         "report": report_payload,
         "student_name": report_payload["student"]["full_name"],
-        "recipient_name": report_payload["student"]["parent_name"] or report_payload["student"]["full_name"],
+        "recipient_name": report_payload["student"]["parent_name"],
         "recipient_phone": report_payload["student"]["parent_phone"],
         "group_name": report_payload.get("main_group", {}).get("name") or report_payload["group"]["course_name"],
         "mentor_name": report_payload["mentor"]["full_name"],
@@ -417,10 +428,11 @@ def get_dify_user_agent() -> str:
     ).strip()
 
 
-def run_dify_workflow(inputs: dict[str, Any], user_key: str) -> dict[str, Any]:
-    api_key = os.getenv("DIFY_API_KEY", "").strip()
-    if not api_key:
-        raise ReportConfigurationError("DIFY_API_KEY must be configured.")
+def run_dify_workflow(inputs: dict[str, Any], user_key: str, workflow_route: str) -> dict[str, Any]:
+    try:
+        api_key = get_route_api_key(workflow_route)
+    except ValueError as exc:
+        raise ReportConfigurationError(str(exc)) from exc
 
     callback_token = os.getenv("BACKEND_REPORT_CALLBACK_TOKEN", "").strip()
     if len(callback_token) < 32:
@@ -514,9 +526,13 @@ def send_student_month_report(
     resend_succeeded: bool = False,
     batch_item: MonthlyStudentReportBatchItem | None = None,
     retry_failed_confirmed: bool = False,
+    expected_workflow_route: str | None = None,
 ) -> dict[str, Any]:
     run_date = normalize_run_date(run_date)
     month_start = normalize_month_start(month_start or run_date)
+    workflow_route = workflow_route_for_student(student)
+    if expected_workflow_route is not None and expected_workflow_route != workflow_route:
+        raise ReportConfigurationError("Маршрут задания не совпадает с проверенной принадлежностью студента.")
     trigger_date = get_group_last_lesson_date(student.group, month_start)
     trigger_lesson = get_student_trigger_lesson(student, month_start)
 
@@ -729,7 +745,9 @@ def send_student_month_report(
         response_payload = run_dify_workflow(
             build_dify_inputs(report_payload),
             build_dispatch_user_key(student, month_start),
+            workflow_route,
         )
+        record_dify_provider_result(response_payload=response_payload, report_payload=report_payload)
     except Exception as exc:
         logger.error(
             "Report delivery failed for student='%s', month='%s': %s",

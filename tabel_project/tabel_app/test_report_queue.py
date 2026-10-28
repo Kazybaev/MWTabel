@@ -102,7 +102,8 @@ class MonthlyReportQueueTests(TestCase):
     def test_worker_updates_the_correlated_attempt_to_accepted(self, mocked_dify):
         batch = self.enqueue()
 
-        def accepted_callback(inputs, user_key):
+        def accepted_callback(inputs, user_key, workflow_route):
+            self.assertEqual(workflow_route, "academy")
             correlation = inputs["report"]["correlation"]
             self.assertEqual(correlation["batch_item_id"], batch.items.get().pk)
             record_meta_delivery_callback(

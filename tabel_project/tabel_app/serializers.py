@@ -89,6 +89,7 @@ class ReportDispatchRequestSerializer(serializers.Serializer):
 
 
 class ReportBulkDispatchRequestSerializer(serializers.Serializer):
+    organization = serializers.ChoiceField(choices=ORGANIZATION_CHOICES, required=False)
     month = serializers.RegexField(regex=r"^\d{4}-\d{2}$", required=False)
     group_ids = serializers.ListField(child=serializers.IntegerField(min_value=1), required=False, allow_empty=False)
     student_ids = serializers.ListField(child=serializers.IntegerField(min_value=1), required=False, allow_empty=False)
@@ -147,12 +148,18 @@ class ReportResendRequestSerializer(serializers.Serializer):
 
 class ReportDeliveryCallbackSerializer(serializers.Serializer):
     delivery = serializers.JSONField()
-    meta_status_code = serializers.IntegerField(min_value=100, max_value=599)
+    meta_status_code = serializers.IntegerField(min_value=0, max_value=599)
     meta_response = serializers.JSONField()
 
     def validate_delivery(self, value):
         if not isinstance(value, dict):
             raise serializers.ValidationError("delivery must be a JSON object.")
+        event = value.get("event")
+        if event is not None and event not in {"student_monthly_report_result", "student_monthly_report_sent"}:
+            raise serializers.ValidationError("Unsupported delivery event.")
+        provider_status = value.get("provider_status")
+        if provider_status is not None and provider_status not in {"accepted", "delivered", "failed", "unknown"}:
+            raise serializers.ValidationError("Unsupported provider_status.")
 
         report = value.get("report")
         student = report.get("student") if isinstance(report, dict) else None
@@ -178,7 +185,12 @@ class ReportDeliveryCallbackSerializer(serializers.Serializer):
         return value
 
     def validate(self, attrs):
-        if 200 <= attrs["meta_status_code"] < 300:
+        provider_status = attrs["delivery"].get("provider_status")
+        if provider_status in {"accepted", "delivered"}:
+            message_id = str(attrs["delivery"].get("provider_message_id") or "").strip()
+            if not message_id:
+                raise serializers.ValidationError("provider_message_id is required for an accepted result.")
+        elif provider_status is None and 200 <= attrs["meta_status_code"] < 300:
             messages = attrs["meta_response"].get("messages")
             if not isinstance(messages, list) or not messages or not isinstance(messages[0], dict):
                 raise serializers.ValidationError("meta_response.messages[0] is required for HTTP success.")

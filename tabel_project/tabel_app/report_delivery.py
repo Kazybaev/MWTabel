@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import logging
 from collections import Counter
 from datetime import datetime
@@ -17,6 +18,15 @@ from .models import (
 
 
 logger = logging.getLogger("tabel_app.reports")
+
+
+def format_academy_attendance_status(summary: dict[str, Any]) -> str:
+    absence_count = int(summary.get("absence_count", 0) or 0)
+    unmarked_count = int(summary.get("unmarked_count", 0) or 0)
+    return (
+        f"Белгиленген калуулар (Н): {absence_count}; "
+        f"белги коюлбаган сабактар: {unmarked_count}."
+    )
 
 
 def build_report_message_text(payload: dict[str, Any]) -> str:
@@ -49,12 +59,7 @@ def build_report_message_text(payload: dict[str, Any]) -> str:
         if count:
             grade_lines.append(f'“{grade}” – {count} даана')
     grades_text = "\n".join(grade_lines) or "Баалар коюлган жок"
-    absence_count = int(summary.get("absence_count", 0) or 0)
-    absence_text = (
-        "1ай ичинде сабактан калган жок"
-        if absence_count == 0
-        else f"1ай ичинде сабактан {absence_count} жолу калды"
-    )
+    absence_text = format_academy_attendance_status(summary)
     return (
         "Саламатсызбы!\n"
         "Сиз менен Motion Web IT академиясынан байланышып жатабыз ✅\n\n"
@@ -72,6 +77,9 @@ def record_meta_delivery_callback(
     meta_status_code: int,
     meta_response: Any,
 ) -> tuple[MonthlyStudentReportDispatch, bool]:
+    event = delivery.get("event")
+    if event is not None and event not in {"student_monthly_report_result", "student_monthly_report_sent"}:
+        raise ValueError("Unsupported delivery event")
     report_payload = delivery["report"]
     student_id = int(report_payload["student"]["id"])
     month = datetime.strptime(report_payload["period"]["month"], "%Y-%m").date().replace(day=1)
@@ -88,12 +96,23 @@ def record_meta_delivery_callback(
         raise TypeError("meta_response must be a JSON object")
     messages = meta_response.get("messages")
     first_message = messages[0] if isinstance(messages, list) and messages and isinstance(messages[0], dict) else {}
-    meta_message_id = str(first_message.get("id") or "").strip()
-    message_status = str(first_message.get("message_status") or "").strip().lower()
-    if 200 <= meta_status_code < 300 and (not meta_message_id or not message_status):
-        raise ValueError("Meta message id and message_status are required for a successful HTTP response")
+    provider_status = str(delivery.get("provider_status") or "").strip().lower()
+    meta_message_id = str(delivery.get("provider_message_id") or first_message.get("id") or "").strip()
+    message_status = str(first_message.get("message_status") or provider_status or "").strip().lower()
+    if provider_status:
+        if provider_status not in {"accepted", "delivered", "failed", "unknown"}:
+            raise ValueError("Unsupported provider status")
+        if provider_status in {"accepted", "delivered"} and not meta_message_id:
+            raise ValueError("Provider message id is required for an accepted result")
+        if delivery.get("delivery_confirmed") is True:
+            provider_status = "delivered"
+            message_status = "delivered"
+    else:
+        if 200 <= meta_status_code < 300 and (not meta_message_id or not message_status):
+            raise ValueError("Meta message id and message_status are required for a successful HTTP response")
+        provider_status = message_status if message_status in {"accepted", "delivered"} else "failed"
     if not message_status:
-        message_status = "failed"
+        message_status = provider_status
     received_at = timezone.now()
 
     with transaction.atomic():
@@ -125,25 +144,35 @@ def record_meta_delivery_callback(
         stored_response = attempt.response_payload if isinstance(attempt.response_payload, dict) else {}
         previous_meta = stored_response.get("meta") if isinstance(stored_response.get("meta"), dict) else {}
         duplicate = (
-            attempt.meta_message_id == meta_message_id
+            (attempt.meta_message_id or "") == meta_message_id
             and previous_meta.get("status_code") == meta_status_code
             and previous_meta.get("response") == meta_response
+            and previous_meta.get("provider_status") == provider_status
         )
-        if previous_meta.get("callback_received") and not duplicate:
-            raise ValueError("Attempt already has a different successful callback")
         if duplicate:
             return dispatch, True
 
-        if 200 <= meta_status_code < 300 and message_status == "accepted":
+        if attempt.meta_message_id and meta_message_id and attempt.meta_message_id != meta_message_id:
+            raise ValueError("Attempt already has a different provider message id")
+        if attempt.status == MonthlyStudentReportDispatch.STATUS_DELIVERED:
+            return dispatch, True
+        if attempt.status == MonthlyStudentReportDispatch.STATUS_ACCEPTED and provider_status != "delivered":
+            return dispatch, True
+
+        if provider_status == "accepted":
             delivery_status = MonthlyStudentReportDispatch.STATUS_ACCEPTED
-        elif 200 <= meta_status_code < 300 and message_status == "delivered":
+        elif provider_status == "delivered":
             delivery_status = MonthlyStudentReportDispatch.STATUS_DELIVERED
+        elif provider_status == "unknown":
+            delivery_status = MonthlyStudentReportDispatch.STATUS_PENDING
         else:
             delivery_status = MonthlyStudentReportDispatch.STATUS_FAILED
 
         response_payload = dict(stored_response)
         response_payload["meta"] = {
             "callback_received": True,
+            "event": event or "student_monthly_report_sent",
+            "provider_status": provider_status,
             "channel": delivery.get("channel", "meta_whatsapp"),
             "status_code": meta_status_code,
             "request": delivery.get("meta_request", {}),
@@ -154,9 +183,12 @@ def record_meta_delivery_callback(
             "received_at": received_at.isoformat(),
         }
 
-        error_message = "" if delivery_status != MonthlyStudentReportDispatch.STATUS_FAILED else (
-            f"Meta returned HTTP {meta_status_code} with message_status '{message_status}'."
-        )
+        if delivery_status == MonthlyStudentReportDispatch.STATUS_FAILED:
+            error_message = str(delivery.get("outcome_reason") or f"Meta returned HTTP {meta_status_code} with message_status '{message_status}'.")
+        elif delivery_status == MonthlyStudentReportDispatch.STATUS_PENDING:
+            error_message = str(delivery.get("outcome_reason") or "Результат отправки не определён; автоматический повтор запрещён.")
+        else:
+            error_message = ""
         sent_at = received_at if delivery_status in MonthlyStudentReportDispatch.SUCCESSFUL_STATUSES else None
         attempt.response_payload = response_payload
         attempt.status = delivery_status
@@ -178,9 +210,13 @@ def record_meta_delivery_callback(
         if item is not None:
             item.status = delivery_status
             item.error_message = error_message
-            item.finished_at = received_at
+            item.finished_at = received_at if delivery_status in MonthlyStudentReportBatchItem.TERMINAL_STATUSES else None
             item.worker_token = None
-            item.save(update_fields=["status", "error_message", "finished_at", "worker_token", "updated_at"])
+            if delivery_status == MonthlyStudentReportDispatch.STATUS_PENDING:
+                item.requires_operator_review = True
+            item.save(update_fields=[
+                "status", "error_message", "finished_at", "worker_token", "requires_operator_review", "updated_at"
+            ])
 
     logger.info(
         "Meta callback stored: dispatch_id=%s student_id=%s month=%s status=%s duplicate=%s",
@@ -195,6 +231,44 @@ def record_meta_delivery_callback(
 
         refresh_batch_status(item.batch_id)
     return dispatch, duplicate
+
+
+def record_dify_provider_result(
+    *,
+    response_payload: dict[str, Any],
+    report_payload: dict[str, Any],
+) -> tuple[MonthlyStudentReportDispatch, bool] | None:
+    data = response_payload.get("data")
+    outputs = data.get("outputs") if isinstance(data, dict) else None
+    if not isinstance(outputs, dict) or not outputs.get("provider_status"):
+        return None
+    backend_payload = outputs.get("backend_payload")
+    if isinstance(backend_payload, str):
+        try:
+            delivery = json.loads(backend_payload)
+        except (TypeError, ValueError) as exc:
+            raise ValueError("Dify returned invalid backend_payload") from exc
+    elif isinstance(backend_payload, dict):
+        delivery = dict(backend_payload)
+    else:
+        delivery = {}
+    delivery.update({
+        "event": "student_monthly_report_result",
+        "report": delivery.get("report") or report_payload,
+        "provider_status": outputs.get("provider_status"),
+        "provider_message_id": outputs.get("provider_message_id", ""),
+        "provider_http_status": outputs.get("provider_http_status", 0),
+        "outcome_reason": outputs.get("outcome_reason", ""),
+    })
+    try:
+        provider_http_status = int(outputs.get("provider_http_status") or 0)
+    except (TypeError, ValueError, OverflowError):
+        provider_http_status = 0
+    return record_meta_delivery_callback(
+        delivery=delivery,
+        meta_status_code=provider_http_status,
+        meta_response={},
+    )
 
 
 def serialize_report_message(dispatch: MonthlyStudentReportDispatch) -> dict[str, Any]:

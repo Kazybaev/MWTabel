@@ -41,6 +41,7 @@ from .report_delivery import build_report_conversations, record_meta_delivery_ca
 from .report import force_send_all_monthly_reports, is_absence_grade, send_student_month_report
 from .organization import college_branch_for_request, organization_for_request, require_agrarian_college
 from .report_queue import enqueue_monthly_report_batch, serialize_report_batch
+from .report_routing import ensure_route_configured, workflow_route_for_context
 from .waha_reports import (
     WahaTestConfigurationError,
     enqueue_waha_test_batch,
@@ -1173,18 +1174,28 @@ class ForceSendAllReportsAPIView(APIView):
         serializer = ReportBulkDispatchRequestSerializer(data=request.data)
         serializer.is_valid(raise_exception=True)
         organization = organization_for_request(request)
+        if serializer.validated_data.get("organization", organization) != organization:
+            raise ValidationError({"organization": "Организация запроса не совпадает с выбранной организацией."})
+        college_branch = college_branch_for_request(request) if organization == "college" else None
+        try:
+            ensure_route_configured(workflow_route_for_context(organization, college_branch))
+        except ValueError as exc:
+            raise ValidationError({"detail": str(exc)}) from exc
         if organization == "college" and (serializer.validated_data.get("group_ids") or serializer.validated_data.get("student_ids")):
             raise ValidationError("Для колледжа доступна только отправка всем студентам.")
         month_start = parse_month_value(serializer.validated_data.get("month")) or timezone.localdate().replace(day=1)
-        batch = enqueue_monthly_report_batch(
-            created_by=request.user,
-            month=month_start,
-            organization_type=organization,
-            college_branch=college_branch_for_request(request) if organization == "college" else None,
-            group_ids=serializer.validated_data.get("group_ids"),
-            student_ids=serializer.validated_data.get("student_ids"),
-            confirm_retry_failed=serializer.validated_data.get("confirm_retry_failed", False),
-        )
+        try:
+            batch = enqueue_monthly_report_batch(
+                created_by=request.user,
+                month=month_start,
+                organization_type=organization,
+                college_branch=college_branch,
+                group_ids=serializer.validated_data.get("group_ids"),
+                student_ids=serializer.validated_data.get("student_ids"),
+                confirm_retry_failed=serializer.validated_data.get("confirm_retry_failed", False),
+            )
+        except ValueError as exc:
+            raise ValidationError({"detail": str(exc)}) from exc
         return Response(serialize_report_batch(batch), status=status.HTTP_202_ACCEPTED)
 
 
