@@ -162,6 +162,23 @@ class AcademyWorkflowRoutingTests(TestCase):
         )
         self.assertIn(summary["attendance_status_text"], build_report_message_text(report))
         self.assertNotIn("сабактан калган жок", build_report_message_text(report))
+        self.assertIn(
+            "Сентябрь айындагы баалары:\n“5” – 1 даана\n“4” – 1 даана\n“3” – 1 даана\n“2” – 1 даана",
+            build_report_message_text(report),
+        )
+
+    def test_zero_grade_counts_keep_fixed_positions_in_backend_text(self):
+        report = build_student_month_report(self.student, month_start=date(2026, 9, 1))
+        report["summary"].update({
+            "total_five": 0, "total_four": 3, "total_three": 10, "total_two": 0,
+            "absence_count": 0, "unmarked_count": 15,
+        })
+        text = build_report_message_text(report)
+        self.assertIn(
+            "Сентябрь айындагы баалары:\n“5” – 0 даана\n“4” – 3 даана\n“3” – 10 даана\n“2” – 0 даана",
+            text,
+        )
+        self.assertIn("Белгиленген калуулар (Н): 0; белги коюлбаган сабактар: 15.", text)
 
     def test_multiple_academy_grades_for_one_lesson_are_rejected(self):
         lesson = Lesson.objects.get(group=self.group, lesson_date=date(2026, 9, 1))

@@ -53,12 +53,11 @@ def build_report_message_text(payload: dict[str, Any]) -> str:
     }
     month_value = str(period.get("month", ""))
     month_label = month_names.get(month_value[-2:], month_value or "Отчёттук")
-    grade_lines = []
-    for grade, key in (("5", "total_five"), ("4", "total_four"), ("3", "total_three"), ("2", "total_two")):
-        count = int(summary.get(key, 0) or 0)
-        if count:
-            grade_lines.append(f'“{grade}” – {count} даана')
-    grades_text = "\n".join(grade_lines) or "Баалар коюлган жок"
+    grade_lines = [
+        f'“{grade}” – {int(summary.get(key, 0) or 0)} даана'
+        for grade, key in (("5", "total_five"), ("4", "total_four"), ("3", "total_three"), ("2", "total_two"))
+    ]
+    grades_text = "\n".join(grade_lines)
     absence_text = format_academy_attendance_status(summary)
     return (
         "Саламатсызбы!\n"

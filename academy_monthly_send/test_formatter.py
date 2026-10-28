@@ -1,4 +1,5 @@
 import unittest
+import json
 from pathlib import Path
 
 import yaml
@@ -44,8 +45,21 @@ class AcademyFormatterTests(unittest.TestCase):
     def test_partial_attendance_is_explicit_in_template_parameter(self):
         result = self.build_payload(**self.inputs())
         self.assertEqual(result['absence_text'], self.inputs()['report']['summary']['attendance_status_text'])
-        self.assertEqual(result['grade_line_3'], '—')
-        self.assertEqual(result['grade_line_4'], '—')
+        values = [item['text'] for item in json.loads(result['whatsapp_payload'])['template']['components'][0]['parameters']]
+        self.assertEqual(values, [
+            'ИИ-30', 'Шакеева Айдана', 'Сентябрь',
+            '“5” – 0 даана', '“4” – 3 даана', '“3” – 10 даана', '“2” – 0 даана',
+            'Белгиленген калуулар (Н): 0; белги коюлбаган сабактар: 15.',
+        ])
+
+    def test_month_contract_stays_yyyy_mm_with_name_only_in_meta_parameter(self):
+        inputs = self.inputs()
+        inputs['month'] = '2026-02'
+        inputs['report']['period']['month'] = '2026-02'
+        result = self.build_payload(**inputs)
+        self.assertEqual(json.loads(result['backend_payload'])['month'], '2026-02')
+        values = [item['text'] for item in json.loads(result['whatsapp_payload'])['template']['components'][0]['parameters']]
+        self.assertEqual(values[2], 'Февраль')
 
     def test_mismatched_snapshot_is_rejected(self):
         inputs = self.inputs()

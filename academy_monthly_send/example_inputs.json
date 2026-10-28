@@ -1,0 +1,31 @@
+{
+  "inputs": {
+    "student_name": "Шакеева Айдана",
+    "recipient_name": "Synthetic Parent",
+    "recipient_phone": "+996700000001",
+    "group_name": "ИИ-30",
+    "mentor_name": "Synthetic Mentor",
+    "month": "2026-09",
+    "average_grade": 3.2,
+    "attendance_count": 13,
+    "absence_count": 0,
+    "attendance_rate": 46.4,
+    "total_five": 0,
+    "total_four": 3,
+    "total_three": 10,
+    "total_two": 0,
+    "report": {
+      "organization": "academy",
+      "period": {"month": "2026-09"},
+      "student": {"full_name": "Шакеева Айдана", "parent_phone": "+996700000001"},
+      "summary": {
+        "total_lessons": 28,
+        "marked_lessons_count": 13,
+        "attendance_count": 13,
+        "absence_count": 0,
+        "unmarked_count": 15,
+        "attendance_status_text": "Белгиленген калуулар (Н): 0; белги коюлбаган сабактар: 15."
+      }
+    }
+  }
+}
