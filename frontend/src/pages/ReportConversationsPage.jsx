@@ -3,6 +3,7 @@ import { useEffect, useEffectEvent, useMemo, useRef, useState } from "react";
 import { Badge, Button, EmptyState, ErrorBlock, LoadingBlock, Modal } from "../components/Ui";
 import { formatMonthLabel, toMonthValue } from "../lib/format";
 import { getBulkDispatchPresentation, shouldPollReportBatch } from "../lib/reportDispatchResult";
+import { buildManualReportRequest } from "../lib/manualReportRequest";
 import { useResource } from "../lib/useResource";
 import "./ReportConversationsPage.css";
 
@@ -93,7 +94,7 @@ function ReportMessage({ message }) {
   );
 }
 
-export function ReportConversationsPage({ api, sessionToken, user, organization = "academy" }) {
+export function ReportConversationsPage({ api, sessionToken, user, organization = "academy", collegeBranch = "kuwait" }) {
   const [query, setQuery] = useState("");
   const [statusFilter, setStatusFilter] = useState("");
   const [selectedStudentId, setSelectedStudentId] = useState(null);
@@ -122,7 +123,7 @@ export function ReportConversationsPage({ api, sessionToken, user, organization 
   const [wahaParentError, setWahaParentError] = useState("");
   const messagesRef = useRef(null);
   const conversations = useResource(() => api("/api/reports/conversations/"), [sessionToken]);
-  const dispatchOptions = useResource(() => api("/api/reports/options/"), [sessionToken, organization]);
+  const dispatchOptions = useResource(() => api("/api/reports/options/"), [sessionToken, organization, collegeBranch]);
   const wahaTestConfig = useResource(() => api("/api/reports/waha-test/config/"), [sessionToken]);
   const wahaParentConfig = useResource(() => api("/api/reports/waha-parent/config/"), [sessionToken]);
   const wahaParentBatches = useResource(() => api("/api/reports/waha-parent/batches/"), [sessionToken]);
@@ -254,10 +255,10 @@ export function ReportConversationsPage({ api, sessionToken, user, organization 
     setSendingAll(true);
     setSendAllError("");
     try {
-      const body = { month: sendMonth };
-      body.confirm_retry_failed = confirmRetryFailed;
-      if (sendMode === "groups") body.group_ids = selectedGroupIds;
-      if (sendMode === "students") body.student_ids = selectedStudentIds;
+      const body = buildManualReportRequest({
+        organization, collegeBranch, month: sendMonth, mode: sendMode,
+        groupIds: selectedGroupIds, studentIds: selectedStudentIds, confirmRetryFailed,
+      });
       const result = await api("/api/reports/send-all/", { method: "POST", body });
       setSendAllResult(result);
       setConfirmSendAll(false);
@@ -340,7 +341,7 @@ export function ReportConversationsPage({ api, sessionToken, user, organization 
   }
 
   function openDispatchCard() {
-    setSendMode(organization === "college" ? "all" : "all");
+    setSendMode("all");
     setSendMonth(toMonthValue());
     setSelectedGroupIds([]);
     setSelectedStudentIds([]);
@@ -381,9 +382,10 @@ export function ReportConversationsPage({ api, sessionToken, user, organization 
           <Button variant="secondary" onClick={openWahaParentCard}>
             Подготовить WAHA-рассылку
           </Button>
-          <Button variant="danger" onClick={openDispatchCard}>
+          <Button variant="danger" onClick={openDispatchCard} disabled={!dispatchOptions.data?.ready} title={dispatchOptions.data?.unavailable_reason || ""}>
             Отправить отчёт всем
           </Button>
+          {dispatchOptions.data && !dispatchOptions.data.ready ? <span role="status">{dispatchOptions.data.unavailable_reason}</span> : null}
           <Button variant="secondary" onClick={conversations.reload} disabled={conversations.refreshing}>
             {conversations.refreshing ? "Обновляем…" : "Обновить"}
           </Button>
@@ -545,7 +547,7 @@ export function ReportConversationsPage({ api, sessionToken, user, organization 
       <Modal
         open={confirmSendAll}
         title="Отправить отчёты"
-        description={organization === "college" ? "Выберите месяц для отправки отчётов студентам колледжа." : "Выберите получателей и месяц отчёта."}
+        description="Выберите получателей и месяц отчёта для текущей организации."
         onClose={() => { if (!sendingAll) setConfirmSendAll(false); }}
         footer={(
           <>
@@ -557,13 +559,11 @@ export function ReportConversationsPage({ api, sessionToken, user, organization 
         )}
       >
         <div className="report-chat__bulk-warning report-chat__dispatch-card">
-          {organization !== "college" ? (
-            <div className="report-chat__dispatch-modes" role="group" aria-label="Кому отправить отчёт">
+          <div className="report-chat__dispatch-modes" role="group" aria-label="Кому отправить отчёт">
               <button type="button" className={sendMode === "all" ? "is-active" : ""} onClick={() => setSendMode("all")}>Отправить всем</button>
               <button type="button" className={sendMode === "groups" ? "is-active" : ""} onClick={() => setSendMode("groups")}>Выбрать группы</button>
               <button type="button" className={sendMode === "students" ? "is-active" : ""} onClick={() => setSendMode("students")}>Выбрать студентов</button>
-            </div>
-          ) : null}
+          </div>
           <label className="report-chat__month-field"><span>Месяц отчёта</span><input type="month" value={sendMonth} onChange={(event) => setSendMonth(event.target.value)} /></label>
           {sendMode === "groups" ? (
             <div className="report-chat__dispatch-list" aria-label="Группы">

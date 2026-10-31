@@ -361,7 +361,7 @@ function App() {
     }
 
     if (route.path === "/reports") {
-      return <ReportConversationsPage api={callApi} sessionToken={session.access} user={session.user} organization={organization} />;
+      return <ReportConversationsPage api={callApi} sessionToken={session.access} user={session.user} organization={organization} collegeBranch={collegeBranch} />;
     }
 
     if (route.path === "/my-grades") {

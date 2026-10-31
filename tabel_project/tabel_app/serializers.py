@@ -89,7 +89,8 @@ class ReportDispatchRequestSerializer(serializers.Serializer):
 
 
 class ReportBulkDispatchRequestSerializer(serializers.Serializer):
-    organization = serializers.ChoiceField(choices=ORGANIZATION_CHOICES, required=False)
+    organization = serializers.ChoiceField(choices=ORGANIZATION_CHOICES)
+    college_branch = serializers.ChoiceField(choices=("kuwait", "agrarian"), required=False)
     month = serializers.RegexField(regex=r"^\d{4}-\d{2}$", required=False)
     group_ids = serializers.ListField(child=serializers.IntegerField(min_value=1), required=False, allow_empty=False)
     student_ids = serializers.ListField(child=serializers.IntegerField(min_value=1), required=False, allow_empty=False)

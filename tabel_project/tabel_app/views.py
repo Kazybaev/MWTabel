@@ -1157,8 +1157,18 @@ class ReportDispatchOptionsAPIView(APIView):
         if college_branch:
             groups = groups.filter(college_branch=college_branch)
             students = students.filter(college_branch=college_branch)
+        workflow_route = workflow_route_for_context(organization, college_branch)
+        try:
+            ensure_route_configured(workflow_route)
+            route_ready, route_error = True, ""
+        except ValueError as exc:
+            route_ready, route_error = False, str(exc)
         return Response({
             "organization": organization,
+            "college_branch": college_branch,
+            "workflow_route": workflow_route,
+            "ready": route_ready,
+            "unavailable_reason": route_error,
             "groups": [{"id": group.pk, "name": group.course_name} for group in groups],
             "students": [{"id": student.pk, "name": student.user.full_name, "group_id": student.group_id, "group_name": student.group.course_name} for student in students],
         })
@@ -1174,15 +1184,18 @@ class ForceSendAllReportsAPIView(APIView):
         serializer = ReportBulkDispatchRequestSerializer(data=request.data)
         serializer.is_valid(raise_exception=True)
         organization = organization_for_request(request)
-        if serializer.validated_data.get("organization", organization) != organization:
+        if serializer.validated_data["organization"] != organization:
             raise ValidationError({"organization": "Организация запроса не совпадает с выбранной организацией."})
         college_branch = college_branch_for_request(request) if organization == "college" else None
+        requested_branch = serializer.validated_data.get("college_branch")
+        if organization == "college" and requested_branch != college_branch:
+            raise ValidationError({"college_branch": "Колледж запроса не совпадает с выбранным колледжем."})
+        if organization != "college" and requested_branch is not None:
+            raise ValidationError({"college_branch": "Для академии колледж указывать нельзя."})
         try:
             ensure_route_configured(workflow_route_for_context(organization, college_branch))
         except ValueError as exc:
             raise ValidationError({"detail": str(exc)}) from exc
-        if organization == "college" and (serializer.validated_data.get("group_ids") or serializer.validated_data.get("student_ids")):
-            raise ValidationError("Для колледжа доступна только отправка всем студентам.")
         month_start = parse_month_value(serializer.validated_data.get("month")) or timezone.localdate().replace(day=1)
         try:
             batch = enqueue_monthly_report_batch(

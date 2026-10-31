@@ -547,7 +547,7 @@ class MonthlyReportQueueConcurrencyTests(TransactionTestCase):
             client.force_authenticate(user=self.admin)
             response = client.post(
                 "/api/reports/send-all/",
-                {"month": "2026-08", "student_ids": [self.student.pk]},
+                {"organization": "academy", "month": "2026-08", "student_ids": [self.student.pk]},
                 format="json",
             )
             self.assertEqual(response.status_code, 202)

@@ -125,6 +125,69 @@ class AcademyWorkflowRoutingTests(TestCase):
         self.assertNotIn("DIFY_", str(response.data))
         self.assertEqual(MonthlyStudentReportBatch.objects.count(), 0)
 
+    def test_selected_college_branch_and_student_are_isolated(self):
+        mentor_user = User.objects.create_user(username="college-route-mentor", role=User.ROLE_MENTOR)
+        mentor = MentorProfile.objects.create(user=mentor_user, organization_type="college")
+        students = {}
+        for branch in ("kuwait", "agrarian"):
+            group = Group.objects.create(course_name=branch, mentor=mentor, organization_type="college", college_branch=branch)
+            user = User.objects.create_user(username=f"route-{branch}", role=User.ROLE_STUDENT)
+            students[branch] = StudentProfile.objects.create(
+                user=user, group=group, organization_type="college", college_branch=branch,
+                parent_phone="+996700000099",
+            )
+        body = {"organization": "college", "college_branch": "kuwait", "month": "2026-09"}
+        response = self.post_batch(body, organization="college", college_branch="kuwait")
+        self.assertEqual(response.status_code, 202)
+        batch = MonthlyStudentReportBatch.objects.get(pk=response.data["id"])
+        self.assertEqual(batch.requested_filters["workflow_route"], "kuwait")
+        self.assertEqual(batch.requested_filters["college_branch"], "kuwait")
+        self.assertEqual(list(batch.items.values_list("student_id", flat=True)), [students["kuwait"].pk])
+
+        chosen = self.post_batch({**body, "month": "2026-10", "group_ids": [students["kuwait"].group_id]}, organization="college", college_branch="kuwait")
+        self.assertEqual(chosen.status_code, 202)
+        self.assertEqual(list(MonthlyStudentReportBatch.objects.get(pk=chosen.data["id"]).items.values_list("student_id", flat=True)), [students["kuwait"].pk])
+
+        bad_branch = self.post_batch({**body, "college_branch": "agrarian"}, organization="college", college_branch="kuwait")
+        bad_student = self.post_batch({**body, "student_ids": [students["agrarian"].pk]}, organization="college", college_branch="kuwait")
+        bad_group = self.post_batch({**body, "group_ids": [students["agrarian"].group_id]}, organization="college", college_branch="kuwait")
+        self.assertEqual([bad_branch.status_code, bad_student.status_code, bad_group.status_code], [400, 400, 400])
+        self.assertEqual(MonthlyStudentReportBatch.objects.count(), 2)
+
+        with patch.dict(os.environ, {"DIFY_AGRARIAN_API_KEY": ""}):
+            blocked = self.post_batch({**body, "college_branch": "agrarian"}, organization="college", college_branch="agrarian")
+        self.assertEqual(blocked.status_code, 400)
+        self.assertIn("Аграрного колледжа пока не настроена", str(blocked.data))
+        self.assertEqual(MonthlyStudentReportBatch.objects.count(), 2)
+
+    @patch("tabel_app.report.run_dify_workflow")
+    def test_worker_keeps_saved_kuwait_route_after_request_context_changes(self, mocked_dify):
+        mentor_user = User.objects.create_user(username="kuwait-worker-mentor", role=User.ROLE_MENTOR)
+        mentor = MentorProfile.objects.create(user=mentor_user, organization_type="college")
+        group = Group.objects.create(course_name="Kuwait worker", mentor=mentor, organization_type="college", college_branch="kuwait")
+        user = User.objects.create_user(username="kuwait-worker-student", role=User.ROLE_STUDENT)
+        student = StudentProfile.objects.create(user=user, group=group, organization_type="college", college_branch="kuwait", parent_phone="+996700000088")
+        lesson = Lesson.objects.create(group=group, lesson_date=date(2026, 9, 30))
+        LessonRecord.objects.create(student=student, lesson=lesson, grade="5")
+        response = self.post_batch({"organization": "college", "college_branch": "kuwait", "month": "2026-09", "student_ids": [student.pk]}, organization="college", college_branch="kuwait")
+        self.assertEqual(response.status_code, 202)
+        item = claim_next_report_item(batch_ids=[response.data["id"]])
+        mocked_dify.return_value = {"workflow_run_id": "mock-kuwait", "data": {"status": "failed"}}
+        with patch.dict(os.environ, {"DIFY_ACADEMY_API_KEY": "", "DIFY_AGRARIAN_API_KEY": ""}):
+            process_claimed_report_item(item.pk, item.worker_token)
+        self.assertEqual(mocked_dify.call_args.args[2], "kuwait")
+        self.assertEqual(mocked_dify.call_count, 1)
+
+    def test_academy_all_uses_backend_queryset_and_skips_success(self):
+        other_user = User.objects.create_user(username="academy-other", role=User.ROLE_STUDENT)
+        other = StudentProfile.objects.create(user=other_user, group=self.group, organization_type="academy", parent_phone="+996700000077")
+        from .models import MonthlyStudentReportDispatch
+        MonthlyStudentReportDispatch.objects.create(student=self.student, month=date(2026, 9, 1), trigger_date=date(2026, 9, 4), status="accepted", attempts=1)
+        response = self.post_batch({"organization": "academy", "month": "2026-09"})
+        self.assertEqual(response.status_code, 202)
+        items = {item.student_id: item.status for item in MonthlyStudentReportBatch.objects.get(pk=response.data["id"]).items.all()}
+        self.assertEqual(items, {self.student.pk: "skipped", other.pk: "queued"})
+
     def test_academy_contract_has_exact_fifteen_inputs_and_exact_counts(self):
         report = build_student_month_report(self.student, month_start=date(2026, 9, 1))
         inputs = build_dify_inputs(report)

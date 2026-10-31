@@ -494,12 +494,12 @@ class TabelApiTests(APITestCase):
     def test_only_admin_can_queue_reports_for_all_students(self):
         admin_response = self.auth_client("admin", "admin-pass-123").post(
             "/api/reports/send-all/",
-            {},
+            {"organization": "academy"},
             format="json",
         )
         mentor_response = self.auth_client("mentor", "mentor-pass-123").post(
             "/api/reports/send-all/",
-            {},
+            {"organization": "academy"},
             format="json",
         )
 
@@ -517,7 +517,7 @@ class TabelApiTests(APITestCase):
     def test_queue_endpoint_never_calls_dify(self, mocked_run_dify):
         response = self.auth_client("admin", "admin-pass-123").post(
             "/api/reports/send-all/",
-            {"month": "2026-04"},
+            {"organization": "academy", "month": "2026-04"},
             format="json",
         )
 
