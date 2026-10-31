@@ -490,6 +490,7 @@ class TabelApiTests(APITestCase):
 
         self.assertEqual(response.status_code, status.HTTP_403_FORBIDDEN)
 
+    @patch.dict(os.environ, {"DIFY_ACADEMY_API_KEY": "academy-test-key", "DIFY_API_KEY": "shared-test-key"})
     def test_only_admin_can_queue_reports_for_all_students(self):
         admin_response = self.auth_client("admin", "admin-pass-123").post(
             "/api/reports/send-all/",
@@ -509,7 +510,9 @@ class TabelApiTests(APITestCase):
         self.assertEqual(admin_response.data["remaining"], 2)
         self.assertEqual(mentor_response.status_code, status.HTTP_403_FORBIDDEN)
         self.assertEqual(MonthlyStudentReportBatch.objects.count(), 1)
+        self.assertEqual(MonthlyStudentReportBatch.objects.get().requested_filters["workflow_route"], "academy")
 
+    @patch.dict(os.environ, {"DIFY_ACADEMY_API_KEY": "academy-test-key", "DIFY_API_KEY": "shared-test-key"})
     @patch("tabel_app.report.run_dify_workflow")
     def test_queue_endpoint_never_calls_dify(self, mocked_run_dify):
         response = self.auth_client("admin", "admin-pass-123").post(
@@ -723,7 +726,8 @@ class MonthlyReportServiceTests(APITestCase):
         with patch.dict(
             os.environ,
             {
-                "DIFY_API_KEY": "app-test-key",
+                "DIFY_API_KEY": "shared-test-key",
+                "DIFY_ACADEMY_API_KEY": "academy-test-key",
                 "DIFY_API_URL": "https://api.dify.ai/v1/workflows/run",
                 "BACKEND_REPORT_CALLBACK_TOKEN": "callback-token-at-least-32-characters",
             },
@@ -732,11 +736,13 @@ class MonthlyReportServiceTests(APITestCase):
             response_payload = run_dify_workflow(
                 {"student_name": "Report Student", "month": "2026-04"},
                 "report:1:2026-04",
+                "academy",
             )
 
         self.assertEqual(response_payload["workflow_run_id"], "run-ua")
         self.assertIn("user-agent", captured["headers"])
         self.assertIn("TabelBackend/1.0", captured["headers"]["user-agent"])
+        self.assertEqual(captured["headers"]["authorization"], "Bearer academy-test-key")
 
     @patch("tabel_app.report.time.sleep")
     @patch("tabel_app.report.run_dify_workflow")
@@ -971,14 +977,15 @@ class MonthlyReportServiceTests(APITestCase):
         with patch.dict(
             os.environ,
             {
-                "DIFY_API_KEY": "configured-test-key",
+                "DIFY_API_KEY": "shared-test-key",
+                "DIFY_ACADEMY_API_KEY": "academy-test-key",
                 "DIFY_API_URL": "https://api.dify.invalid/v1/workflows/run",
                 "BACKEND_REPORT_CALLBACK_TOKEN": "",
             },
             clear=False,
         ):
             with self.assertRaises(ReportConfigurationError):
-                run_dify_workflow({}, "report:1:2026-04")
+                run_dify_workflow({}, "report:1:2026-04", "academy")
 
         mocked_urlopen.assert_not_called()
 
@@ -1020,7 +1027,8 @@ class MonthlyReportServiceTests(APITestCase):
     def test_meta_failure_is_not_overwritten_by_late_dify_success(self, mocked_run_dify_workflow):
         LessonRecord.objects.create(student=self.student, lesson=self.third_lesson, grade="5")
 
-        def complete_workflow_after_callback(inputs, user_key):
+        def complete_workflow_after_callback(inputs, user_key, workflow_route):
+            self.assertEqual(workflow_route, "academy")
             record_meta_delivery_callback(
                 delivery={"report": inputs["report"], "meta_request": {"messaging_product": "whatsapp"}},
                 meta_status_code=400,
@@ -1087,7 +1095,8 @@ class MonthlyReportServiceTests(APITestCase):
     def test_successful_meta_callback_wins_over_partial_dify_result(self, mocked_run_dify_workflow):
         LessonRecord.objects.create(student=self.student, lesson=self.third_lesson, grade="5")
 
-        def complete_workflow_after_callback(inputs, user_key):
+        def complete_workflow_after_callback(inputs, user_key, workflow_route):
+            self.assertEqual(workflow_route, "academy")
             record_meta_delivery_callback(
                 delivery={"report": inputs["report"], "rendered_text": "Exact message"},
                 meta_status_code=200,

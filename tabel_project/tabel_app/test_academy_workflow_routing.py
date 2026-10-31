@@ -25,6 +25,7 @@ from .report_queue import claim_next_report_item, enqueue_monthly_report_batch, 
 class AcademyWorkflowRoutingTests(TestCase):
     def setUp(self):
         self.keys = patch.dict(os.environ, {
+            "DIFY_API_KEY": "shared-key-must-not-route-academy",
             "DIFY_ACADEMY_API_KEY": "academy-key",
             "DIFY_KUWAIT_API_KEY": "kuwait-key",
             "DIFY_AGRARIAN_API_KEY": "",
