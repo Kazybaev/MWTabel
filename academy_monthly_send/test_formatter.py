@@ -45,6 +45,7 @@ class AcademyFormatterTests(unittest.TestCase):
     def test_partial_attendance_is_explicit_in_template_parameter(self):
         result = self.build_payload(**self.inputs())
         self.assertEqual(result['absence_text'], self.inputs()['report']['summary']['attendance_status_text'])
+        self.assertEqual(json.loads(result['backend_payload'])['month'], '2026-09')
         values = [item['text'] for item in json.loads(result['whatsapp_payload'])['template']['components'][0]['parameters']]
         self.assertEqual(values, [
             'ИИ-30', 'Шакеева Айдана', 'Сентябрь',
