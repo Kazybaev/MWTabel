@@ -21,6 +21,7 @@ from graphon.runtime import GraphRuntimeState, VariablePool
 
 APP = '7237fd4d-3859-4b73-b478-61c22df586ce'
 WORKFLOW = '133b3a19-0eb7-470c-bc25-2b4518568e3c'
+THREE_SUBJECT_NOTE = 'Бул отчетто 3 сабак бар; төртүнчү орундагы «—» сабак жок экенин билдирет.'
 
 
 class Transport:
@@ -87,7 +88,9 @@ def main():
         params = transport.messages[0]['template']['components'][0]['parameters']
         values = [item['text'] for item in params]
         assert len(values) == 24 and values[18:23] == ['—'] * 5
-        print(f'batch11_item_{index}: PASS calls={len(transport.calls)} parameters={len(values)} fourth={values[18:23]}')
+        assert values[23].splitlines()[-1] == THREE_SUBJECT_NOTE
+        assert values[23].count(THREE_SUBJECT_NOTE) == 1
+        print(f'batch11_item_{index}: PASS calls={len(transport.calls)} parameters={len(values)} fourth={values[18:23]} note=present')
     four = copy.deepcopy(rows[0])
     fourth = copy.deepcopy(four['subjects'][0])
     fourth['name'] = 'Тестовый четвёртый предмет'
@@ -96,7 +99,8 @@ def main():
     assert len(transport.messages) == 1, events
     values = [item['text'] for item in transport.messages[0]['template']['components'][0]['parameters']]
     assert len(values) == 24 and values[18] == 'Тестовый четвёртый предмет'
-    print(f'four_subjects: PASS calls={len(transport.calls)} parameters={len(values)} fourth={values[18:23]}')
+    assert THREE_SUBJECT_NOTE not in values[23]
+    print(f'four_subjects: PASS calls={len(transport.calls)} parameters={len(values)} fourth={values[18:23]} note=absent')
     for label, subjects in [('empty', []), ('five', four['subjects'] + [fourth]), ('invalid', 'wrong')]:
         bad = copy.deepcopy(rows[0])
         bad['subjects'] = subjects

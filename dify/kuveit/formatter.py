@@ -4,6 +4,7 @@ from datetime import datetime
 
 
 TEMPLATE_NAME = "student_monthsly_send_v5"
+THREE_SUBJECT_NOTE = "Бул отчетто 3 сабак бар; төртүнчү орундагы «—» сабак жок экенин билдирет."
 
 
 MONTH_NAMES = {
@@ -369,6 +370,8 @@ def main(report: dict = None) -> dict:
     absence_text = format_absence_text(
         absence_dates
     )
+    if len(course_statistics) == 3:
+        absence_text = f"{absence_text}\n{THREE_SUBJECT_NOTE}"
 
     period_text = format_period(
         report=report,

@@ -43,19 +43,18 @@ missing subject slot, the proposed formatter sends `—` in all five fields.
 | 21 | Subject 4 grade 4 | `subjects[3].grade_counts["4"]` or `—` if no fourth subject |
 | 22 | Subject 4 grade 3 | `subjects[3].grade_counts["3"]` or `—` if no fourth subject |
 | 23 | Subject 4 grade 2 | `subjects[3].grade_counts["2"]` or `—` if no fourth subject |
-| 24 | Absences | Union of `report.absence_dates` and each subject's `absence_dates`, formatted as dates or explicit no-absence text |
+| 24 | Absences | Union of `report.absence_dates` and each subject's `absence_dates`, formatted as dates or explicit no-absence text; for exactly three subjects add one final line: `Бул отчетто 3 сабак бар; төртүнчү орундагы «—» сабак жок экенин билдирет.` |
 
 ## Publication gate
 
-The workflow's Meta request contains only the template name and 24 values.
-The approved static template body is not stored in this repository or the
-published Dify graph. A read through the available Meta token did not return
-the business account/template. Therefore the exact static phrases around
-positions 19–23 remain unverified. In particular, if the template says
-`“5”тен {{20}} даана`, `—` yields `“5”тен — даана`; whether this clearly means
-"no fourth subject" requires review of the approved body. Do not publish
-the formatter until that wording is verified. Do not change the Meta template
-as part of this patch.
+The workflow's Meta request contains the template name and 24 values. The
+user supplied the parameter layout, but the literal static BODY has not been
+provided, and a read through the available Meta token did not return the
+business account/template. The exact rendered text and the template's
+`APPROVED` status in the sender account remain unverified. The fourth slot's
+five `—` values are explicitly explained in parameter 24 for three-subject
+reports. Do not publish until the literal BODY and Meta approval are verified.
+Do not change the Meta template as part of this patch.
 
 The private published graph and three batch-11 payloads can be supplied to
 `runtime_audit.py` in a Dify 1.14.2 container. The audit replaces the code,

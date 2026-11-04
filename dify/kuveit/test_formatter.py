@@ -5,7 +5,7 @@ import json
 import os
 import unittest
 
-from formatter import main
+from formatter import THREE_SUBJECT_NOTE, main
 
 
 class KuwaitFormatterTests(unittest.TestCase):
@@ -38,6 +38,8 @@ class KuwaitFormatterTests(unittest.TestCase):
                 self.assertEqual(len(values), 24)
                 self.assertEqual(values[18:23], ["—"] * 5)
                 self.assertEqual(values[3], report["subjects"][0]["name"])
+                self.assertEqual(values[23].splitlines()[-1], THREE_SUBJECT_NOTE)
+                self.assertEqual(values[23].count(THREE_SUBJECT_NOTE), 1)
 
     def test_four_subjects_keep_original_positions(self):
         report = copy.deepcopy(self.reports[0])
@@ -48,6 +50,7 @@ class KuwaitFormatterTests(unittest.TestCase):
         values = self.values(report)
         self.assertEqual(len(values), 24)
         self.assertEqual(values[18:23], ["Тестовый четвёртый предмет", "2", "1", "0", "0"])
+        self.assertNotIn(THREE_SUBJECT_NOTE, values[23])
 
     def test_invalid_subject_counts_are_rejected(self):
         for subjects in ([], self.reports[0]["subjects"] * 2, "wrong"):
