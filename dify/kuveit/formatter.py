@@ -370,8 +370,9 @@ def main(report: dict = None) -> dict:
     absence_text = format_absence_text(
         absence_dates
     )
+    template_absence_text = absence_text
     if len(course_statistics) == 3:
-        absence_text = f"{absence_text}\n{THREE_SUBJECT_NOTE}"
+        template_absence_text = f"{absence_text}\n{THREE_SUBJECT_NOTE}"
 
     period_text = format_period(
         report=report,
@@ -404,7 +405,7 @@ def main(report: dict = None) -> dict:
 
     # Последняя переменная
     template_values.append(
-        absence_text
+        template_absence_text
     )                      # {{24}}
 
     if len(template_values) != 24:

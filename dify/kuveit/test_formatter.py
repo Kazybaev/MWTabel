@@ -29,6 +29,13 @@ class KuwaitFormatterTests(unittest.TestCase):
         payload = json.loads(result["whatsapp_payload"])
         return [item["text"] for item in payload["template"]["components"][0]["parameters"]]
 
+    def test_explanation_is_only_in_template_parameter(self):
+        output = main(self.sanitized(self.reports[0]))
+        callback = json.loads(output["backend_payload"])
+        self.assertNotIn(THREE_SUBJECT_NOTE, output["absence_text"])
+        self.assertNotIn(THREE_SUBJECT_NOTE, callback["absence_text"])
+        self.assertIn(THREE_SUBJECT_NOTE, output["whatsapp_payload"])
+
     def test_three_real_reports_have_fourth_slot_marked_absent(self):
         self.assertEqual(len(self.reports), 3)
         for report in self.reports:
