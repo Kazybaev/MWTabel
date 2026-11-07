@@ -27,7 +27,17 @@ class KuwaitFormatterTests(unittest.TestCase):
     def values(self, report):
         result = main(self.sanitized(report))
         payload = json.loads(result["whatsapp_payload"])
-        return [item["text"] for item in payload["template"]["components"][0]["parameters"]]
+        parameters = payload["template"]["components"][0]["parameters"]
+        self.assertEqual(len(parameters), 24)
+        for item in parameters:
+            self.assertEqual(item["type"], "text")
+            text = item["text"]
+            self.assertNotIn("\r", text)
+            self.assertNotIn("\n", text)
+            self.assertNotIn("\t", text)
+            self.assertNotIn("     ", text)
+            self.assertEqual(text, " ".join(text.split()))
+        return [item["text"] for item in parameters]
 
     def test_explanation_is_only_in_template_parameter(self):
         output = main(self.sanitized(self.reports[0]))
@@ -45,8 +55,9 @@ class KuwaitFormatterTests(unittest.TestCase):
                 self.assertEqual(len(values), 24)
                 self.assertEqual(values[18:23], ["—"] * 5)
                 self.assertEqual(values[3], report["subjects"][0]["name"])
-                self.assertEqual(values[23].splitlines()[-1], THREE_SUBJECT_NOTE)
+                self.assertTrue(values[23].endswith(" " + THREE_SUBJECT_NOTE))
                 self.assertEqual(values[23].count(THREE_SUBJECT_NOTE), 1)
+                self.assertTrue(values[23].startswith(" ".join(main(self.sanitized(report))["absence_text"].split()) + " "))
 
     def test_four_subjects_keep_original_positions(self):
         report = copy.deepcopy(self.reports[0])
@@ -58,6 +69,16 @@ class KuwaitFormatterTests(unittest.TestCase):
         self.assertEqual(len(values), 24)
         self.assertEqual(values[18:23], ["Тестовый четвёртый предмет", "2", "1", "0", "0"])
         self.assertNotIn(THREE_SUBJECT_NOTE, values[23])
+
+    def test_normalizes_all_final_meta_text_values(self):
+        report = copy.deepcopy(self.reports[0])
+        report["main_group"]["name"] = "  Тестовая\t\nгруппа     "
+        report["subjects"][0]["name"] = "  Первый\r\n предмет     "
+        values = self.values(report)
+        self.assertEqual(values[0], "Тестовая группа")
+        self.assertEqual(values[3], "Первый предмет")
+        self.assertEqual(values[18:23], ["—"] * 5)
+        self.assertTrue(values[23].endswith(" " + THREE_SUBJECT_NOTE))
 
     def test_invalid_subject_counts_are_rejected(self):
         for subjects in ([], self.reports[0]["subjects"] * 2, "wrong"):

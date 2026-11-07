@@ -434,7 +434,9 @@ def main(report: dict = None) -> dict:
                     "parameters": [
                         {
                             "type": "text",
-                            "text": safe_text(value)
+                            # Meta template parameters must be a single line.
+                            # Normalize after the absence note is appended.
+                            "text": " ".join(safe_text(value).split())
                         }
                         for value in template_values
                     ]

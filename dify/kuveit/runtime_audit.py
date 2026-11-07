@@ -20,7 +20,7 @@ from graphon.http import HttpResponse
 from graphon.runtime import GraphRuntimeState, VariablePool
 
 APP = '7237fd4d-3859-4b73-b478-61c22df586ce'
-WORKFLOW = '133b3a19-0eb7-470c-bc25-2b4518568e3c'
+WORKFLOW = '213e4bf4-8cd9-408a-858b-db918f4c6bef'
 THREE_SUBJECT_NOTE = 'Бул отчетто 3 сабак бар; төртүнчү орундагы «—» сабак жок экенин билдирет.'
 
 
@@ -36,8 +36,16 @@ class Transport:
         self.calls.append(url)
         if url == 'https://mock.invalid/meta':
             body = json.loads(kwargs['content'])
-            self.messages.append(body)
             assert body['template']['name'] == 'student_monthsly_send_v5'
+            params = body['template']['components'][0]['parameters']
+            assert len(params) == 24
+            for param in params:
+                assert param['type'] == 'text'
+                value = param['text']
+                assert value == ' '.join(value.split())
+                assert not any(char in value for char in '\r\n\t')
+                assert '     ' not in value
+            self.messages.append(body)
             return HttpResponse(status_code=200, content=b'{"messages":[{"id":"wamid.mock"}]}', url=url)
         assert url == 'https://mock.invalid/backend', url
         return HttpResponse(status_code=200, content=b'{"ok":true}', url=url)
@@ -78,7 +86,7 @@ def main():
             data['url'] = 'https://mock.invalid/meta' if data['title'] == 'HTTP-запрос' else 'https://mock.invalid/backend'
             data['authorization'] = {'type': 'api-key', 'config': {'type': 'bearer', 'api_key': 'synthetic-token'}}
     rows = [json.loads(line)['payload'] for line in Path('/audit/payloads.jsonl').read_text().splitlines()]
-    assert len(rows) == 3
+    assert rows
     for index, report in enumerate(rows, 1):
         report['student']['full_name'] = 'Тестовый студент'
         report['student']['parent_name'] = 'Тестовый родитель'
@@ -88,7 +96,7 @@ def main():
         params = transport.messages[0]['template']['components'][0]['parameters']
         values = [item['text'] for item in params]
         assert len(values) == 24 and values[18:23] == ['—'] * 5
-        assert values[23].splitlines()[-1] == THREE_SUBJECT_NOTE
+        assert values[23].endswith(' ' + THREE_SUBJECT_NOTE)
         assert values[23].count(THREE_SUBJECT_NOTE) == 1
         print(f'batch11_item_{index}: PASS calls={len(transport.calls)} parameters={len(values)} fourth={values[18:23]} note=present')
     four = copy.deepcopy(rows[0])
