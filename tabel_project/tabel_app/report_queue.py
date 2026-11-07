@@ -14,12 +14,14 @@ from django.utils import timezone
 from .models import (
     MonthlyStudentReportBatch,
     MonthlyStudentReportBatchItem,
+    MonthlyStudentReportAttempt,
     MonthlyStudentReportDispatch,
     StudentProfile,
     User,
     WahaParentReportBatchItem,
     WahaTestReportBatchItem,
 )
+from .report import get_student_report_groups, student_has_month_report_activity
 from .report_routing import workflow_route_for_context, workflow_route_for_student
 
 
@@ -52,8 +54,6 @@ def enqueue_monthly_report_batch(
     workflow_route = workflow_route_for_context(organization_type, college_branch)
     with transaction.atomic():
         students = StudentProfile.objects.select_for_update().filter(
-            archived_at__isnull=True,
-            group__archived_at__isnull=True,
             organization_type=organization_type,
         ).select_related("group")
         if college_branch is not None:
@@ -62,7 +62,10 @@ def enqueue_monthly_report_batch(
             students = students.filter(group_id__in=group_ids)
         if student_ids:
             students = students.filter(pk__in=student_ids)
-        students_to_queue = list(students.order_by("group__course_name", "user__full_name", "pk"))
+        students_to_queue = [
+            student for student in students.order_by("group__course_name", "user__full_name", "pk")
+            if student_has_month_report_activity(student, month)
+        ]
         requested_student_ids = set(student_ids or [])
         requested_group_ids = set(group_ids or [])
         selected_student_ids = {student.pk for student in students_to_queue}
@@ -70,16 +73,7 @@ def enqueue_monthly_report_batch(
         if requested_student_ids and selected_student_ids != requested_student_ids:
             raise ValueError("Выбранные студенты не принадлежат выбранной организации и группе.")
         if requested_group_ids:
-            authorized_group_ids = set(
-                StudentProfile.objects.filter(
-                    archived_at__isnull=True,
-                    group__archived_at__isnull=True,
-                    organization_type=organization_type,
-                    group_id__in=requested_group_ids,
-                    **({"college_branch": college_branch} if college_branch is not None else {}),
-                ).values_list("group_id", flat=True)
-            )
-            if authorized_group_ids != requested_group_ids or not selected_group_ids.issubset(requested_group_ids):
+            if selected_group_ids != requested_group_ids:
                 raise ValueError("Выбранные группы не принадлежат выбранной организации.")
         if any(workflow_route_for_student(student) != workflow_route for student in students_to_queue):
             raise ValueError("Выбранные студенты относятся к другому маршруту отчётов.")
@@ -146,6 +140,15 @@ def enqueue_monthly_report_batch(
             if dispatch and dispatch.status in MonthlyStudentReportDispatch.SUCCESSFUL_STATUSES:
                 item_status = MonthlyStudentReportBatchItem.STATUS_SKIPPED
                 error_message = "Already accepted or delivered."
+            elif dispatch and MonthlyStudentReportAttempt.objects.filter(dispatch=dispatch).filter(
+                Q(status__in=("pending", "accepted", "delivered", "succeeded"))
+                | Q(message_status="unknown")
+            ).exists():
+                item_status = MonthlyStudentReportBatchItem.STATUS_SKIPPED
+                error_message = "A delivery attempt is active, accepted, delivered, or unknown; review before retry."
+            elif workflow_route == "kuwait" and len(get_student_report_groups(student, month)) > 4:
+                item_status = MonthlyStudentReportBatchItem.STATUS_SKIPPED
+                error_message = "More than four subjects in the reporting month; review before Kuwait Meta send."
             elif dispatch and dispatch.status == MonthlyStudentReportDispatch.STATUS_FAILED and not confirm_retry_failed:
                 item_status = MonthlyStudentReportBatchItem.STATUS_SKIPPED
                 error_message = "Retrying a failed attempt requires explicit confirmation."

@@ -132,14 +132,59 @@ def get_student_trigger_lesson(student: StudentProfile, month_start: date) -> Le
     )
 
 
-def get_student_report_groups(student: StudentProfile) -> list[Group]:
+def archive_allows_month(archived_at: datetime | None, month_start: date) -> bool:
+    return archived_at is None or archived_at.date() >= month_start
+
+
+def get_student_report_groups(student: StudentProfile, month_start: date | None = None) -> list[Group]:
     """Return all subjects for a college student, or the single academy group."""
     if student.organization_type != "college":
         return [student.group]
-    groups = list(student.college_groups.filter(archived_at__isnull=True).select_related("mentor__user").order_by("course_name", "id"))
-    if student.group_id and student.group.archived_at is None and all(group.pk != student.group_id for group in groups):
-        groups.insert(0, student.group)
-    return groups or [student.group]
+
+    groups = []
+    for group in student.college_groups.select_related("mentor__user").order_by("course_name", "id"):
+        if group.organization_type != student.organization_type or group.college_branch != student.college_branch:
+            continue
+        if month_start is None:
+            eligible = group.archived_at is None
+        else:
+            eligible = archive_allows_month(group.archived_at, month_start)
+            if eligible and group.archived_at is not None:
+                start, end = month_bounds(month_start)
+                eligible = Lesson.objects.filter(group=group, lesson_date__range=(start, end)).exists()
+        if eligible:
+            groups.append(group)
+    if student.group_id and student.group.organization_type == student.organization_type and student.group.college_branch == student.college_branch and all(group.pk != student.group_id for group in groups):
+        primary = student.group
+        if month_start is None:
+            eligible = primary.archived_at is None
+        else:
+            eligible = archive_allows_month(primary.archived_at, month_start)
+            if eligible and primary.archived_at is not None:
+                start, end = month_bounds(month_start)
+                eligible = Lesson.objects.filter(group=primary, lesson_date__range=(start, end)).exists()
+        if eligible:
+            groups.insert(0, primary)
+    return groups
+
+
+def student_has_month_report_activity(student: StudentProfile, month_start: date) -> bool:
+    """Require period evidence when a college student or primary group is archived."""
+    if student.organization_type != "college":
+        return student.archived_at is None and student.group.archived_at is None
+    if not archive_allows_month(student.archived_at, month_start) or not archive_allows_month(student.group.archived_at, month_start):
+        return False
+    if student.organization_type != student.group.organization_type or student.college_branch != student.group.college_branch:
+        return False
+    if student.archived_at is None and student.group.archived_at is None:
+        return True
+    groups = get_student_report_groups(student, month_start)
+    if not groups:
+        return False
+    start, end = month_bounds(month_start)
+    return LessonRecord.objects.filter(
+        student=student, lesson__group__in=groups, lesson__lesson_date__range=(start, end),
+    ).exists()
 
 
 def has_student_trigger_lesson_record(student: StudentProfile, trigger_lesson: Lesson) -> bool:
@@ -150,7 +195,7 @@ def get_month_lessons_for_student(student: StudentProfile, month_start: date) ->
     month_start, month_end = month_bounds(month_start)
     return list(
         Lesson.objects.filter(
-            group__in=get_student_report_groups(student),
+            group__in=get_student_report_groups(student, month_start),
             lesson_date__gte=month_start,
             lesson_date__lte=month_end,
         ).select_related("group").order_by("lesson_date", "id")
@@ -162,7 +207,7 @@ def get_month_records_for_student(student: StudentProfile, month_start: date) ->
     return list(
         LessonRecord.objects.filter(
             student=student,
-            lesson__group__in=get_student_report_groups(student),
+            lesson__group__in=get_student_report_groups(student, month_start),
             lesson__lesson_date__gte=month_start,
             lesson__lesson_date__lte=month_end,
         )
@@ -176,18 +221,18 @@ def build_student_month_report(
     month_start: date | datetime | None = None,
     trigger_date: date | None = None,
 ) -> dict[str, Any]:
-    if student.archived_at is not None or student.group.archived_at is not None:
+    month_start = normalize_month_start(month_start)
+    if not student_has_month_report_activity(student, month_start):
         return {
             "student_id": student.pk,
             "student_name": student.user.full_name,
             "status": "skipped",
             "reason": "archived_student_or_group",
         }
-    month_start = normalize_month_start(month_start)
     month_start, month_end = month_bounds(month_start)
     lessons = get_month_lessons_for_student(student, month_start)
     records = get_month_records_for_student(student, month_start)
-    groups = get_student_report_groups(student)
+    groups = get_student_report_groups(student, month_start)
     trigger_date = trigger_date or max(
         (day for group in groups if (day := get_group_last_lesson_date(group, month_start)) is not None),
         default=None,
