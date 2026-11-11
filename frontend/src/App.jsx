@@ -353,7 +353,7 @@ function App() {
     }
 
     if (route.path === "/archive") {
-      return <ArchivedStudentsPage api={callApi} sessionToken={session.access} user={session.user} onNotice={setNotice} />;
+      return <ArchivedStudentsPage key={`${organization}-${collegeBranch}`} organization={organization} collegeBranch={collegeBranch} api={callApi} sessionToken={session.access} user={session.user} onNotice={setNotice} />;
     }
 
     if (route.path === "/mentors") {

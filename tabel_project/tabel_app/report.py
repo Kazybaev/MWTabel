@@ -15,8 +15,11 @@ from .models import (
     Lesson,
     LessonRecord,
     MonthlyStudentReportAttempt,
+    MonthlyStudentReportBatchItem,
     MonthlyStudentReportDispatch,
     StudentProfile,
+    WahaParentReportBatchItem,
+    WahaTestReportBatchItem,
 )
 
 
@@ -440,6 +443,12 @@ def run_dify_workflow(inputs: dict[str, Any], user_key: str) -> dict[str, Any]:
     if not api_key:
         raise ReportConfigurationError("DIFY_API_KEY must be configured.")
 
+    callback_token = os.getenv("BACKEND_REPORT_CALLBACK_TOKEN", "").strip()
+    if len(callback_token) < 32:
+        raise ReportConfigurationError(
+            "BACKEND_REPORT_CALLBACK_TOKEN must be configured with at least 32 characters."
+        )
+
     response_mode = os.getenv("DIFY_RESPONSE_MODE", "blocking").strip() or "blocking"
     timeout_seconds = int(os.getenv("DIFY_TIMEOUT_SECONDS", "30"))
     url = get_dify_run_url()
@@ -524,6 +533,8 @@ def send_student_month_report(
     force: bool = False,
     bypass_schedule: bool = False,
     resend_succeeded: bool = False,
+    batch_item: MonthlyStudentReportBatchItem | None = None,
+    retry_failed_confirmed: bool = False,
 ) -> dict[str, Any]:
     run_date = normalize_run_date(run_date)
     month_start = normalize_month_start(month_start or run_date)
@@ -573,7 +584,7 @@ def send_student_month_report(
     dispatch = MonthlyStudentReportDispatch.objects.filter(student=student, month=month_start).first()
     if (
         dispatch
-        and dispatch.status == MonthlyStudentReportDispatch.STATUS_SUCCEEDED
+        and dispatch.status in MonthlyStudentReportDispatch.SUCCESSFUL_STATUSES
         and not resend_succeeded
     ):
         logger.info(
@@ -586,6 +597,14 @@ def send_student_month_report(
             "student_name": student.user.full_name,
             "status": "skipped",
             "reason": "already_sent",
+            "dispatch_id": dispatch.pk,
+        }
+    if dispatch and dispatch.status == MonthlyStudentReportDispatch.STATUS_FAILED and not retry_failed_confirmed:
+        return {
+            "student_id": student.pk,
+            "student_name": student.user.full_name,
+            "status": "skipped",
+            "reason": "failed_retry_not_confirmed",
             "dispatch_id": dispatch.pk,
         }
 
@@ -612,6 +631,39 @@ def send_student_month_report(
 
     try:
         with transaction.atomic():
+            StudentProfile.objects.select_for_update().get(pk=student.pk)
+            if WahaParentReportBatchItem.objects.filter(
+                student=student,
+                month=month_start,
+                status__in=WahaParentReportBatchItem.ACTIVE_STATUSES
+                + (
+                    WahaParentReportBatchItem.STATUS_ACCEPTED,
+                    WahaParentReportBatchItem.STATUS_UNKNOWN,
+                    WahaParentReportBatchItem.STATUS_FAILED,
+                ),
+            ).exists():
+                return {
+                    "student_id": student.pk,
+                    "student_name": student.user.full_name,
+                    "status": "skipped",
+                    "reason": "waha_parent_report_exists",
+                }
+            if WahaTestReportBatchItem.objects.filter(
+                student=student,
+                month=month_start,
+                status__in=(
+                    WahaTestReportBatchItem.STATUS_QUEUED,
+                    WahaTestReportBatchItem.STATUS_PROCESSING,
+                    WahaTestReportBatchItem.STATUS_ACCEPTED,
+                    WahaTestReportBatchItem.STATUS_UNKNOWN,
+                ),
+            ).exists():
+                return {
+                    "student_id": student.pk,
+                    "student_name": student.user.full_name,
+                    "status": "skipped",
+                    "reason": "waha_test_report_exists",
+                }
             dispatch, _ = MonthlyStudentReportDispatch.objects.select_for_update().get_or_create(
                 student=student,
                 month=month_start,
@@ -619,7 +671,7 @@ def send_student_month_report(
             )
 
             if (
-                dispatch.status == MonthlyStudentReportDispatch.STATUS_SUCCEEDED
+                dispatch.status in MonthlyStudentReportDispatch.SUCCESSFUL_STATUSES
                 and not resend_succeeded
             ):
                 return {
@@ -627,6 +679,14 @@ def send_student_month_report(
                     "student_name": student.user.full_name,
                     "status": "skipped",
                     "reason": "already_sent",
+                    "dispatch_id": dispatch.pk,
+                }
+            if dispatch.status == MonthlyStudentReportDispatch.STATUS_FAILED and not retry_failed_confirmed:
+                return {
+                    "student_id": student.pk,
+                    "student_name": student.user.full_name,
+                    "status": "skipped",
+                    "reason": "failed_retry_not_confirmed",
                     "dispatch_id": dispatch.pk,
                 }
 
@@ -659,6 +719,22 @@ def send_student_month_report(
                 status=MonthlyStudentReportDispatch.STATUS_PENDING,
                 payload=report_payload,
             )
+            correlation = {
+                "dispatch_id": dispatch.pk,
+                "attempt_id": delivery_attempt.pk,
+                "batch_item_id": batch_item.pk if batch_item is not None else None,
+            }
+            report_payload = {**report_payload, "correlation": correlation}
+            dispatch.payload = report_payload
+            dispatch.save(update_fields=["payload", "updated_at"])
+            delivery_attempt.payload = report_payload
+            delivery_attempt.save(update_fields=["payload", "updated_at"])
+            if batch_item is not None:
+                locked_item = MonthlyStudentReportBatchItem.objects.select_for_update().get(pk=batch_item.pk)
+                locked_item.dispatch = dispatch
+                locked_item.attempt = delivery_attempt
+                locked_item.status = MonthlyStudentReportBatchItem.STATUS_PROCESSING
+                locked_item.save(update_fields=["dispatch", "attempt", "status", "updated_at"])
     except IntegrityError:
         dispatch = MonthlyStudentReportDispatch.objects.get(student=student, month=month_start)
         return {
@@ -682,6 +758,17 @@ def send_student_month_report(
             month_start.strftime("%Y-%m"),
             exc,
         )
+        dispatch.refresh_from_db()
+        delivery_attempt.refresh_from_db()
+        stored_response = dispatch.response_payload if isinstance(dispatch.response_payload, dict) else {}
+        if isinstance(stored_response.get("meta"), dict) and stored_response["meta"].get("callback_received"):
+            return {
+                "student_id": student.pk,
+                "student_name": student.user.full_name,
+                "status": dispatch.status,
+                "dispatch_id": dispatch.pk,
+                "workflow_run_id": dispatch.workflow_run_id,
+            }
         dispatch.status = MonthlyStudentReportDispatch.STATUS_FAILED
         dispatch.error_message = str(exc)
         dispatch.save(
@@ -719,6 +806,11 @@ def send_student_month_report(
         workflow_failed = workflow_status in {"failed", "stopped"} or (
             workflow_status == "partial-succeeded" and not accepts_partial_dify_success()
         )
+        if batch_item is not None and not workflow_failed:
+            workflow_failed = True
+            missing_callback_error = "Dify completed without a valid Meta callback."
+        else:
+            missing_callback_error = ""
         dispatch.status = (
             MonthlyStudentReportDispatch.STATUS_FAILED
             if workflow_failed
@@ -726,7 +818,7 @@ def send_student_month_report(
         )
         dispatch.response_payload = response_payload
         dispatch.error_message = (
-            f"Dify workflow finished with status '{workflow_status}'."
+            missing_callback_error or f"Dify workflow finished with status '{workflow_status}'."
             if workflow_failed
             else ""
         )
@@ -788,7 +880,10 @@ def send_student_month_report(
     return {
         "student_id": student.pk,
         "student_name": student.user.full_name,
-        "status": "sent",
+        "status": dispatch.status if dispatch.status in {
+            MonthlyStudentReportDispatch.STATUS_ACCEPTED,
+            MonthlyStudentReportDispatch.STATUS_DELIVERED,
+        } else "sent",
         "dispatch_id": dispatch.pk,
         "workflow_run_id": dispatch.workflow_run_id,
         "trigger_date": effective_trigger_date.isoformat(),
@@ -802,6 +897,7 @@ def force_send_all_monthly_reports(
     college_branch: str | None = None,
     group_ids: list[int] | None = None,
     student_ids: list[int] | None = None,
+    resend_succeeded: bool = False,
 ) -> list[dict[str, Any]]:
     """Explicit admin action: send the selected month to every active student."""
     run_date = normalize_run_date(run_date)
@@ -831,7 +927,7 @@ def force_send_all_monthly_reports(
             month_start=month_start,
             force=True,
             bypass_schedule=True,
-            resend_succeeded=True,
+            resend_succeeded=resend_succeeded,
         )
         results.append(result)
     return results

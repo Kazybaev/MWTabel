@@ -3,6 +3,7 @@ import hmac
 from mimetypes import guess_type
 from pathlib import Path
 import os
+import re
 
 from django.core.exceptions import PermissionDenied
 from django.db import transaction
@@ -27,10 +28,14 @@ from .models import (
     LessonRecord,
     MentorProfile,
     MonthlyStudentReportAttempt,
+    MonthlyStudentReportBatch,
+    MonthlyStudentReportBatchItem,
     MonthlyStudentReportDispatch,
     StudentProfile,
     StudentBadge,
     User,
+    WahaParentReportBatch,
+    WahaTestReportBatch,
 )
 from .report_delivery import build_report_conversations, record_meta_delivery_callback, serialize_report_attempt
 from .report import (
@@ -40,6 +45,21 @@ from .report import (
     send_student_month_report,
 )
 from .organization import college_branch_for_request, organization_for_request, require_agrarian_college
+from .report_queue import enqueue_monthly_report_batch, serialize_report_batch
+from .waha_reports import (
+    WahaTestConfigurationError,
+    enqueue_waha_test_batch,
+    get_waha_test_configuration,
+    serialize_waha_test_batch,
+)
+from .waha_parent_reports import (
+    WahaParentConfigurationError,
+    cancel_waha_parent_batch,
+    confirm_waha_parent_batch,
+    get_waha_parent_configuration,
+    prepare_waha_parent_batch,
+    serialize_waha_parent_batch,
+)
 from .serializers import (
     AgrarianGradeRecordSerializer,
     BadgeSerializer,
@@ -53,6 +73,9 @@ from .serializers import (
     ReportDispatchRequestSerializer,
     ReportBulkDispatchRequestSerializer,
     ReportDeliveryCallbackSerializer,
+    ReportResendRequestSerializer,
+    WahaTestReportRequestSerializer,
+    WahaParentReportRequestSerializer,
     StudentProfileSerializer,
     StudentBadgeSerializer,
     UserSerializer,
@@ -61,6 +84,26 @@ from .serializers import (
 
 
 FRONTEND_DIST_DIR = Path(__file__).resolve().parents[2] / "frontend" / "dist"
+
+
+def summarize_report_failure(result):
+    reason = str(result.get("reason") or "").strip()
+    if reason in {
+        "DIFY_API_KEY must be configured.",
+        "BACKEND_REPORT_CALLBACK_TOKEN must be configured with at least 32 characters.",
+    }:
+        return reason
+
+    match = re.match(r"Dify returned HTTP (\d{3})", reason)
+    if match:
+        return f"Dify returned HTTP {match.group(1)}."
+    if reason.startswith("Could not reach Dify:"):
+        return "Could not reach Dify."
+    if reason.startswith("Dify workflow finished with status "):
+        return reason.split(".", 1)[0] + "."
+    if reason.startswith("Meta returned HTTP "):
+        return reason.split(".", 1)[0] + "."
+    return "Report delivery failed. See the per-student attempt history for details."
 
 
 def groups_for_user(user):
@@ -608,7 +651,7 @@ def build_admin_student_gradebook_payload(student, organization_type, selected_m
         ],
         "rows": rows,
         "grade_choices": serialize_choice_pairs(LessonRecord.GRADE_CHOICES),
-        "can_edit": True,
+        "can_edit": student.archived_at is None and all(group.archived_at is None for group in groups),
         "agrarian_features": student.college_branch == "agrarian",
     }
 
@@ -617,6 +660,8 @@ def save_admin_student_gradebook(student, organization_type, selected_month, ent
     if not isinstance(entries, list):
         raise ValidationError({"entries": "Список оценок должен быть массивом."})
     groups = list(groups_for_student_gradebook(student, organization_type))
+    if student.archived_at is not None or any(group.archived_at is not None for group in groups):
+        raise ValidationError("Архивный табель доступен только для просмотра.")
     groups_by_id = {group.pk: group for group in groups}
     invalid_group_ids = {
         entry.get("group") for entry in entries if entry.get("group") not in groups_by_id
@@ -814,6 +859,7 @@ class ApiRootAPIView(APIView):
                 "reports": {
                     "dispatch": "/api/reports/send/",
                     "force_send_all": "/api/reports/send-all/",
+                    "explicit_resend": "/api/reports/resend/",
                     "delivery_callback": "/api/report-logs/",
                     "admin_conversations": "/api/reports/conversations/",
                 },
@@ -983,6 +1029,58 @@ class ReportDispatchAPIView(APIView):
             dry_run=serializer.validated_data.get("dry_run", False),
             force=serializer.validated_data.get("force", True),
             bypass_schedule=True,
+            resend_succeeded=False,
+            retry_failed_confirmed=serializer.validated_data.get("confirm_retry_failed", False),
+        )
+        response_status = status.HTTP_502_BAD_GATEWAY if result.get("status") == "failed" else status.HTTP_200_OK
+        return Response(result, status=response_status)
+
+
+class ReportResendAPIView(APIView):
+    permission_classes = [permissions.IsAuthenticated]
+
+    @extend_schema(
+        summary="Explicitly resend one previously successful monthly report",
+        request=ReportResendRequestSerializer,
+        responses={
+            200: OpenApiResponse(description="Successful report explicitly resent."),
+            409: OpenApiResponse(description="No successful report exists for this student and month."),
+            502: OpenApiResponse(description="Dify rejected the report or delivery failed."),
+        },
+    )
+    def post(self, request, *args, **kwargs):
+        if request.user.role != User.ROLE_ADMIN:
+            raise PermissionDenied
+
+        serializer = ReportResendRequestSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        student = get_object_or_404(
+            students_for_user(request.user)
+            .filter(organization_type=organization_for_request(request))
+            .select_related("user", "group", "group__mentor__user"),
+            pk=serializer.validated_data["student_id"],
+        )
+        month_start = parse_month_value(serializer.validated_data["month"])
+        if month_start is None:
+            raise ValidationError({"month": "Use YYYY-MM format for the report month."})
+
+        has_successful_dispatch = MonthlyStudentReportDispatch.objects.filter(
+            student=student,
+            month=month_start,
+            status__in=MonthlyStudentReportDispatch.SUCCESSFUL_STATUSES,
+        ).exists()
+        if not has_successful_dispatch:
+            return Response(
+                {"detail": "No successful report exists for this student and month."},
+                status=status.HTTP_409_CONFLICT,
+            )
+
+        result = send_student_month_report(
+            student,
+            run_date=timezone.localdate(),
+            month_start=month_start,
+            force=True,
+            bypass_schedule=True,
             resend_succeeded=True,
         )
         response_status = status.HTTP_502_BAD_GATEWAY if result.get("status") == "failed" else status.HTTP_200_OK
@@ -1011,7 +1109,13 @@ class ReportDeliveryCallbackAPIView(APIView):
         serializer.is_valid(raise_exception=True)
         try:
             dispatch, duplicate = record_meta_delivery_callback(**serializer.validated_data)
-        except (MonthlyStudentReportDispatch.DoesNotExist, ValueError, TypeError):
+        except (
+            MonthlyStudentReportDispatch.DoesNotExist,
+            MonthlyStudentReportAttempt.DoesNotExist,
+            MonthlyStudentReportBatchItem.DoesNotExist,
+            ValueError,
+            TypeError,
+        ):
             return Response(
                 {"detail": "Matching monthly report dispatch was not found."},
                 status=status.HTTP_404_NOT_FOUND,
@@ -1080,28 +1184,213 @@ class ForceSendAllReportsAPIView(APIView):
         if organization == "college" and (serializer.validated_data.get("group_ids") or serializer.validated_data.get("student_ids")):
             raise ValidationError("Для колледжа доступна только отправка всем студентам.")
         month_start = parse_month_value(serializer.validated_data.get("month")) or timezone.localdate().replace(day=1)
-        results = force_send_all_monthly_reports(
-            run_date=timezone.localdate(),
-            month_start=month_start,
+        batch = enqueue_monthly_report_batch(
+            created_by=request.user,
+            month=month_start,
             organization_type=organization,
             college_branch=college_branch_for_request(request) if organization == "college" else None,
             group_ids=serializer.validated_data.get("group_ids"),
             student_ids=serializer.validated_data.get("student_ids"),
+            confirm_retry_failed=serializer.validated_data.get("confirm_retry_failed", False),
         )
-        sent_count = sum(result.get("status") == "sent" for result in results)
-        failed_count = sum(result.get("status") == "failed" for result in results)
-        skipped_count = len(results) - sent_count - failed_count
+        return Response(serialize_report_batch(batch), status=status.HTTP_202_ACCEPTED)
+
+
+class ReportBatchDetailAPIView(APIView):
+    permission_classes = [permissions.IsAuthenticated]
+
+    def get(self, request, batch_id, *args, **kwargs):
+        if request.user.role != User.ROLE_ADMIN:
+            raise PermissionDenied
+        batch = get_object_or_404(
+            MonthlyStudentReportBatch,
+            pk=batch_id,
+            organization_type=organization_for_request(request),
+        )
+        return Response(serialize_report_batch(batch))
+
+
+class WahaTestReportConfigAPIView(APIView):
+    permission_classes = [permissions.IsAuthenticated]
+
+    def get(self, request, *args, **kwargs):
+        if request.user.role != User.ROLE_ADMIN:
+            raise PermissionDenied
+        return Response(get_waha_test_configuration())
+
+
+class WahaTestReportBatchAPIView(APIView):
+    permission_classes = [permissions.IsAuthenticated]
+
+    def post(self, request, *args, **kwargs):
+        if request.user.role != User.ROLE_ADMIN:
+            raise PermissionDenied
+        config = get_waha_test_configuration()
+        if not config["ready"]:
+            return Response(
+                {"detail": "WAHA test mode is not fully configured.", "configuration": config},
+                status=status.HTTP_503_SERVICE_UNAVAILABLE,
+            )
+
+        serializer = WahaTestReportRequestSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        month_start = parse_month_value(serializer.validated_data["month"])
+        if month_start is None:
+            raise ValidationError({"month": "Use YYYY-MM format for the report month."})
+        organization = organization_for_request(request)
+        student_ids = serializer.validated_data["student_ids"]
+        students_queryset = students_for_user(request.user).filter(
+            organization_type=organization,
+            archived_at__isnull=True,
+            group__archived_at__isnull=True,
+            pk__in=student_ids,
+        ).select_related("user", "group", "group__mentor__user")
+        if organization == "college":
+            students_queryset = students_queryset.filter(college_branch=college_branch_for_request(request))
+        students = list(students_queryset.order_by("pk"))
+        if {student.pk for student in students} != set(student_ids):
+            raise ValidationError({"student_ids": "One or more students are unavailable in this organization."})
+
+        try:
+            batch = enqueue_waha_test_batch(
+                created_by=request.user,
+                students=students,
+                month=month_start,
+                organization_type=organization,
+            )
+        except WahaTestConfigurationError as exc:
+            return Response({"detail": str(exc)}, status=status.HTTP_503_SERVICE_UNAVAILABLE)
+        except ValueError as exc:
+            raise ValidationError({"student_ids": str(exc)}) from exc
+        return Response(serialize_waha_test_batch(batch), status=status.HTTP_202_ACCEPTED)
+
+    def get(self, request, batch_id=None, *args, **kwargs):
+        if request.user.role != User.ROLE_ADMIN:
+            raise PermissionDenied
+        batch = get_object_or_404(
+            WahaTestReportBatch,
+            pk=batch_id,
+            organization_type=organization_for_request(request),
+        )
+        return Response(serialize_waha_test_batch(batch))
+
+
+class WahaParentReportConfigAPIView(APIView):
+    permission_classes = [permissions.IsAuthenticated]
+
+    def get(self, request, *args, **kwargs):
+        if request.user.role != User.ROLE_ADMIN:
+            raise PermissionDenied
+        return Response(get_waha_parent_configuration())
+
+
+class WahaParentReportBatchAPIView(APIView):
+    permission_classes = [permissions.IsAuthenticated]
+
+    def post(self, request, *args, **kwargs):
+        if request.user.role != User.ROLE_ADMIN:
+            raise PermissionDenied
+        serializer = WahaParentReportRequestSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        month_start = parse_month_value(serializer.validated_data["month"])
+        if month_start is None:
+            raise ValidationError({"month": "Use YYYY-MM format for the report month."})
+
+        organization = organization_for_request(request)
+        college_branch = college_branch_for_request(request) if organization == "college" else None
+        group_ids = serializer.validated_data.get("group_ids")
+        student_ids = serializer.validated_data.get("student_ids")
+        if organization == "college" and (group_ids or student_ids):
+            raise ValidationError("Для колледжа доступно формирование пакета по всем студентам.")
+        students_queryset = students_for_user(request.user).filter(
+            organization_type=organization,
+            archived_at__isnull=True,
+            group__archived_at__isnull=True,
+        )
+        if organization == "college":
+            students_queryset = students_queryset.filter(college_branch=college_branch)
+        if group_ids:
+            students_queryset = students_queryset.filter(group_id__in=group_ids)
+        if student_ids:
+            students_queryset = students_queryset.filter(pk__in=student_ids)
+        students = list(students_queryset.order_by("group__course_name", "user__full_name"))
+        if student_ids and {student.pk for student in students} != set(student_ids):
+            raise ValidationError({"student_ids": "One or more students are unavailable in this organization."})
+        if group_ids:
+            available_group_ids = set(
+                Group.objects.filter(
+                    organization_type=organization,
+                    archived_at__isnull=True,
+                    pk__in=group_ids,
+                ).values_list("pk", flat=True)
+            )
+            if available_group_ids != set(group_ids):
+                raise ValidationError({"group_ids": "One or more groups are unavailable in this organization."})
+        if len(students) > 1000:
+            raise ValidationError({"detail": "A batch can contain at most 1000 students."})
+        try:
+            batch = prepare_waha_parent_batch(
+                created_by=request.user,
+                month=month_start,
+                organization_type=organization,
+                college_branch=college_branch,
+                students=students,
+                requested_filters={"group_ids": group_ids or [], "student_ids": student_ids or []},
+            )
+        except ValueError as exc:
+            raise ValidationError({"detail": str(exc)}) from exc
         return Response(
-            {
-                "month": month_start.strftime("%Y-%m"),
-                "total": len(results),
-                "sent": sent_count,
-                "failed": failed_count,
-                "skipped": skipped_count,
-                "results": results,
-            },
-            status=status.HTTP_200_OK,
+            serialize_waha_parent_batch(batch, include_message_text=True),
+            status=status.HTTP_201_CREATED,
         )
+
+    def get(self, request, batch_id=None, *args, **kwargs):
+        if request.user.role != User.ROLE_ADMIN:
+            raise PermissionDenied
+        organization = organization_for_request(request)
+        queryset = WahaParentReportBatch.objects.filter(organization_type=organization)
+        if organization == "college":
+            queryset = queryset.filter(college_branch=college_branch_for_request(request))
+        if batch_id is not None:
+            batch = get_object_or_404(queryset, pk=batch_id)
+            if request.query_params.get("summary") == "true":
+                return Response(serialize_waha_parent_batch(batch, include_items=False))
+            include_preview = request.query_params.get("preview") == "true"
+            return Response(serialize_waha_parent_batch(batch, include_message_text=include_preview))
+        return Response([
+            serialize_waha_parent_batch(batch, include_items=False)
+            for batch in queryset[:1]
+        ])
+
+
+class WahaParentReportBatchActionAPIView(APIView):
+    permission_classes = [permissions.IsAuthenticated]
+
+    def post(self, request, batch_id, action_name, *args, **kwargs):
+        if request.user.role != User.ROLE_ADMIN:
+            raise PermissionDenied
+        get_object_or_404(
+            WahaParentReportBatch,
+            pk=batch_id,
+            organization_type=organization_for_request(request),
+            **(
+                {"college_branch": college_branch_for_request(request)}
+                if organization_for_request(request) == "college"
+                else {}
+            ),
+        )
+        try:
+            if action_name == "confirm":
+                batch = confirm_waha_parent_batch(batch_id)
+            elif action_name == "cancel":
+                batch = cancel_waha_parent_batch(batch_id)
+            else:
+                raise Http404
+        except WahaParentConfigurationError as exc:
+            return Response({"detail": str(exc)}, status=status.HTTP_503_SERVICE_UNAVAILABLE)
+        except ValueError as exc:
+            raise ValidationError({"detail": str(exc)}) from exc
+        return Response(serialize_waha_parent_batch(batch))
 
 
 class ReportConversationDetailAPIView(APIView):
@@ -1189,6 +1478,8 @@ class StudentProfileViewSet(viewsets.ModelViewSet):
         if organization == "college":
             queryset = queryset.filter(college_branch=college_branch_for_request(self.request))
         if self.request.user.role == User.ROLE_ADMIN:
+            if self.action == "gradebook" and self.request.method == "GET":
+                return queryset
             if self.action in {"archived", "restore", "destroy"}:
                 return queryset.filter(archived_at__isnull=False)
             return queryset.filter(archived_at__isnull=True)
@@ -1207,14 +1498,7 @@ class StudentProfileViewSet(viewsets.ModelViewSet):
         college_branch = college_branch_for_request(self.request) if organization == "college" else None
         serializer.save(
             organization_type=organization,
-            **(
-                {
-                    "college_branch": college_branch,
-                    "college_course": serializer.validated_data.get("college_course") or ("1" if college_branch == "agrarian" else "2"),
-                }
-                if organization == "college"
-                else {}
-            ),
+            **({"college_branch": college_branch} if organization == "college" else {}),
         )
 
     def update(self, request, *args, **kwargs):
@@ -1286,6 +1570,7 @@ class StudentProfileViewSet(viewsets.ModelViewSet):
         group = get_object_or_404(
             Group,
             pk=group_id,
+            archived_at__isnull=True,
             organization_type=organization,
             **({"college_branch": college_branch_for_request(request)} if organization == "college" else {}),
         )
@@ -1295,9 +1580,10 @@ class StudentProfileViewSet(viewsets.ModelViewSet):
             instance.archived_at = None
             instance.save(update_fields=["group", "archived_at"])
             if instance.organization_type == "college":
-                instance.college_groups.set([group])
-            else:
-                move_student_records_to_group(instance, old_group, group)
+                if old_group != group:
+                    instance.college_groups.remove(old_group)
+                instance.college_groups.add(group)
+            move_student_records_to_group(instance, old_group, group)
             instance.user.is_active = True
             instance.user.save(update_fields=["is_active"])
         return Response(self.get_serializer(instance).data)
@@ -1327,7 +1613,9 @@ class GroupViewSet(viewsets.ModelViewSet):
         organization = organization_for_request(self.request)
         branch_filter = {"college_branch": college_branch_for_request(self.request)} if organization == "college" else {}
         include_archived = self.request.query_params.get("archived") == "1" and self.request.user.role == User.ROLE_ADMIN
-        if self.action == "archived" or include_archived:
+        if self.action in {"archived", "restore"} or include_archived:
+            if self.request.user.role != User.ROLE_ADMIN:
+                raise PermissionDenied
             return annotate_group_students_count(
                 Group.objects.filter(archived_at__isnull=False, organization_type=organization, **branch_filter),
                 organization,
@@ -1355,7 +1643,6 @@ class GroupViewSet(viewsets.ModelViewSet):
         if organization == "college":
             college_branch = college_branch_for_request(self.request)
             defaults["college_branch"] = college_branch
-            defaults["college_course"] = serializer.validated_data.get("college_course") or ("1" if college_branch == "agrarian" else "2")
         if organization == "college" and not serializer.validated_data.get("study_days"):
             defaults["study_days"] = Group.MON_FRI
         serializer.save(**defaults)
@@ -1400,6 +1687,29 @@ class GroupViewSet(viewsets.ModelViewSet):
         if request.user.role != User.ROLE_ADMIN:
             raise PermissionDenied
         return Response(self.get_serializer(self.get_queryset(), many=True).data)
+
+    @action(detail=True, methods=["post"])
+    def restore(self, request, pk=None):
+        if request.user.role != User.ROLE_ADMIN:
+            raise PermissionDenied
+        group = self.get_object()
+        with transaction.atomic():
+            group = get_object_or_404(Group.objects.select_for_update(), pk=group.pk, archived_at__isnull=False)
+            archived_at = group.archived_at
+            relation = group.college_students if group.organization_type == "college" else group.students
+            # Restore only students archived by this group operation. Students
+            # archived individually beforehand must remain in the archive.
+            students = list(relation.filter(archived_at=archived_at).select_related("user"))
+            group.archived_at = None
+            group.save(update_fields=["archived_at"])
+            for student in students:
+                student.archived_at = None
+                student.save(update_fields=["archived_at"])
+                student.user.is_active = True
+                student.user.save(update_fields=["is_active"])
+        if hasattr(group, "students_count"):
+            del group.students_count
+        return Response(self.get_serializer(group).data)
 
     @action(detail=True, methods=["get", "post"])
     def gradebook(self, request, pk=None):

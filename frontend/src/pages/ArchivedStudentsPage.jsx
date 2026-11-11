@@ -8,26 +8,51 @@ function normalizePhoneSearch(value) {
   return String(value || "").replace(/\D/g, "");
 }
 
-export function ArchivedStudentsPage({ api, sessionToken, user, onNotice }) {
+function archiveDate(value) {
+  return value ? new Date(value).toLocaleDateString("ru-RU") : "—";
+}
+
+export function ArchivedStudentsPage({ api, sessionToken, user, onNotice, organization, collegeBranch }) {
   const { data, error, loading, reload } = useResource(
     () => (user.role === "ADMIN" ? api("/api/students/archived/") : Promise.resolve([])),
     [sessionToken, user.role],
   );
-  const { data: groups } = useResource(
+  const { data: groups, error: groupsError, loading: groupsLoading, reload: reloadGroups } = useResource(
     () => (user.role === "ADMIN" ? api("/api/groups/") : Promise.resolve([])),
     [sessionToken, user.role],
   );
-  const { data: archivedGroups } = useResource(
+  const { data: archivedGroups, error: archivedGroupsError, loading: archivedGroupsLoading, reload: reloadArchivedGroups } = useResource(
     () => (user.role === "ADMIN" ? api("/api/groups/archived/") : Promise.resolve([])),
     [sessionToken, user.role],
   );
   const [search, setSearch] = useState("");
   const [activeTab, setActiveTab] = useState("students");
   const [restoreTarget, setRestoreTarget] = useState(null);
+  const [restoreGroupTarget, setRestoreGroupTarget] = useState(null);
   const [restoreGroup, setRestoreGroup] = useState("");
   const [deleteTarget, setDeleteTarget] = useState(null);
   const [saving, setSaving] = useState(false);
   const deferredSearch = useDeferredValue(search);
+  const organizationLabel = organization === "academy" ? "Академия" : collegeBranch === "agrarian" ? "Аграрный колледж" : "Кувейтский колледж";
+
+  async function reloadArchive() {
+    await Promise.all([reload(), reloadGroups(), reloadArchivedGroups()]);
+  }
+
+  async function handleRestoreGroup() {
+    if (!restoreGroupTarget) return;
+    setSaving(true);
+    try {
+      await api(`/api/groups/${restoreGroupTarget.id}/restore/`, { method: "POST" });
+      setRestoreGroupTarget(null);
+      await reloadArchive();
+      onNotice({ tone: "success", message: "Группа восстановлена вместе с её студентами, уроками и оценками." });
+    } catch (restoreError) {
+      onNotice({ tone: "danger", message: restoreError.message });
+    } finally {
+      setSaving(false);
+    }
+  }
 
   if (user.role !== "ADMIN") {
     return <EmptyState title="Раздел закрыт" description="Архив студентов доступен только администратору." />;
@@ -59,7 +84,7 @@ export function ArchivedStudentsPage({ api, sessionToken, user, onNotice }) {
       });
       setRestoreTarget(null);
       setRestoreGroup("");
-      await reload();
+      await reloadArchive();
       onNotice({ tone: "success", message: "Студент перенесен в группу. Его аккаунт снова активен." });
     } catch (restoreError) {
       onNotice({ tone: "danger", message: restoreError.message });
@@ -83,13 +108,13 @@ export function ArchivedStudentsPage({ api, sessionToken, user, onNotice }) {
     }
   }
 
-  if (loading) return <LoadingBlock label="Загружаем архив..." />;
-  if (error) return <ErrorBlock message={error} action={<Button onClick={reload}>Повторить</Button>} />;
+  if (loading || archivedGroupsLoading || groupsLoading) return <LoadingBlock label="Загружаем архив..." />;
+  if (error || archivedGroupsError || groupsError) return <ErrorBlock message={error || archivedGroupsError || groupsError} action={<Button onClick={reloadArchive}>Повторить</Button>} />;
 
   return (
     <div className="page-stack">
       <Panel
-        eyebrow="Неактивные"
+        eyebrow={`Архив · ${organizationLabel}`}
         title={activeTab === "students" ? "Архив студентов" : "Архив групп"}
         description={activeTab === "students" ? "Здесь хранятся студенты, которые временно не учатся. Их аккаунты отключены, а оценки сохранены." : "Здесь хранятся группы, которые были деактивированы. Уроки и оценки сохранены."}
         actions={
@@ -111,15 +136,17 @@ export function ArchivedStudentsPage({ api, sessionToken, user, onNotice }) {
         {activeTab === "groups" ? (filteredGroups.length ? (
           <div className="list-stack">
             {filteredGroups.map((group) => (
-              <div key={group.id} className="list-card list-card--archived">
+              <div key={group.id} className="list-card list-card--actions list-card--archived">
                 <div>
                   <strong>{group.course_name}</strong>
                   <p>{group.mentor_name} · {group.study_days_label}</p>
-                  <small>Группа деактивирована, оценки и уроки сохранены</small>
-                  <a className="button button--ghost" href={`#/groups/${group.id}?archived=1`}>Открыть группу</a>
+                  <small>В архиве с {archiveDate(group.archived_at)} · Студентов: {group.students_count}</small>
                 </div>
                 <div className="list-card__actions">
                   <Badge tone="slate">В архиве</Badge>
+                  <a className="button button--ghost" href={`#/groups/${group.id}?archived=1`}>Открыть группу</a>
+                  <a className="button button--ghost" href={`#/groups/${group.id}/gradebook?archived=1`}>Табель</a>
+                  <Button disabled={saving} onClick={() => setRestoreGroupTarget(group)}>Восстановить</Button>
                 </div>
               </div>
             ))}
@@ -134,16 +161,18 @@ export function ArchivedStudentsPage({ api, sessionToken, user, onNotice }) {
                   <strong>{student.full_name}</strong>
                   <p>Последняя группа: {student.group_name} · {student.parent_name}</p>
                   <small>{student.parent_phone}</small>
+                  <p>В архиве с {archiveDate(student.archived_at)}</p>
                 </div>
                 <div className="list-card__actions">
                   <Badge tone="slate">В архиве</Badge>
+                  <a className="button button--ghost" href={`#/students/${student.id}/gradebook`}>Оценки и посещаемость</a>
                   <Button
                     onClick={() => {
                       setRestoreTarget(student);
-                      setRestoreGroup("");
+                      setRestoreGroup((groups || []).some((group) => group.id === student.group) ? String(student.group) : "");
                     }}
                   >
-                    Перенести
+                    Восстановить
                   </Button>
                   <Button variant="danger" onClick={() => setDeleteTarget(student)}>
                     Удалить
@@ -161,8 +190,19 @@ export function ArchivedStudentsPage({ api, sessionToken, user, onNotice }) {
       </Panel>
 
       <Modal
+        open={Boolean(restoreGroupTarget)}
+        title="Восстановить группу"
+        description={restoreGroupTarget ? `${restoreGroupTarget.course_name} вернётся в раздел «${organizationLabel}». Студенты, отправленные в архив вместе с группой, будут восстановлены. Уроки и оценки сохранятся. Студенты, архивированные отдельно, останутся в архиве.` : ""}
+        onClose={() => !saving && setRestoreGroupTarget(null)}
+        footer={<>
+          <Button variant="ghost" disabled={saving} onClick={() => setRestoreGroupTarget(null)}>Отмена</Button>
+          <Button disabled={saving} onClick={handleRestoreGroup}>{saving ? "Восстанавливаем..." : "Восстановить группу"}</Button>
+        </>}
+      />
+
+      <Modal
         open={Boolean(restoreTarget)}
-        title="Перенести студента в группу"
+        title="Восстановить студента в группе"
         description={restoreTarget ? `Выберите группу для ${restoreTarget.full_name}. Все оценки будут сохранены.` : ""}
         onClose={() => setRestoreTarget(null)}
         footer={
@@ -175,6 +215,7 @@ export function ArchivedStudentsPage({ api, sessionToken, user, onNotice }) {
         }
       >
         <SelectField label="Группа" value={restoreGroup} onChange={setRestoreGroup} options={groupOptions} required />
+        {!groupOptions.length ? <p>В разделе «{organizationLabel}» нет активных групп. Сначала восстановите группу из архива или создайте новую.</p> : null}
       </Modal>
 
       <Modal

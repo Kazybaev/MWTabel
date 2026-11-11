@@ -27,8 +27,9 @@ RUN pip install --upgrade pip && pip install -r requirements.txt
 COPY tabel_project /app/tabel_project
 COPY --from=frontend-builder /app/frontend/dist /app/frontend/dist
 COPY docker/entrypoint.sh /entrypoint.sh
+COPY docker/report-worker-entrypoint.sh /report-worker-entrypoint.sh
 
-RUN chmod +x /entrypoint.sh
+RUN chmod +x /entrypoint.sh /report-worker-entrypoint.sh
 
 WORKDIR /app/tabel_project
 

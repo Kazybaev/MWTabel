@@ -1,0 +1,18 @@
+{
+  "schema_version": "1.0",
+  "approved_at": "2026-09-26",
+  "approved_by": "data owner",
+  "decision_basis": "Explicit owner confirmation in the production recovery review",
+  "college_groups": [
+    {"id": 1, "name": "ИИ1", "college_branch": "agrarian"},
+    {"id": 2, "name": "ИИ2", "college_branch": "agrarian"},
+    {"id": 3, "name": "Кибер1", "college_branch": "agrarian"},
+    {"id": 4, "name": "Кибер2", "college_branch": "agrarian"},
+    {"id": 5, "name": "Кибер3", "college_branch": "agrarian"},
+    {"id": 6, "name": "Кибер4", "college_branch": "agrarian"},
+    {"id": 7, "name": "ПИ-1", "college_branch": "kuwait"},
+    {"id": 8, "name": "ПИ-2", "college_branch": "kuwait"},
+    {"id": 9, "name": "ПИ-3", "college_branch": "kuwait"},
+    {"id": 10, "name": "ПИ-4", "college_branch": "kuwait"}
+  ]
+}
