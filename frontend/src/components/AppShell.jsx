@@ -10,6 +10,7 @@ const navigationIcons = {
   archive: <><path d="M3 6h18" /><path d="M5 6v14h14V6" /><path d="M8 3h8l2 3H6l2-3Z" /><path d="M9 11h6" /></>,
   mentors: <><path d="m3 10 9-5 9 5-9 5-9-5Z" /><path d="M7 12.2V16c2.8 2.2 7.2 2.2 10 0v-3.8" /><path d="M21 10v6" /></>,
   reports: <><path d="M21 15a4 4 0 0 1-4 4H8l-5 3V7a4 4 0 0 1 4-4h10a4 4 0 0 1 4 4v8Z" /><path d="M8 9h8M8 13h5" /></>,
+  rating: <><path d="M8 21h8M12 17v4" /><path d="M7 4h10v5a5 5 0 0 1-10 0V4Z" /><path d="M17 5h3v2a3 3 0 0 1-3 3M7 5H4v2a3 3 0 0 0 3 3" /></>,
   grades: <><path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20" /><path d="M6.5 2H20v20H6.5A2.5 2.5 0 0 1 4 19.5v-15A2.5 2.5 0 0 1 6.5 2Z" /><path d="m9 10 2 2 4-4" /></>,
 };
 
@@ -34,6 +35,7 @@ function buildNavigation(role) {
 
   if (role === "STUDENT") {
     items.push({ label: "Мои оценки", href: "/my-grades", icon: "grades" });
+    items.push({ label: "Рейтинг", href: "/rating", icon: "rating" });
   }
 
   return items;
@@ -71,6 +73,14 @@ function buildSidebarIntro(role, currentPath) {
   }
 
   if (role === "STUDENT") {
+    if (currentPath === "/rating") {
+      return {
+        eyebrow: "Студент",
+        title: "Рейтинг",
+        description: "Лестница лучших студентов: пятёрки и четвёрки поднимают вас выше, а тройки, двойки и пропуски опускают вниз.",
+      };
+    }
+
     if (currentPath === "/my-grades") {
       return {
         eyebrow: "Студент",

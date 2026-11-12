@@ -24,6 +24,7 @@ const MentorsPage = lazyPage(() => import("./pages/MentorsPage"), "MentorsPage")
 const ReportConversationsPage = lazyPage(() => import("./pages/ReportConversationsPage"), "ReportConversationsPage");
 const StudentsPage = lazyPage(() => import("./pages/StudentsPage"), "StudentsPage");
 const StudentGradebookPage = lazyPage(() => import("./pages/StudentGradebookPage"), "StudentGradebookPage");
+const RatingPage = lazyPage(() => import("./pages/RatingPage"), "RatingPage");
 
 const emptyMeta = {
   study_day_choices: [],
@@ -369,6 +370,10 @@ function App() {
 
     if (route.path === "/reports") {
       return <ReportConversationsPage api={callApi} sessionToken={session.access} user={session.user} organization={organization} />;
+    }
+
+    if (route.path === "/rating" && session.user.role === "STUDENT") {
+      return <RatingPage api={callApi} sessionToken={session.access} organization={organization} collegeBranch={collegeBranch} />;
     }
 
     if (route.path === "/my-grades") {

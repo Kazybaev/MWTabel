@@ -31,6 +31,7 @@ from .views import (
     WahaParentReportConfigAPIView,
     StudentProfileViewSet,
     StudentBadgeViewSet,
+    StudentRatingAPIView,
 )
 
 
@@ -53,6 +54,7 @@ urlpatterns = [
     path("api/me/", CurrentUserAPIView.as_view(), name="api-me"),
     path("api/college-gradebook/", CollegeGradebookAPIView.as_view(), name="api-college-gradebook"),
     path("api/dashboard/", DashboardAPIView.as_view(), name="api-dashboard"),
+    path("api/rating/", StudentRatingAPIView.as_view(), name="api-rating"),
     path("api/meta/", AppMetaAPIView.as_view(), name="api-meta"),
     path("api/reports/send/", ReportDispatchAPIView.as_view(), name="api-report-dispatch"),
     path("api/reports/resend/", ReportResendAPIView.as_view(), name="api-report-resend"),

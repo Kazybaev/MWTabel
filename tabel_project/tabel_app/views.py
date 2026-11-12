@@ -45,6 +45,7 @@ from .report import (
     send_student_month_report,
 )
 from .organization import college_branch_for_request, organization_for_request, require_agrarian_college
+from .rating import build_student_rating
 from .report_queue import enqueue_monthly_report_batch, serialize_report_batch
 from .waha_reports import (
     WahaTestConfigurationError,
@@ -965,6 +966,30 @@ class CollegeGradebookAPIView(APIView):
             awards = StudentBadge.objects.filter(student=student).select_related("badge", "group", "teacher")
             payload["badges"] = StudentBadgeSerializer(awards, many=True, context={"request": request}).data
         return Response(payload)
+
+
+class StudentRatingAPIView(APIView):
+    """Leaderboard for students: only within their own organization / college branch."""
+
+    permission_classes = [permissions.IsAuthenticated]
+
+    def get(self, request, *args, **kwargs):
+        user = request.user
+        if user.role != User.ROLE_STUDENT or not hasattr(user, "student_profile"):
+            raise PermissionDenied
+        student = user.student_profile
+        if student.archived_at is not None:
+            raise PermissionDenied
+        organization = organization_for_request(request)
+        if student.organization_type != organization:
+            raise PermissionDenied
+        college_branch = college_branch_for_request(request)
+        return Response(build_student_rating(
+            student,
+            organization,
+            college_branch,
+            period=request.query_params.get("period", "month"),
+        ))
 
 
 class DashboardAPIView(APIView):
