@@ -1,4 +1,4 @@
-import { useEffect, useEffectEvent, useState, startTransition } from "react";
+import { Suspense, lazy, useEffect, useEffectEvent, useState, startTransition } from "react";
 
 import "./App.css";
 import { AppShell } from "./components/AppShell";
@@ -6,17 +6,24 @@ import { EmptyState, LoadingBlock } from "./components/Ui";
 import { apiRequest, clearStoredSession, getErrorMessage, readStoredSession, writeStoredSession } from "./lib/api";
 import { sortGroupsByName } from "./lib/groupSort";
 import { matchPath, navigateTo, parseHashLocation } from "./lib/router";
-import { DashboardPage } from "./pages/DashboardPage";
-import { ArchivedStudentsPage } from "./pages/ArchivedStudentsPage";
 import { GradebookPage } from "./pages/GradebookPage";
-import { CollegeGradebookPage } from "./pages/CollegeGradebookPage";
-import { GroupDetailPage } from "./pages/GroupDetailPage";
 import { GroupsPage } from "./pages/GroupsPage";
 import { LoginPage } from "./pages/LoginPage";
-import { MentorsPage } from "./pages/MentorsPage";
-import { ReportConversationsPage } from "./pages/ReportConversationsPage";
-import { StudentsPage } from "./pages/StudentsPage";
-import { StudentGradebookPage } from "./pages/StudentGradebookPage";
+
+// Less frequently opened pages are split into separate chunks so the login screen,
+// group list and gradebook do not have to download chart.js and every admin screen.
+function lazyPage(loader, exportName) {
+  return lazy(() => loader().then((module) => ({ default: module[exportName] })));
+}
+
+const DashboardPage = lazyPage(() => import("./pages/DashboardPage"), "DashboardPage");
+const ArchivedStudentsPage = lazyPage(() => import("./pages/ArchivedStudentsPage"), "ArchivedStudentsPage");
+const CollegeGradebookPage = lazyPage(() => import("./pages/CollegeGradebookPage"), "CollegeGradebookPage");
+const GroupDetailPage = lazyPage(() => import("./pages/GroupDetailPage"), "GroupDetailPage");
+const MentorsPage = lazyPage(() => import("./pages/MentorsPage"), "MentorsPage");
+const ReportConversationsPage = lazyPage(() => import("./pages/ReportConversationsPage"), "ReportConversationsPage");
+const StudentsPage = lazyPage(() => import("./pages/StudentsPage"), "StudentsPage");
+const StudentGradebookPage = lazyPage(() => import("./pages/StudentGradebookPage"), "StudentGradebookPage");
 
 const emptyMeta = {
   study_day_choices: [],
@@ -457,7 +464,7 @@ function App() {
       theme={theme}
       onThemeChange={() => setTheme((current) => (current === "dark" ? "light" : "dark"))}
     >
-      {renderAuthenticatedPage()}
+      <Suspense fallback={<LoadingBlock label="Загружаем страницу..." />}>{renderAuthenticatedPage()}</Suspense>
     </AppShell>
   );
 }

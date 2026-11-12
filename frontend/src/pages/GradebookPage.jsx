@@ -1,4 +1,4 @@
-import { useEffect, useEffectEvent, useRef, useState } from "react";
+import { useCallback, useEffect, useEffectEvent, useRef, useState } from "react";
 
 import { GradebookMatrix } from "../components/GradebookMatrix";
 import { AgrarianRecordModal } from "../components/AgrarianRecordModal";
@@ -48,7 +48,7 @@ export function GradebookPage({ api, sessionToken, user, groupId, routeMonth, on
   const [agrarianTarget, setAgrarianTarget] = useState(null);
   const saveTimerRef = useRef(null);
   const saveRequestIdRef = useRef(0);
-  const latestDraftSignatureRef = useRef(serializeGradeMap({}));
+  const latestDraftRef = useRef({});
   const routePath = mode === "student" ? "/my-grades" : `/groups/${resolvedGroupId}/gradebook`;
   const { data, error, loading, reload, setData } = useResource(
     () => {
@@ -66,14 +66,15 @@ export function GradebookPage({ api, sessionToken, user, groupId, routeMonth, on
     }
 
     const nextGrades = buildGradeMap(data.rows);
-    latestDraftSignatureRef.current = serializeGradeMap(nextGrades);
+    latestDraftRef.current = nextGrades;
     setDraftGrades(nextGrades);
     setPersistedGrades(nextGrades);
     setSaveStatus("synced");
   }, [data]);
 
+  // Keep only a reference here; the draft is serialized once per save, not on every edit.
   useEffect(() => {
-    latestDraftSignatureRef.current = serializeGradeMap(draftGrades);
+    latestDraftRef.current = draftGrades;
   }, [draftGrades]);
 
   useEffect(() => {
@@ -88,12 +89,23 @@ export function GradebookPage({ api, sessionToken, user, groupId, routeMonth, on
     navigateTo(routePath, { month: nextMonth });
   }
 
-  function handleGradeChange(studentId, date, grade) {
+  const handleGradeChange = useCallback((studentId, date, grade) => {
     setDraftGrades((current) => ({
       ...current,
       [`${studentId}|${date}`]: grade,
     }));
-  }
+  }, []);
+
+  const handleOpenAgrarianCell = useCallback(
+    (student, cell) =>
+      setAgrarianTarget({
+        student,
+        groupId: resolvedGroupId,
+        date: cell.date,
+        entries: cell.grade_entries || [],
+      }),
+    [resolvedGroupId],
+  );
 
   const persistSnapshot = useEffectEvent(async (snapshot, requestId) => {
     if (!resolvedGroupId || !data?.can_edit || data?.agrarian_features) {
@@ -113,7 +125,7 @@ export function GradebookPage({ api, sessionToken, user, groupId, routeMonth, on
       });
       setPersistedGrades(snapshot);
 
-      if (saveRequestIdRef.current === requestId && latestDraftSignatureRef.current === snapshotSignature) {
+      if (saveRequestIdRef.current === requestId && serializeGradeMap(latestDraftRef.current) === snapshotSignature) {
         setData(payload);
         setSaveStatus("synced");
       }
@@ -197,12 +209,7 @@ export function GradebookPage({ api, sessionToken, user, groupId, routeMonth, on
       adminMode={user.role === "ADMIN"}
       lockedMode={lockedGradebook}
       studentMode={mode === "student"}
-      onOpenAgrarianCell={(student, cell) => setAgrarianTarget({
-        student,
-        groupId: resolvedGroupId,
-        date: cell.date,
-        entries: cell.grade_entries || [],
-      })}
+      onOpenAgrarianCell={handleOpenAgrarianCell}
     />
     <AgrarianRecordModal
       api={api}

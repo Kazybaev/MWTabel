@@ -1,4 +1,4 @@
-import { useRef } from "react";
+import { memo, useRef } from "react";
 
 import { formatMonthLabel } from "../lib/format";
 import { AgrarianGradeCellContent } from "./AgrarianGradeCellContent";
@@ -43,6 +43,111 @@ function buildPanelDescription(data, compactGroupMode) {
 
   return data.page_copy;
 }
+
+function GradebookCell({ row, cell, value, canEdit, agrarianFeatures, gradeChoices, onGradeChange, onOpenAgrarianCell }) {
+  const tone = value ? resolveGradeTone(value, "empty") : "empty";
+  return (
+    <td
+      className={[
+        "gradebook-table__cell",
+        `gradebook-table__cell--${tone}`,
+        cell.is_weekend ? "is-weekend" : "",
+        cell.is_today ? "is-today" : "",
+        cell.is_study_day ? "is-study-day" : "",
+      ]
+        .filter(Boolean)
+        .join(" ")}
+    >
+      {agrarianFeatures && canEdit ? (
+        <button
+          type="button"
+          className="agrarian-cell-button"
+          onClick={() => onOpenAgrarianCell?.(row.student, cell)}
+          aria-label={`Оценки и достижения: ${row.student.full_name}, ${cell.date}`}
+        >
+          <AgrarianGradeCellContent
+            entries={cell.grade_entries}
+            bestGrade={cell.best_grade}
+            count={cell.grade_count}
+          />
+        </button>
+      ) : canEdit ? (
+        <select
+          className={[
+            "grade-select",
+            `grade-select--${tone}`,
+            value ? "grade-select--filled" : "grade-select--empty",
+          ]
+            .filter(Boolean)
+            .join(" ")}
+          value={value}
+          onChange={(event) => onGradeChange(row.student.id, cell.date, event.target.value)}
+          aria-label={`Оценка для ${row.student.full_name} на ${cell.date}`}
+        >
+          <option value=""></option>
+          {gradeChoices.map((choice) => (
+            <option key={choice.value} value={choice.value}>
+              {choice.label}
+            </option>
+          ))}
+        </select>
+      ) : (
+        <span>{value || ""}</span>
+      )}
+    </td>
+  );
+}
+
+function GradebookRowView({ row, draftGrades, ...cellProps }) {
+  return (
+    <tr>
+      <td className="gradebook-table__sticky gradebook-table__sticky--index">{row.index}</td>
+      <td className="gradebook-table__sticky gradebook-table__sticky--name">
+        <strong>{row.student.full_name}</strong>
+      </td>
+      <td className="gradebook-table__sticky gradebook-table__sticky--attendance">{row.attendance_count}</td>
+      <td className="gradebook-table__sticky gradebook-table__sticky--average">
+        {formatAverageGrade(row.average_grade)}
+      </td>
+      {row.cells.map((cell) => (
+        <GradebookCell
+          key={cell.date}
+          row={row}
+          cell={cell}
+          value={draftGrades[cellKey(row.student.id, cell.date)] ?? ""}
+          {...cellProps}
+        />
+      ))}
+    </tr>
+  );
+}
+
+// A row only re-renders when its own data or one of its own draft values changes,
+// so editing one grade no longer re-renders every select in the month matrix.
+function areRowPropsEqual(prev, next) {
+  if (
+    prev.row !== next.row ||
+    prev.canEdit !== next.canEdit ||
+    prev.agrarianFeatures !== next.agrarianFeatures ||
+    prev.gradeChoices !== next.gradeChoices ||
+    prev.onGradeChange !== next.onGradeChange ||
+    prev.onOpenAgrarianCell !== next.onOpenAgrarianCell
+  ) {
+    return false;
+  }
+
+  if (prev.draftGrades === next.draftGrades) {
+    return true;
+  }
+
+  const studentId = next.row.student.id;
+  return next.row.cells.every((cell) => {
+    const key = cellKey(studentId, cell.date);
+    return prev.draftGrades[key] === next.draftGrades[key];
+  });
+}
+
+const GradebookRow = memo(GradebookRowView, areRowPropsEqual);
 
 export function GradebookMatrix({
   data,
@@ -180,71 +285,16 @@ export function GradebookMatrix({
             </thead>
             <tbody>
               {data.rows.map((row) => (
-                <tr key={row.student.id}>
-                  <td className="gradebook-table__sticky gradebook-table__sticky--index">{row.index}</td>
-                  <td className="gradebook-table__sticky gradebook-table__sticky--name">
-                    <strong>{row.student.full_name}</strong>
-                  </td>
-                  <td className="gradebook-table__sticky gradebook-table__sticky--attendance">{row.attendance_count}</td>
-                  <td className="gradebook-table__sticky gradebook-table__sticky--average">
-                    {formatAverageGrade(row.average_grade)}
-                  </td>
-                  {row.cells.map((cell) => {
-                    const value = draftGrades[cellKey(row.student.id, cell.date)] ?? "";
-                    const tone = value ? resolveGradeTone(value, "empty") : "empty";
-                    return (
-                      <td
-                        key={cell.date}
-                        className={[
-                          "gradebook-table__cell",
-                          `gradebook-table__cell--${tone}`,
-                          cell.is_weekend ? "is-weekend" : "",
-                          cell.is_today ? "is-today" : "",
-                          cell.is_study_day ? "is-study-day" : "",
-                        ]
-                          .filter(Boolean)
-                          .join(" ")}
-                      >
-                        {data.agrarian_features && data.can_edit ? (
-                          <button
-                            type="button"
-                            className="agrarian-cell-button"
-                            onClick={() => onOpenAgrarianCell?.(row.student, cell)}
-                            aria-label={`Оценки и достижения: ${row.student.full_name}, ${cell.date}`}
-                          >
-                            <AgrarianGradeCellContent
-                              entries={cell.grade_entries}
-                              bestGrade={cell.best_grade}
-                              count={cell.grade_count}
-                            />
-                          </button>
-                        ) : data.can_edit ? (
-                          <select
-                            className={[
-                              "grade-select",
-                              `grade-select--${tone}`,
-                              value ? "grade-select--filled" : "grade-select--empty",
-                            ]
-                              .filter(Boolean)
-                              .join(" ")}
-                            value={value}
-                            onChange={(event) => onGradeChange(row.student.id, cell.date, event.target.value)}
-                            aria-label={`Оценка для ${row.student.full_name} на ${cell.date}`}
-                          >
-                            <option value=""></option>
-                            {data.grade_choices.map((choice) => (
-                              <option key={choice.value} value={choice.value}>
-                                {choice.label}
-                              </option>
-                            ))}
-                          </select>
-                        ) : (
-                          <span>{value || ""}</span>
-                        )}
-                      </td>
-                    );
-                  })}
-                </tr>
+                <GradebookRow
+                  key={row.student.id}
+                  row={row}
+                  draftGrades={draftGrades}
+                  canEdit={data.can_edit}
+                  agrarianFeatures={data.agrarian_features}
+                  gradeChoices={data.grade_choices}
+                  onGradeChange={onGradeChange}
+                  onOpenAgrarianCell={onOpenAgrarianCell}
+                />
               ))}
             </tbody>
           </table>
