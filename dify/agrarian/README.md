@@ -29,3 +29,15 @@
 ## Проверка
 
 `PYTHONPATH=dify/agrarian python3 -m unittest dify/agrarian/test_formatter.py -v` — mock-тесты без сети. Отдельная read-only сборка всех 104 аграрных студентов за октябрь 2026 дала 103 payload и один `skipped`; все 103 существующих payload прошли `calculate` и `render_meta` без ошибок, без внешних запросов. По ним получились 3 601 занятие только с числами, 1 005 только с `Н`, 9 смешанных и 2 747 неотмеченных. Эти числа отражают состояние данных на момент проверки, не заменяют контроль непосредственно перед будущей публикацией.
+
+## Новый черновик Dify
+
+`workflow_graph.json` — локально подготовленный граф для отдельного Workflow-приложения «Аграрный — месячные отчёты». `code_node.py` содержит всю логику formatter и сборки Meta JSON внутри Code-узла; он не импортирует файлы сервера. `prepare_graph.py` воспроизводит граф из read-only скелета Dify 1.14.2, заменяя код, URLs, авторизацию, ID и входы. `runtime_audit.py` запускает копию графа в установленном GraphEngine с mock HTTP.
+
+Start-узел объявляет фактические `report`, `student_name`, `recipient_name`, `recipient_phone`, `group_name`, `mentor_name`, `month`, `average_grade`, `attendance_count`, `absence_count`, `total_five`, `total_four`, `total_three`, `total_two`, `attendance_rate`, `message_text`. Код использует `report` и сверяет ключевые плоские поля с ним; он не подменяет недатированные оценки готовыми итогами. `report.correlation` сохраняется в callback.
+
+`AGRARIAN_SEND_ENABLED=false` проверяется в Code-узле перед любым внешним HTTP. Один Meta HTTP-узел имеет `retry_enabled=false`; одиночная итерация переводит timeout в `unknown`. Следующий Code-узел классифицирует ответ как `accepted` только при 2xx и непустом ID, как `failed` при отклонении 4xx и как `unknown` при неопределённом результате. Исходный HTTP-статус передаётся в `meta_status_code` callback и `provider_http_status` выхода. После Meta идёт один callback без повторов; его сбой не возвращает выполнение к Meta. Выходы позволяют backend обработать результат по действующему контракту.
+
+Пока не заполнены `META_WHATSAPP_ACCESS_TOKEN`, `BACKEND_REPORT_CALLBACK_TOKEN`, `META_MESSAGES_URL`, `BACKEND_REPORT_URL`, а `TEMPLATE_NAME` равен `AGRARIAN_TEMPLATE_NOT_CREATED`. Точный sender-linked WABA, имя и APPROVED BODY Meta-шаблона, callback endpoint и production API key для нового приложения требуют отдельной настройки. Никакой из этих параметров не копируется из Academy или kuveit.
+
+`sync_draft.py` создаёт приложение через console API один раз, сразу сохраняет app ID в `app_identity.json`, синхронизирует только его черновик и перечитывает граф для функциональной сверки. Повторный запуск использует сохранённый ID и не создаёт дубликат. При расхождении ID, tenant, публикации или уже сохранённого draft он останавливается. `enter_console_session.sh` записывает access_token и CSRF в приватные файлы через скрытый ввод в терминале; значения не попадают в репозиторий.

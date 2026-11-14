@@ -1,0 +1,880 @@
+{
+  "nodes": [
+    {
+      "data": {
+        "selected": false,
+        "title": "Аграрный · входы backend",
+        "type": "start",
+        "variables": [
+          {
+            "variable": "report",
+            "label": "report",
+            "type": "json_object",
+            "required": true,
+            "max_length": 0
+          },
+          {
+            "variable": "student_name",
+            "label": "student_name",
+            "type": "text-input",
+            "required": true,
+            "max_length": 0
+          },
+          {
+            "variable": "recipient_name",
+            "label": "recipient_name",
+            "type": "text-input",
+            "required": false,
+            "max_length": 0
+          },
+          {
+            "variable": "recipient_phone",
+            "label": "recipient_phone",
+            "type": "text-input",
+            "required": true,
+            "max_length": 0
+          },
+          {
+            "variable": "group_name",
+            "label": "group_name",
+            "type": "text-input",
+            "required": true,
+            "max_length": 0
+          },
+          {
+            "variable": "mentor_name",
+            "label": "mentor_name",
+            "type": "text-input",
+            "required": false,
+            "max_length": 0
+          },
+          {
+            "variable": "month",
+            "label": "month",
+            "type": "text-input",
+            "required": true,
+            "max_length": 0
+          },
+          {
+            "variable": "average_grade",
+            "label": "average_grade",
+            "type": "number",
+            "required": false,
+            "max_length": 0
+          },
+          {
+            "variable": "attendance_count",
+            "label": "attendance_count",
+            "type": "number",
+            "required": false,
+            "max_length": 0
+          },
+          {
+            "variable": "absence_count",
+            "label": "absence_count",
+            "type": "number",
+            "required": false,
+            "max_length": 0
+          },
+          {
+            "variable": "total_five",
+            "label": "total_five",
+            "type": "number",
+            "required": false,
+            "max_length": 0
+          },
+          {
+            "variable": "total_four",
+            "label": "total_four",
+            "type": "number",
+            "required": false,
+            "max_length": 0
+          },
+          {
+            "variable": "total_three",
+            "label": "total_three",
+            "type": "number",
+            "required": false,
+            "max_length": 0
+          },
+          {
+            "variable": "total_two",
+            "label": "total_two",
+            "type": "number",
+            "required": false,
+            "max_length": 0
+          },
+          {
+            "variable": "attendance_rate",
+            "label": "attendance_rate",
+            "type": "number",
+            "required": false,
+            "max_length": 0
+          },
+          {
+            "variable": "message_text",
+            "label": "message_text",
+            "type": "paragraph",
+            "required": false,
+            "max_length": 0
+          }
+        ]
+      },
+      "height": 471,
+      "id": "1800010000001",
+      "position": {
+        "x": 0,
+        "y": 0
+      },
+      "positionAbsolute": {
+        "x": 0,
+        "y": 0
+      },
+      "selected": false,
+      "sourcePosition": "right",
+      "targetPosition": "left",
+      "type": "custom",
+      "width": 242
+    },
+    {
+      "data": {
+        "code": "\"\"\"Pure, local formatter proposal for the existing agrarian report JSON contract.\"\"\"\n\nimport json\nimport re\nfrom collections import Counter\nfrom datetime import date\n\nMONTHS = (\"\", \"январь\", \"февраль\", \"март\", \"апрель\", \"май\", \"июнь\", \"июль\", \"август\", \"сентябрь\", \"октябрь\", \"ноябрь\", \"декабрь\")\nBODY = \"Саламатсызбы!\\n\\n{{1}} студентинин {{2}} тобу боюнча {{3}} айындагы окуу отчёту.\\n\\nПредметтер жана баалар: {{4}}\\n\\nКатышуу: {{5}}\"\nBODY_LIMIT = 1024\nSUBJECT_LIMIT = 12\n\n\ndef normalize(value):\n    return re.sub(r\"\\s+\", \" \", str(value or \"\")).strip()\n\n\ndef _required(value, field):\n    result = normalize(value)\n    if not result:\n        raise ValueError(f\"Missing {field}\")\n    return result\n\n\ndef calculate(report):\n    \"\"\"Classify each unique lesson and count every numeric LessonRecord.\"\"\"\n    if not isinstance(report, dict) or (report.get(\"organization\"), report.get(\"college_branch\"), report.get(\"workflow_route\")) != (\"college\", \"agrarian\", \"agrarian\"):\n        raise ValueError(\"Wrong report route\")\n    period = report[\"period\"]\n    month = _required(period[\"month\"], \"period.month\")\n    try:\n        start = date.fromisoformat(month + \"-01\")\n    except ValueError as exc:\n        raise ValueError(\"Invalid period.month\") from exc\n    groups = report[\"groups\"]\n    if not isinstance(groups, list) or not groups:\n        raise ValueError(\"Missing subject groups\")\n    subjects = []\n    by_group = {}\n    for group in groups:\n        group_id = group[\"id\"]\n        if group_id in by_group:\n            raise ValueError(\"Duplicate subject group\")\n        item = {\"group_id\": group_id, \"name\": _required(group[\"course_name\"], \"course_name\"), \"grades\": Counter(), \"lessons\": Counter(), \"lesson_details\": []}\n        subjects.append(item)\n        by_group[group_id] = item\n    by_lesson = {}\n    for row in report[\"lessons\"]:\n        lesson_id, group_id = row[\"lesson_id\"], row[\"group_id\"]\n        if group_id not in by_group:\n            raise ValueError(\"Lesson outside subject groups\")\n        day = date.fromisoformat(row[\"date\"])\n        if day.year != start.year or day.month != start.month:\n            raise ValueError(\"Lesson outside period\")\n        key = (group_id, lesson_id)\n        lesson = by_lesson.setdefault(key, {\"lesson_id\": lesson_id, \"group_id\": group_id, \"date\": day.isoformat(), \"grades\": []})\n        if lesson[\"date\"] != day.isoformat():\n            raise ValueError(\"Conflicting lesson date\")\n        grade = normalize(row[\"grade\"])\n        if grade and grade not in (\"2\", \"3\", \"4\", \"5\", \"Н\"):\n            raise ValueError(\"Unsupported grade\")\n        if grade:\n            lesson[\"grades\"].append(grade)\n    totals = Counter()\n    for lesson in sorted(by_lesson.values(), key=lambda item: (item[\"date\"], str(item[\"group_id\"]), str(item[\"lesson_id\"]))):\n        numeric = [grade for grade in lesson[\"grades\"] if grade in (\"2\", \"3\", \"4\", \"5\")]\n        absent = \"Н\" in lesson[\"grades\"]\n        category = \"mixed\" if numeric and absent else \"graded\" if numeric else \"absent\" if absent else \"unmarked\"\n        subject = by_group[lesson[\"group_id\"]]\n        subject[\"grades\"].update(numeric)\n        subject[\"lessons\"][category] += 1\n        subject[\"lesson_details\"].append({\"lesson_id\": lesson[\"lesson_id\"], \"date\": lesson[\"date\"], \"category\": category, \"grades\": lesson[\"grades\"]})\n        totals[category] += 1\n    return {\"month\": month, \"student_name\": _required(report[\"student\"][\"full_name\"], \"student.full_name\"), \"group_name\": _required(report[\"main_group\"].get(\"name\") or report[\"group\"][\"course_name\"], \"group name\"), \"subjects\": subjects, \"lessons\": totals}\n\n\ndef render_meta(calculation):\n    \"\"\"Present calculated data in five single-line parameters; fail closed on overflow.\"\"\"\n    subjects = calculation[\"subjects\"]\n    if len(subjects) > SUBJECT_LIMIT:\n        raise ValueError(\"Subject capacity exceeded\")\n    month = date.fromisoformat(calculation[\"month\"] + \"-01\")\n    subject_parts = []\n    for subject in subjects:\n        counts = subject[\"grades\"]\n        if counts:\n            grades = \", \".join(f\"{grade}: {counts[grade]}\" for grade in (\"5\", \"4\", \"3\", \"2\") if counts[grade])\n        else:\n            grades = \"баа коюлган эмес\"\n        subject_parts.append(f\"{subject['name']} — {grades}\")\n    lessons = calculation[\"lessons\"]\n    attendance = \"; \".join((\n        f\"бааланып катышкан сабактар {lessons['graded']}\",\n        f\"сабактан калгандар {lessons['absent']}\",\n        f\"аралаш белгилер (баа жана Н) {lessons['mixed']}\",\n        f\"белгиленбеген сабактар {lessons['unmarked']}\",\n    ))\n    params = [calculation[\"student_name\"], calculation[\"group_name\"], f\"{month.year}-жылдын {MONTHS[month.month]}\", \"; \".join(subject_parts), attendance]\n    params = [normalize(value) for value in params]\n    if any(not value for value in params):\n        raise ValueError(\"Empty Meta parameter\")\n    preview = BODY\n    for index, value in enumerate(params, 1):\n        preview = preview.replace(\"{{\" + str(index) + \"}}\", value)\n    if len(preview) > BODY_LIMIT:\n        raise ValueError(\"Meta BODY capacity exceeded\")\n    return {\"parameters\": params, \"preview\": preview, \"characters\": len(preview)}\n\n\ndef format_report(report):\n    if isinstance(report, str):\n        report = json.loads(report)\n    return render_meta(calculate(report))\n\n\n# Dify Code node entry point. The source above is embedded, not imported.\nTEMPLATE_NAME = \"AGRARIAN_TEMPLATE_NOT_CREATED\"\n\ndef main(report, student_name=\"\", recipient_name=\"\", recipient_phone=\"\", group_name=\"\", month=\"\", send_enabled=\"false\"):\n    if str(send_enabled).strip().lower() != \"true\":\n        raise ValueError(\"AGRARIAN_SEND_ENABLED=false: no external HTTP request is allowed\")\n    if isinstance(report, str):\n        report = json.loads(report)\n    if not isinstance(report, dict):\n        raise ValueError(\"report must be a JSON object\")\n    for label, supplied, expected in (\n        (\"student_name\", student_name, report[\"student\"][\"full_name\"]),\n        (\"recipient_phone\", recipient_phone, report[\"student\"][\"parent_phone\"]),\n        (\"month\", month, report[\"period\"][\"month\"]),\n    ):\n        if normalize(supplied) != normalize(expected):\n            raise ValueError(label + \" differs from report\")\n    expected_group = report.get(\"main_group\", {}).get(\"name\") or report[\"group\"][\"course_name\"]\n    if normalize(group_name) != normalize(expected_group):\n        raise ValueError(\"group_name differs from report\")\n    phone = \"\".join(char for char in normalize(recipient_phone) if char.isdigit())\n    if not 8 <= len(phone) <= 15:\n        raise ValueError(\"Invalid recipient_phone\")\n    calculated = calculate(report)\n    rendered = render_meta(calculated)\n    whatsapp = {\n        \"messaging_product\": \"whatsapp\", \"to\": phone, \"type\": \"template\",\n        \"template\": {\"name\": TEMPLATE_NAME, \"language\": {\"code\": \"ky_KG\"},\n            \"components\": [{\"type\": \"body\", \"parameters\": [\n                {\"type\": \"text\", \"text\": value} for value in rendered[\"parameters\"]\n            ]}]},\n    }\n    backend = {\n        \"event\": \"student_monthly_report_result\", \"channel\": \"meta_whatsapp\",\n        \"report\": report, \"meta_request\": whatsapp,\n        \"rendered_text\": rendered[\"preview\"],\n    }\n    return {\n        \"whatsapp_payload\": json.dumps(whatsapp, ensure_ascii=False),\n        \"backend_payload\": json.dumps(backend, ensure_ascii=False),\n        **{\"parameter_\" + str(index): value for index, value in enumerate(rendered[\"parameters\"], 1)},\n    }\n",
+        "code_language": "python3",
+        "outputs": {
+          "whatsapp_payload": {
+            "type": "string",
+            "children": null
+          },
+          "backend_payload": {
+            "type": "string",
+            "children": null
+          },
+          "parameter_1": {
+            "type": "string",
+            "children": null
+          },
+          "parameter_2": {
+            "type": "string",
+            "children": null
+          },
+          "parameter_3": {
+            "type": "string",
+            "children": null
+          },
+          "parameter_4": {
+            "type": "string",
+            "children": null
+          },
+          "parameter_5": {
+            "type": "string",
+            "children": null
+          }
+        },
+        "selected": true,
+        "title": "Аграрный · gate и пять параметров",
+        "type": "code",
+        "variables": [
+          {
+            "variable": "report",
+            "value_selector": [
+              "1800010000001",
+              "report"
+            ],
+            "value_type": "object"
+          },
+          {
+            "variable": "student_name",
+            "value_selector": [
+              "1800010000001",
+              "student_name"
+            ],
+            "value_type": "string"
+          },
+          {
+            "variable": "recipient_name",
+            "value_selector": [
+              "1800010000001",
+              "recipient_name"
+            ],
+            "value_type": "string"
+          },
+          {
+            "variable": "recipient_phone",
+            "value_selector": [
+              "1800010000001",
+              "recipient_phone"
+            ],
+            "value_type": "string"
+          },
+          {
+            "variable": "group_name",
+            "value_selector": [
+              "1800010000001",
+              "group_name"
+            ],
+            "value_type": "string"
+          },
+          {
+            "variable": "month",
+            "value_selector": [
+              "1800010000001",
+              "month"
+            ],
+            "value_type": "string"
+          },
+          {
+            "variable": "send_enabled",
+            "value_selector": [
+              "env",
+              "AGRARIAN_SEND_ENABLED"
+            ],
+            "value_type": "string"
+          }
+        ]
+      },
+      "height": 50,
+      "id": "1800010000002",
+      "position": {
+        "x": 300,
+        "y": 0
+      },
+      "positionAbsolute": {
+        "x": 300,
+        "y": 0
+      },
+      "selected": true,
+      "sourcePosition": "right",
+      "targetPosition": "left",
+      "type": "custom",
+      "width": 241
+    },
+    {
+      "data": {
+        "authorization": {
+          "type": "api-key",
+          "config": {
+            "type": "bearer",
+            "api_key": "{{#env.META_WHATSAPP_ACCESS_TOKEN#}}"
+          }
+        },
+        "body": {
+          "data": [
+            {
+              "id": "key-value-483",
+              "key": "",
+              "type": "text",
+              "value": "{{#1800010000002.whatsapp_payload#}}"
+            }
+          ],
+          "type": "raw-text"
+        },
+        "headers": "Content-Type:application/json",
+        "method": "post",
+        "params": "",
+        "retry_config": {
+          "retry_enabled": false,
+          "max_retries": 0,
+          "retry_interval": 1000
+        },
+        "selected": false,
+        "ssl_verify": true,
+        "timeout": {
+          "max_connect_timeout": 10,
+          "max_read_timeout": 30,
+          "max_write_timeout": 30
+        },
+        "title": "Meta · один запрос",
+        "type": "http-request",
+        "url": "{{#env.META_MESSAGES_URL#}}",
+        "variables": [],
+        "error_strategy": null
+      },
+      "height": 95,
+      "id": "1800010000005",
+      "position": {
+        "x": 600,
+        "y": 0
+      },
+      "positionAbsolute": {
+        "x": 1500,
+        "y": 0
+      },
+      "selected": false,
+      "sourcePosition": "right",
+      "targetPosition": "left",
+      "type": "custom",
+      "width": 241,
+      "parentId": "1800010000004"
+    },
+    {
+      "data": {
+        "type": "code",
+        "title": "Meta · accepted/failed/unknown",
+        "selected": false,
+        "code_language": "python3",
+        "code": "\"\"\"Classify one existing HTTP response. Never send or retry a message.\"\"\"\n\nimport json\n\n\ndef main(status_code=0, body=\"\", backend_payload=\"{}\"):\n    try:\n        status = int(status_code)\n    except (TypeError, ValueError, OverflowError):\n        status = 0\n    result = json.loads(backend_payload)\n    response = None\n    try:\n        parsed = json.loads(body) if isinstance(body, str) else body\n        if isinstance(parsed, dict):\n            response = parsed\n    except (TypeError, ValueError):\n        pass\n    message_id = \"\"\n    error_code = \"\"\n    outcome = \"unknown\"\n    reason = \"Результат запроса не определён; автоматический повтор запрещён.\"\n    if response:\n        messages = response.get(\"messages\")\n        error = response.get(\"error\")\n        if isinstance(error, dict):\n            error_code = str(error.get(\"code\", \"\"))\n        if (\n            200 <= status < 300\n            and \"error\" not in response\n            and isinstance(messages, list)\n            and len(messages) == 1\n            and isinstance(messages[0], dict)\n            and isinstance(messages[0].get(\"id\"), str)\n            and messages[0][\"id\"].strip()\n        ):\n            message_id = messages[0][\"id\"].strip()\n            outcome = \"accepted\"\n            reason = \"Сообщение принято провайдером; доставка не подтверждена.\"\n        elif 400 <= status < 500 and isinstance(error, dict):\n            outcome = \"failed\"\n            reason = \"Провайдер отклонил запрос; автоматический повтор выключен.\"\n    result.update({\n        \"provider_status\": outcome,\n        \"provider_message_id\": message_id,\n        \"provider_http_status\": status,\n        \"provider_error_code\": error_code,\n        \"delivery_confirmed\": False,\n        \"outcome_reason\": reason,\n    })\n    return {\n        \"provider_status\": outcome,\n        \"provider_message_id\": message_id,\n        \"provider_http_status\": status,\n        \"provider_error_code\": error_code,\n        \"outcome_reason\": reason,\n        \"backend_payload\": json.dumps(result, ensure_ascii=False),\n        \"callback_payload\": json.dumps({\n            \"delivery\": result,\n            \"meta_status_code\": status,\n            \"meta_response\": response or {},\n        }, ensure_ascii=False),\n    }\n",
+        "variables": [
+          {
+            "variable": "status_code",
+            "value_selector": [
+              "1800010000007",
+              "status_code"
+            ],
+            "value_type": "number"
+          },
+          {
+            "variable": "body",
+            "value_selector": [
+              "1800010000007",
+              "body"
+            ],
+            "value_type": "string"
+          },
+          {
+            "variable": "backend_payload",
+            "value_selector": [
+              "1800010000002",
+              "backend_payload"
+            ],
+            "value_type": "string"
+          }
+        ],
+        "outputs": {
+          "provider_status": {
+            "children": null,
+            "type": "string"
+          },
+          "provider_message_id": {
+            "children": null,
+            "type": "string"
+          },
+          "provider_http_status": {
+            "children": null,
+            "type": "number"
+          },
+          "provider_error_code": {
+            "children": null,
+            "type": "string"
+          },
+          "outcome_reason": {
+            "children": null,
+            "type": "string"
+          },
+          "backend_payload": {
+            "children": null,
+            "type": "string"
+          },
+          "callback_payload": {
+            "children": null,
+            "type": "string"
+          }
+        }
+      },
+      "height": 50,
+      "id": "1800010000008",
+      "position": {
+        "x": 900,
+        "y": 0
+      },
+      "positionAbsolute": {
+        "x": 900,
+        "y": 0
+      },
+      "selected": false,
+      "sourcePosition": "right",
+      "targetPosition": "left",
+      "type": "custom",
+      "width": 241
+    },
+    {
+      "data": {
+        "authorization": {
+          "type": "api-key",
+          "config": {
+            "type": "bearer",
+            "api_key": "{{#env.BACKEND_REPORT_CALLBACK_TOKEN#}}"
+          }
+        },
+        "body": {
+          "data": [
+            {
+              "id": "key-value-backend-001",
+              "key": "",
+              "type": "text",
+              "value": "{{#1800010000008.callback_payload#}}"
+            }
+          ],
+          "type": "raw-text"
+        },
+        "default_value": [
+          {
+            "key": "body",
+            "type": "string",
+            "value": ""
+          },
+          {
+            "key": "status_code",
+            "type": "number",
+            "value": "0"
+          },
+          {
+            "key": "headers",
+            "type": "object",
+            "value": "{}"
+          },
+          {
+            "key": "files",
+            "type": "array[file]",
+            "value": "[]"
+          }
+        ],
+        "error_strategy": "default-value",
+        "headers": "Content-Type:application/json",
+        "method": "post",
+        "params": "",
+        "retry_config": {
+          "retry_enabled": false,
+          "max_retries": 0,
+          "retry_interval": 1000
+        },
+        "selected": false,
+        "ssl_verify": true,
+        "timeout": {
+          "max_connect_timeout": 10,
+          "max_read_timeout": 30,
+          "max_write_timeout": 30
+        },
+        "title": "Backend · callback без повтора Meta",
+        "type": "http-request",
+        "url": "{{#env.BACKEND_REPORT_URL#}}",
+        "variables": []
+      },
+      "height": 131,
+      "id": "1800010000009",
+      "position": {
+        "x": 1200,
+        "y": 0
+      },
+      "positionAbsolute": {
+        "x": 1200,
+        "y": 0
+      },
+      "selected": false,
+      "sourcePosition": "right",
+      "targetPosition": "left",
+      "type": "custom",
+      "width": 241
+    },
+    {
+      "data": {
+        "outputs": [
+          {
+            "variable": "provider_status",
+            "value_selector": [
+              "1800010000008",
+              "provider_status"
+            ],
+            "value_type": "string"
+          },
+          {
+            "variable": "provider_message_id",
+            "value_selector": [
+              "1800010000008",
+              "provider_message_id"
+            ],
+            "value_type": "string"
+          },
+          {
+            "variable": "provider_http_status",
+            "value_selector": [
+              "1800010000008",
+              "provider_http_status"
+            ],
+            "value_type": "number"
+          },
+          {
+            "variable": "outcome_reason",
+            "value_selector": [
+              "1800010000008",
+              "outcome_reason"
+            ],
+            "value_type": "string"
+          },
+          {
+            "variable": "backend_payload",
+            "value_selector": [
+              "1800010000008",
+              "backend_payload"
+            ],
+            "value_type": "string"
+          },
+          {
+            "variable": "callback_http_status",
+            "value_selector": [
+              "1800010000009",
+              "status_code"
+            ],
+            "value_type": "number"
+          }
+        ],
+        "selected": false,
+        "title": "Результат провайдера и callback",
+        "type": "end"
+      },
+      "height": 270,
+      "id": "1800010000010",
+      "position": {
+        "x": 1500,
+        "y": 0
+      },
+      "positionAbsolute": {
+        "x": 1500,
+        "y": 0
+      },
+      "selected": false,
+      "sourcePosition": "right",
+      "targetPosition": "left",
+      "type": "custom",
+      "width": 241
+    },
+    {
+      "data": {
+        "error_handle_mode": "continue-on-error",
+        "is_parallel": false,
+        "iterator_input_type": "array[number]",
+        "iterator_selector": [
+          "1800010000003",
+          "once"
+        ],
+        "output_selector": [
+          "1800010000006",
+          "response"
+        ],
+        "output_type": "array[string]",
+        "selected": false,
+        "start_node_id": "1800010000004start",
+        "title": "Один запрос · timeout даёт unknown",
+        "type": "iteration",
+        "parallel_nums": 10,
+        "width": 858
+      },
+      "height": 144,
+      "id": "1800010000004",
+      "position": {
+        "x": 900,
+        "y": 0
+      },
+      "positionAbsolute": {
+        "x": 900,
+        "y": 0
+      },
+      "selected": false,
+      "sourcePosition": "right",
+      "targetPosition": "left",
+      "type": "custom",
+      "width": 858
+    },
+    {
+      "data": {
+        "isInIteration": true,
+        "selected": false,
+        "title": "Старт одного запроса",
+        "type": "iteration-start"
+      },
+      "draggable": false,
+      "height": 48,
+      "id": "1800010000004start",
+      "parentId": "1800010000004",
+      "position": {
+        "x": 24,
+        "y": 68
+      },
+      "positionAbsolute": {
+        "x": 924,
+        "y": 68
+      },
+      "selectable": false,
+      "sourcePosition": "right",
+      "targetPosition": "left",
+      "type": "custom-iteration-start",
+      "width": 44
+    },
+    {
+      "data": {
+        "code": "import json\n\ndef main(status_code=0, body=''):\n    return {'response': json.dumps({'status_code': status_code, 'body': body})}\n",
+        "code_language": "python3",
+        "outputs": {
+          "response": {
+            "children": null,
+            "type": "string"
+          }
+        },
+        "selected": false,
+        "title": "Meta · сохранить ответ",
+        "type": "code",
+        "variables": [
+          {
+            "variable": "status_code",
+            "value_selector": [
+              "1800010000005",
+              "status_code"
+            ],
+            "value_type": "number"
+          },
+          {
+            "variable": "body",
+            "value_selector": [
+              "1800010000005",
+              "body"
+            ],
+            "value_type": "string"
+          }
+        ]
+      },
+      "height": 50,
+      "id": "1800010000006",
+      "parentId": "1800010000004",
+      "position": {
+        "x": 310,
+        "y": 68
+      },
+      "positionAbsolute": {
+        "x": 1210,
+        "y": 68
+      },
+      "selected": false,
+      "sourcePosition": "right",
+      "targetPosition": "left",
+      "type": "custom",
+      "width": 241
+    },
+    {
+      "data": {
+        "code": "def main():\n    return {'once': [1]}\n",
+        "code_language": "python3",
+        "outputs": {
+          "once": {
+            "children": null,
+            "type": "array[number]"
+          }
+        },
+        "selected": false,
+        "title": "Один запрос · без автоматического повтора",
+        "type": "code",
+        "variables": []
+      },
+      "height": 50,
+      "id": "1800010000003",
+      "position": {
+        "x": 600,
+        "y": 0
+      },
+      "positionAbsolute": {
+        "x": 600,
+        "y": 0
+      },
+      "selected": false,
+      "sourcePosition": "right",
+      "targetPosition": "left",
+      "type": "custom",
+      "width": 241
+    },
+    {
+      "data": {
+        "code": "import json\n\ndef main(responses=None):\n    if isinstance(responses, list) and len(responses) == 1 and isinstance(responses[0], str):\n        try:\n            response = json.loads(responses[0])\n            return {'status_code': response['status_code'], 'body': response['body']}\n        except (ValueError, TypeError, KeyError):\n            pass\n    return {'status_code': 0, 'body': ''}\n",
+        "code_language": "python3",
+        "outputs": {
+          "status_code": {
+            "children": null,
+            "type": "number"
+          },
+          "body": {
+            "children": null,
+            "type": "string"
+          }
+        },
+        "selected": false,
+        "title": "Meta · ответ или unknown",
+        "type": "code",
+        "variables": [
+          {
+            "variable": "responses",
+            "value_selector": [
+              "1800010000004",
+              "output"
+            ],
+            "value_type": "array[string]"
+          }
+        ]
+      },
+      "height": 50,
+      "id": "1800010000007",
+      "position": {
+        "x": 1480,
+        "y": 0
+      },
+      "positionAbsolute": {
+        "x": 1480,
+        "y": 0
+      },
+      "selected": false,
+      "sourcePosition": "right",
+      "targetPosition": "left",
+      "type": "custom",
+      "width": 241
+    }
+  ],
+  "edges": [
+    {
+      "data": {
+        "isInIteration": false,
+        "isInLoop": false,
+        "sourceType": "start",
+        "targetType": "code"
+      },
+      "id": "1800010000001-source-1800010000002-target",
+      "selected": false,
+      "source": "1800010000001",
+      "sourceHandle": "source",
+      "target": "1800010000002",
+      "targetHandle": "target",
+      "type": "custom",
+      "zIndex": 0
+    },
+    {
+      "data": {
+        "isInIteration": false,
+        "isInLoop": false,
+        "sourceType": "code",
+        "targetType": "http-request"
+      },
+      "id": "1800010000008-source-1800010000009-target",
+      "selected": false,
+      "source": "1800010000008",
+      "sourceHandle": "source",
+      "target": "1800010000009",
+      "targetHandle": "target",
+      "type": "custom",
+      "zIndex": 0
+    },
+    {
+      "data": {
+        "isInIteration": false,
+        "isInLoop": false,
+        "sourceType": "http-request",
+        "targetType": "end"
+      },
+      "id": "1800010000009-source-1800010000010-target",
+      "selected": false,
+      "source": "1800010000009",
+      "sourceHandle": "source",
+      "target": "1800010000010",
+      "targetHandle": "target",
+      "type": "custom",
+      "zIndex": 0
+    },
+    {
+      "data": {
+        "isInIteration": false,
+        "isInLoop": false,
+        "sourceType": "code",
+        "targetType": "code"
+      },
+      "id": "1800010000002-source-1800010000003-target",
+      "selected": false,
+      "source": "1800010000002",
+      "sourceHandle": "source",
+      "target": "1800010000003",
+      "targetHandle": "target",
+      "type": "custom",
+      "zIndex": 0
+    },
+    {
+      "data": {
+        "isInIteration": false,
+        "isInLoop": false,
+        "sourceType": "code",
+        "targetType": "iteration"
+      },
+      "id": "1800010000003-source-1800010000004-target",
+      "selected": false,
+      "source": "1800010000003",
+      "sourceHandle": "source",
+      "target": "1800010000004",
+      "targetHandle": "target",
+      "type": "custom",
+      "zIndex": 0
+    },
+    {
+      "data": {
+        "isInIteration": true,
+        "isInLoop": false,
+        "iteration_id": "1800010000004",
+        "sourceType": "iteration-start",
+        "targetType": "http-request"
+      },
+      "id": "1800010000004start-source-1800010000005-target",
+      "selected": false,
+      "source": "1800010000004start",
+      "sourceHandle": "source",
+      "target": "1800010000005",
+      "targetHandle": "target",
+      "type": "custom",
+      "zIndex": 1002
+    },
+    {
+      "data": {
+        "isInIteration": true,
+        "isInLoop": false,
+        "iteration_id": "1800010000004",
+        "sourceType": "http-request",
+        "targetType": "code"
+      },
+      "id": "1800010000005-source-1800010000006-target",
+      "selected": false,
+      "source": "1800010000005",
+      "sourceHandle": "source",
+      "target": "1800010000006",
+      "targetHandle": "target",
+      "type": "custom",
+      "zIndex": 1002
+    },
+    {
+      "data": {
+        "isInIteration": false,
+        "isInLoop": false,
+        "sourceType": "iteration",
+        "targetType": "code"
+      },
+      "id": "1800010000004-source-1800010000007-target",
+      "selected": false,
+      "source": "1800010000004",
+      "sourceHandle": "source",
+      "target": "1800010000007",
+      "targetHandle": "target",
+      "type": "custom",
+      "zIndex": 0
+    },
+    {
+      "data": {
+        "isInIteration": false,
+        "isInLoop": false,
+        "sourceType": "code",
+        "targetType": "code"
+      },
+      "id": "1800010000007-source-1800010000008-target",
+      "selected": false,
+      "source": "1800010000007",
+      "sourceHandle": "source",
+      "target": "1800010000008",
+      "targetHandle": "target",
+      "type": "custom",
+      "zIndex": 0
+    }
+  ],
+  "viewport": {
+    "x": 207.08707676005338,
+    "y": 277.2381280652019,
+    "zoom": 0.582238818770788
+  }
+}
