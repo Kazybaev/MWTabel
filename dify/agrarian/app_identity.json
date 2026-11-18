@@ -5,5 +5,7 @@
   "draft_id": "e71b3bc1-3f02-45f6-80f1-12415aab906e",
   "desired_graph_sha256": "629d40feed93efe394c2e19b1f2f2c4e0dae174f761b889c4da0de8a462f5c0a",
   "published": true,
-  "published_workflow_id": "835ebd10-d71d-4beb-b0ed-f72c8eaad13b"
+  "published_workflow_id": "30dcfcd2-320d-41aa-aaa1-7001cd90ed51",
+  "previous_published_workflow_id": "835ebd10-d71d-4beb-b0ed-f72c8eaad13b",
+  "send_enabled": true
 }

@@ -1,6 +1,6 @@
 # Аграрный workflow
 
-Приложение Dify: `a67fd500-51ca-486a-9088-7b9bda934563`. Production-маршрут не включён. `AGRARIAN_SEND_ENABLED=false` должен сохраняться в draft и опубликованной версии.
+Приложение Dify: `a67fd500-51ca-486a-9088-7b9bda934563`. Ручной production-маршрут включён 18 ноября 2026. `AUTO_MONTHLY_REPORTS=false` и `REPORT_SCHEDULER_RUN_ON_START=false`; реальных аграрных batch и workflow runs на момент rollout не было.
 
 ## Форматтер
 
@@ -23,3 +23,11 @@ GraphEngine mock-аудит пройден в `docker_ssrf_proxy_network` с `CO
 18 ноября после обновления console-сессии опубликован workflow `835ebd10-d71d-4beb-b0ed-f72c8eaad13b`. Draft `e71b3bc1-3f02-45f6-80f1-12415aab906e` и опубликованный граф перечитаны и совпали с подготовленным графом: 11 узлов, 9 связей, 24 выхода параметров. Все пять переменных непустые в draft и публикации; секреты маскированы в console и сохранены в БД зашифрованными. `AGRARIAN_SEND_ENABLED=false` в обеих версиях; у приложения 0 workflow runs. Production-маршрут не включён.
 
 Локальные тесты: `PYTHONPATH=dify/agrarian python3 -m unittest dify/agrarian/test_formatter.py -q`. GraphEngine mock: `docker run --rm --network docker_ssrf_proxy_network --entrypoint python -v /root/MWTabel:/audit:ro -e PYTHONPATH=/app/api -e CODE_EXECUTION_ENDPOINT=http://sandbox:8194 langgenius/dify-api:1.14.2 /audit/dify/agrarian/runtime_audit.py`.
+
+## Ручной маршрут: rollout 18 ноября 2026
+
+Штатный console API создал один API-ключ только для приложения `a67fd500-51ca-486a-9088-7b9bda934563`; он сохранён вне Git в приватном каталоге rollout и проверен по точному app ID. Backend `report_routing.py` требует `DIFY_AGRARIAN_API_KEY`, без fallback. Compose передаёт `.env` в web и report-worker; фактические контейнеры получили один и тот же ключ и остались на одном image. Mock-only audit `backend_route_audit.py` проверил 15 входов, аграрный route, собственный Bearer key и отказ без fallback.
+
+Перед включением были созданы защищённые снимки `.env`, Compose, Dify draft/published и production БД; backup полностью восстановлен в изолированный PostgreSQL. Rollback image и процедура находятся в `/root/mwtabel-private/agrarian-manual-route-20261118/`. На момент включения аграрных batch/items и любых `queued`/`processing` Dify items не было. Idle report-worker остановлен перед recreation; работающие задания не прерывались.
+
+Опубликован workflow `30dcfcd2-320d-41aa-aaa1-7001cd90ed51` с `AGRARIAN_SEND_ENABLED=true`. Граф и остальные настройки перечитаны и совпали с подготовленной версией на 24 параметра. Web/worker и nginx API/frontend прошли health. Свежий read-only dry-run за октябрь 2026: 104 студента, 3 готовых, 1 исключён по архивной активности (ID 236), 94 имеют WAHA parent `accepted`, 6 — `unknown`; эти 100 не включаются в Dify/Meta без отдельного разбора. Контрольный кандидат ID 245 имеет октябрьский payload без Dify dispatch/attempt и без конфликтующей WAHA parent записи; реального send не было. `manual_dry_run.py` воспроизводит выборку без batch, attempts и HTTP.
