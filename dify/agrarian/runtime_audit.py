@@ -41,7 +41,7 @@ class Transport:
                 print('META_CONTENT_PREFIX', repr(kwargs.get('content', b'')[:160]), file=sys.stderr)
                 raise
             params = message["template"]["components"][0]["parameters"]
-            assert len(params) == 5
+            assert len(params) == 24
             assert all(p["text"] == " ".join(p["text"].split()) for p in params)
             assert all(not any(c in p["text"] for c in "\r\n\t") for p in params)
             if self.scenario == "timeout":

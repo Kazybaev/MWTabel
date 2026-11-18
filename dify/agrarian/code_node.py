@@ -6,9 +6,9 @@ from collections import Counter
 from datetime import date
 
 MONTHS = ("", "январь", "февраль", "март", "апрель", "май", "июнь", "июль", "август", "сентябрь", "октябрь", "ноябрь", "декабрь")
-BODY = "Саламатсызбы!\n\n{{1}} студентинин {{2}} тобу боюнча {{3}} айындагы окуу отчёту.\n\nПредметтер жана баалар: {{4}}\n\nКатышуу: {{5}}"
+BODY = 'Саламатсызбы!\n\nМен Motion Web IT академиясынан байланышып жатам ✅\n\nСизге *{{1}}* группасынын окуучусу *{{2}}* боюнча {{3}} мезгилиндеги окуу жыйынтыктары тууралуу маалымат бере кетейин:\n\n📊 Сабактар боюнча баалары:\n\n• *{{4}}* сабагы —\n\n“5”тен {{5}} даана\n“4”төн {{6}} даана\n“3”төн {{7}} даана\n“2”ден {{8}} даана\n\n• *{{9}}* сабагы —\n\n“5”тен {{10}} даана\n“4”төн {{11}} даана\n“3”төн {{12}} даана\n“2”ден {{13}} даана\n\n• *{{14}}* сабагы —\n\n“5”тен {{15}} даана\n“4”төн {{16}} даана\n“3”төн {{17}} даана\n“2”ден {{18}} даана\n\n• *{{19}}* сабагы —\n\n“5”тен {{20}} даана\n“4”төн {{21}} даана\n“3”төн {{22}} даана\n“2”ден {{23}} даана\n\n📌 Сабактан калуулар:\n\n• {{24}}\n\nСаламатта калыныз!\n'
 BODY_LIMIT = 1024
-SUBJECT_LIMIT = 12
+SUBJECT_LIMIT = 4
 
 
 def normalize(value):
@@ -75,36 +75,33 @@ def calculate(report):
 
 
 def render_meta(calculation):
-    """Present calculated data in five single-line parameters; fail closed on overflow."""
+    """Render the exact Kuwait BODY with 24 single-line parameters."""
     subjects = calculation["subjects"]
     if len(subjects) > SUBJECT_LIMIT:
-        raise ValueError("Subject capacity exceeded")
+        raise ValueError("Subject capacity exceeded: template has four subject blocks")
     month = date.fromisoformat(calculation["month"] + "-01")
-    subject_parts = []
+    params = [calculation["group_name"], calculation["student_name"], f"{month.year}-жылдын {MONTHS[month.month]}"]
     for subject in subjects:
         counts = subject["grades"]
-        if counts:
-            grades = ", ".join(f"{grade}: {counts[grade]}" for grade in ("5", "4", "3", "2") if counts[grade])
-        else:
-            grades = "баа коюлган эмес"
-        subject_parts.append(f"{subject['name']} — {grades}")
+        params.extend([subject["name"], *(str(counts[grade]) for grade in ("5", "4", "3", "2"))])
+    for _ in range(SUBJECT_LIMIT - len(subjects)):
+        params.extend(["—"] * 5)
     lessons = calculation["lessons"]
-    attendance = "; ".join((
-        f"бааланып катышкан сабактар {lessons['graded']}",
-        f"сабактан калгандар {lessons['absent']}",
-        f"аралаш белгилер (баа жана Н) {lessons['mixed']}",
-        f"белгиленбеген сабактар {lessons['unmarked']}",
-    ))
-    params = [calculation["student_name"], calculation["group_name"], f"{month.year}-жылдын {MONTHS[month.month]}", "; ".join(subject_parts), attendance]
+    params.append("; ".join((
+        f"Н гана белгиленген сабактар: {lessons['absent']}",
+        f"аралаш белгилер (баа жана Н, пропуск катары эсептелбейт): {lessons['mixed']}",
+        f"белгиленбеген сабактар (пропуск катары эсептелбейт): {lessons['unmarked']}",
+        "— менен толтурулган предмет блоктору: бул орунда предмет жок" if len(subjects) < SUBJECT_LIMIT else "бардык предметтер көрсөтүлдү",
+    )))
     params = [normalize(value) for value in params]
-    if any(not value for value in params):
-        raise ValueError("Empty Meta parameter")
+    if len(params) != 24 or any(not value for value in params):
+        raise ValueError("Invalid Meta parameter count or empty value")
     preview = BODY
     for index, value in enumerate(params, 1):
         preview = preview.replace("{{" + str(index) + "}}", value)
     if len(preview) > BODY_LIMIT:
         raise ValueError("Meta BODY capacity exceeded")
-    return {"parameters": params, "preview": preview, "characters": len(preview)}
+    return {"parameters": params, "preview": preview, "characters": len(preview), "snapshot": calculation}
 
 
 def format_report(report):
@@ -114,7 +111,7 @@ def format_report(report):
 
 
 # Dify Code node entry point. The source above is embedded, not imported.
-TEMPLATE_NAME = "AGRARIAN_TEMPLATE_NOT_CREATED"
+TEMPLATE_NAME = "student_monthsly_send_v5"
 
 def main(report, student_name="", recipient_name="", recipient_phone="", group_name="", month="", send_enabled="false"):
     if str(send_enabled).strip().lower() != "true":

@@ -12,7 +12,7 @@ class AgrarianFormatterTests(unittest.TestCase):
     def test_real_examples_and_separate_missing_data(self):
         for report in EXAMPLES.values():
             result = main(report)
-            self.assertEqual(len(result["parameters"]), 5)
+            self.assertEqual(len(result["parameters"]), 24)
             self.assertLessEqual(result["characters"], BODY_LIMIT)
             for param in result["parameters"]:
                 self.assertEqual(param, normalize(param))
@@ -20,7 +20,7 @@ class AgrarianFormatterTests(unittest.TestCase):
                 self.assertNotIn("\t", param)
         missing = calculate(EXAMPLES["missing_grades"])
         self.assertEqual(missing["lessons"]["unmarked"], 70)
-        self.assertIn("белгиленбеген сабактар 70", render_meta(missing)["parameters"][4])
+        self.assertIn("белгиленбеген сабактар (пропуск катары эсептелбейт): 70", render_meta(missing)["parameters"][23])
 
     def test_numeric_grades_unbounded_and_mixed_lesson(self):
         report = copy.deepcopy(EXAMPLES["full"])
@@ -48,8 +48,8 @@ class AgrarianFormatterTests(unittest.TestCase):
         for row in report["lessons"]:
             row["grade"] = ""
         result = main(report)
-        self.assertIn("баа коюлган эмес", result["parameters"][3])
-        self.assertNotIn("5: 0", result["parameters"][3])
+        self.assertEqual(result["parameters"][4:8], ["0"] * 4)
+        self.assertIn("0", result["parameters"][4:8])
 
     def test_capacity_rejects_without_truncation(self):
         calculation = calculate(EXAMPLES["full"])
@@ -66,7 +66,7 @@ class AgrarianFormatterTests(unittest.TestCase):
         calculation["student_name"] = " А\n\t  Б "
         calculation["subjects"][0]["name"] = "Предмет\n  бир"
         params = render_meta(calculation)["parameters"]
-        self.assertEqual(params[0], "А Б")
+        self.assertEqual(params[1], "А Б")
         self.assertIn("Предмет бир", params[3])
 
 

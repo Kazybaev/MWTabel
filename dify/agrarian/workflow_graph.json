@@ -138,7 +138,7 @@
     },
     {
       "data": {
-        "code": "\"\"\"Pure, local formatter proposal for the existing agrarian report JSON contract.\"\"\"\n\nimport json\nimport re\nfrom collections import Counter\nfrom datetime import date\n\nMONTHS = (\"\", \"январь\", \"февраль\", \"март\", \"апрель\", \"май\", \"июнь\", \"июль\", \"август\", \"сентябрь\", \"октябрь\", \"ноябрь\", \"декабрь\")\nBODY = \"Саламатсызбы!\\n\\n{{1}} студентинин {{2}} тобу боюнча {{3}} айындагы окуу отчёту.\\n\\nПредметтер жана баалар: {{4}}\\n\\nКатышуу: {{5}}\"\nBODY_LIMIT = 1024\nSUBJECT_LIMIT = 12\n\n\ndef normalize(value):\n    return re.sub(r\"\\s+\", \" \", str(value or \"\")).strip()\n\n\ndef _required(value, field):\n    result = normalize(value)\n    if not result:\n        raise ValueError(f\"Missing {field}\")\n    return result\n\n\ndef calculate(report):\n    \"\"\"Classify each unique lesson and count every numeric LessonRecord.\"\"\"\n    if not isinstance(report, dict) or (report.get(\"organization\"), report.get(\"college_branch\"), report.get(\"workflow_route\")) != (\"college\", \"agrarian\", \"agrarian\"):\n        raise ValueError(\"Wrong report route\")\n    period = report[\"period\"]\n    month = _required(period[\"month\"], \"period.month\")\n    try:\n        start = date.fromisoformat(month + \"-01\")\n    except ValueError as exc:\n        raise ValueError(\"Invalid period.month\") from exc\n    groups = report[\"groups\"]\n    if not isinstance(groups, list) or not groups:\n        raise ValueError(\"Missing subject groups\")\n    subjects = []\n    by_group = {}\n    for group in groups:\n        group_id = group[\"id\"]\n        if group_id in by_group:\n            raise ValueError(\"Duplicate subject group\")\n        item = {\"group_id\": group_id, \"name\": _required(group[\"course_name\"], \"course_name\"), \"grades\": Counter(), \"lessons\": Counter(), \"lesson_details\": []}\n        subjects.append(item)\n        by_group[group_id] = item\n    by_lesson = {}\n    for row in report[\"lessons\"]:\n        lesson_id, group_id = row[\"lesson_id\"], row[\"group_id\"]\n        if group_id not in by_group:\n            raise ValueError(\"Lesson outside subject groups\")\n        day = date.fromisoformat(row[\"date\"])\n        if day.year != start.year or day.month != start.month:\n            raise ValueError(\"Lesson outside period\")\n        key = (group_id, lesson_id)\n        lesson = by_lesson.setdefault(key, {\"lesson_id\": lesson_id, \"group_id\": group_id, \"date\": day.isoformat(), \"grades\": []})\n        if lesson[\"date\"] != day.isoformat():\n            raise ValueError(\"Conflicting lesson date\")\n        grade = normalize(row[\"grade\"])\n        if grade and grade not in (\"2\", \"3\", \"4\", \"5\", \"Н\"):\n            raise ValueError(\"Unsupported grade\")\n        if grade:\n            lesson[\"grades\"].append(grade)\n    totals = Counter()\n    for lesson in sorted(by_lesson.values(), key=lambda item: (item[\"date\"], str(item[\"group_id\"]), str(item[\"lesson_id\"]))):\n        numeric = [grade for grade in lesson[\"grades\"] if grade in (\"2\", \"3\", \"4\", \"5\")]\n        absent = \"Н\" in lesson[\"grades\"]\n        category = \"mixed\" if numeric and absent else \"graded\" if numeric else \"absent\" if absent else \"unmarked\"\n        subject = by_group[lesson[\"group_id\"]]\n        subject[\"grades\"].update(numeric)\n        subject[\"lessons\"][category] += 1\n        subject[\"lesson_details\"].append({\"lesson_id\": lesson[\"lesson_id\"], \"date\": lesson[\"date\"], \"category\": category, \"grades\": lesson[\"grades\"]})\n        totals[category] += 1\n    return {\"month\": month, \"student_name\": _required(report[\"student\"][\"full_name\"], \"student.full_name\"), \"group_name\": _required(report[\"main_group\"].get(\"name\") or report[\"group\"][\"course_name\"], \"group name\"), \"subjects\": subjects, \"lessons\": totals}\n\n\ndef render_meta(calculation):\n    \"\"\"Present calculated data in five single-line parameters; fail closed on overflow.\"\"\"\n    subjects = calculation[\"subjects\"]\n    if len(subjects) > SUBJECT_LIMIT:\n        raise ValueError(\"Subject capacity exceeded\")\n    month = date.fromisoformat(calculation[\"month\"] + \"-01\")\n    subject_parts = []\n    for subject in subjects:\n        counts = subject[\"grades\"]\n        if counts:\n            grades = \", \".join(f\"{grade}: {counts[grade]}\" for grade in (\"5\", \"4\", \"3\", \"2\") if counts[grade])\n        else:\n            grades = \"баа коюлган эмес\"\n        subject_parts.append(f\"{subject['name']} — {grades}\")\n    lessons = calculation[\"lessons\"]\n    attendance = \"; \".join((\n        f\"бааланып катышкан сабактар {lessons['graded']}\",\n        f\"сабактан калгандар {lessons['absent']}\",\n        f\"аралаш белгилер (баа жана Н) {lessons['mixed']}\",\n        f\"белгиленбеген сабактар {lessons['unmarked']}\",\n    ))\n    params = [calculation[\"student_name\"], calculation[\"group_name\"], f\"{month.year}-жылдын {MONTHS[month.month]}\", \"; \".join(subject_parts), attendance]\n    params = [normalize(value) for value in params]\n    if any(not value for value in params):\n        raise ValueError(\"Empty Meta parameter\")\n    preview = BODY\n    for index, value in enumerate(params, 1):\n        preview = preview.replace(\"{{\" + str(index) + \"}}\", value)\n    if len(preview) > BODY_LIMIT:\n        raise ValueError(\"Meta BODY capacity exceeded\")\n    return {\"parameters\": params, \"preview\": preview, \"characters\": len(preview)}\n\n\ndef format_report(report):\n    if isinstance(report, str):\n        report = json.loads(report)\n    return render_meta(calculate(report))\n\n\n# Dify Code node entry point. The source above is embedded, not imported.\nTEMPLATE_NAME = \"AGRARIAN_TEMPLATE_NOT_CREATED\"\n\ndef main(report, student_name=\"\", recipient_name=\"\", recipient_phone=\"\", group_name=\"\", month=\"\", send_enabled=\"false\"):\n    if str(send_enabled).strip().lower() != \"true\":\n        raise ValueError(\"AGRARIAN_SEND_ENABLED=false: no external HTTP request is allowed\")\n    if isinstance(report, str):\n        report = json.loads(report)\n    if not isinstance(report, dict):\n        raise ValueError(\"report must be a JSON object\")\n    for label, supplied, expected in (\n        (\"student_name\", student_name, report[\"student\"][\"full_name\"]),\n        (\"recipient_phone\", recipient_phone, report[\"student\"][\"parent_phone\"]),\n        (\"month\", month, report[\"period\"][\"month\"]),\n    ):\n        if normalize(supplied) != normalize(expected):\n            raise ValueError(label + \" differs from report\")\n    expected_group = report.get(\"main_group\", {}).get(\"name\") or report[\"group\"][\"course_name\"]\n    if normalize(group_name) != normalize(expected_group):\n        raise ValueError(\"group_name differs from report\")\n    phone = \"\".join(char for char in normalize(recipient_phone) if char.isdigit())\n    if not 8 <= len(phone) <= 15:\n        raise ValueError(\"Invalid recipient_phone\")\n    calculated = calculate(report)\n    rendered = render_meta(calculated)\n    whatsapp = {\n        \"messaging_product\": \"whatsapp\", \"to\": phone, \"type\": \"template\",\n        \"template\": {\"name\": TEMPLATE_NAME, \"language\": {\"code\": \"ky_KG\"},\n            \"components\": [{\"type\": \"body\", \"parameters\": [\n                {\"type\": \"text\", \"text\": value} for value in rendered[\"parameters\"]\n            ]}]},\n    }\n    backend = {\n        \"event\": \"student_monthly_report_result\", \"channel\": \"meta_whatsapp\",\n        \"report\": report, \"meta_request\": whatsapp,\n        \"rendered_text\": rendered[\"preview\"],\n    }\n    return {\n        \"whatsapp_payload\": json.dumps(whatsapp, ensure_ascii=False),\n        \"backend_payload\": json.dumps(backend, ensure_ascii=False),\n        **{\"parameter_\" + str(index): value for index, value in enumerate(rendered[\"parameters\"], 1)},\n    }\n",
+        "code": "\"\"\"Pure, local formatter proposal for the existing agrarian report JSON contract.\"\"\"\n\nimport json\nimport re\nfrom collections import Counter\nfrom datetime import date\n\nMONTHS = (\"\", \"январь\", \"февраль\", \"март\", \"апрель\", \"май\", \"июнь\", \"июль\", \"август\", \"сентябрь\", \"октябрь\", \"ноябрь\", \"декабрь\")\nBODY = 'Саламатсызбы!\\n\\nМен Motion Web IT академиясынан байланышып жатам ✅\\n\\nСизге *{{1}}* группасынын окуучусу *{{2}}* боюнча {{3}} мезгилиндеги окуу жыйынтыктары тууралуу маалымат бере кетейин:\\n\\n📊 Сабактар боюнча баалары:\\n\\n• *{{4}}* сабагы —\\n\\n“5”тен {{5}} даана\\n“4”төн {{6}} даана\\n“3”төн {{7}} даана\\n“2”ден {{8}} даана\\n\\n• *{{9}}* сабагы —\\n\\n“5”тен {{10}} даана\\n“4”төн {{11}} даана\\n“3”төн {{12}} даана\\n“2”ден {{13}} даана\\n\\n• *{{14}}* сабагы —\\n\\n“5”тен {{15}} даана\\n“4”төн {{16}} даана\\n“3”төн {{17}} даана\\n“2”ден {{18}} даана\\n\\n• *{{19}}* сабагы —\\n\\n“5”тен {{20}} даана\\n“4”төн {{21}} даана\\n“3”төн {{22}} даана\\n“2”ден {{23}} даана\\n\\n📌 Сабактан калуулар:\\n\\n• {{24}}\\n\\nСаламатта калыныз!\\n'\nBODY_LIMIT = 1024\nSUBJECT_LIMIT = 4\n\n\ndef normalize(value):\n    return re.sub(r\"\\s+\", \" \", str(value or \"\")).strip()\n\n\ndef _required(value, field):\n    result = normalize(value)\n    if not result:\n        raise ValueError(f\"Missing {field}\")\n    return result\n\n\ndef calculate(report):\n    \"\"\"Classify each unique lesson and count every numeric LessonRecord.\"\"\"\n    if not isinstance(report, dict) or (report.get(\"organization\"), report.get(\"college_branch\"), report.get(\"workflow_route\")) != (\"college\", \"agrarian\", \"agrarian\"):\n        raise ValueError(\"Wrong report route\")\n    period = report[\"period\"]\n    month = _required(period[\"month\"], \"period.month\")\n    try:\n        start = date.fromisoformat(month + \"-01\")\n    except ValueError as exc:\n        raise ValueError(\"Invalid period.month\") from exc\n    groups = report[\"groups\"]\n    if not isinstance(groups, list) or not groups:\n        raise ValueError(\"Missing subject groups\")\n    subjects = []\n    by_group = {}\n    for group in groups:\n        group_id = group[\"id\"]\n        if group_id in by_group:\n            raise ValueError(\"Duplicate subject group\")\n        item = {\"group_id\": group_id, \"name\": _required(group[\"course_name\"], \"course_name\"), \"grades\": Counter(), \"lessons\": Counter(), \"lesson_details\": []}\n        subjects.append(item)\n        by_group[group_id] = item\n    by_lesson = {}\n    for row in report[\"lessons\"]:\n        lesson_id, group_id = row[\"lesson_id\"], row[\"group_id\"]\n        if group_id not in by_group:\n            raise ValueError(\"Lesson outside subject groups\")\n        day = date.fromisoformat(row[\"date\"])\n        if day.year != start.year or day.month != start.month:\n            raise ValueError(\"Lesson outside period\")\n        key = (group_id, lesson_id)\n        lesson = by_lesson.setdefault(key, {\"lesson_id\": lesson_id, \"group_id\": group_id, \"date\": day.isoformat(), \"grades\": []})\n        if lesson[\"date\"] != day.isoformat():\n            raise ValueError(\"Conflicting lesson date\")\n        grade = normalize(row[\"grade\"])\n        if grade and grade not in (\"2\", \"3\", \"4\", \"5\", \"Н\"):\n            raise ValueError(\"Unsupported grade\")\n        if grade:\n            lesson[\"grades\"].append(grade)\n    totals = Counter()\n    for lesson in sorted(by_lesson.values(), key=lambda item: (item[\"date\"], str(item[\"group_id\"]), str(item[\"lesson_id\"]))):\n        numeric = [grade for grade in lesson[\"grades\"] if grade in (\"2\", \"3\", \"4\", \"5\")]\n        absent = \"Н\" in lesson[\"grades\"]\n        category = \"mixed\" if numeric and absent else \"graded\" if numeric else \"absent\" if absent else \"unmarked\"\n        subject = by_group[lesson[\"group_id\"]]\n        subject[\"grades\"].update(numeric)\n        subject[\"lessons\"][category] += 1\n        subject[\"lesson_details\"].append({\"lesson_id\": lesson[\"lesson_id\"], \"date\": lesson[\"date\"], \"category\": category, \"grades\": lesson[\"grades\"]})\n        totals[category] += 1\n    return {\"month\": month, \"student_name\": _required(report[\"student\"][\"full_name\"], \"student.full_name\"), \"group_name\": _required(report[\"main_group\"].get(\"name\") or report[\"group\"][\"course_name\"], \"group name\"), \"subjects\": subjects, \"lessons\": totals}\n\n\ndef render_meta(calculation):\n    \"\"\"Render the exact Kuwait BODY with 24 single-line parameters.\"\"\"\n    subjects = calculation[\"subjects\"]\n    if len(subjects) > SUBJECT_LIMIT:\n        raise ValueError(\"Subject capacity exceeded: template has four subject blocks\")\n    month = date.fromisoformat(calculation[\"month\"] + \"-01\")\n    params = [calculation[\"group_name\"], calculation[\"student_name\"], f\"{month.year}-жылдын {MONTHS[month.month]}\"]\n    for subject in subjects:\n        counts = subject[\"grades\"]\n        params.extend([subject[\"name\"], *(str(counts[grade]) for grade in (\"5\", \"4\", \"3\", \"2\"))])\n    for _ in range(SUBJECT_LIMIT - len(subjects)):\n        params.extend([\"—\"] * 5)\n    lessons = calculation[\"lessons\"]\n    params.append(\"; \".join((\n        f\"Н гана белгиленген сабактар: {lessons['absent']}\",\n        f\"аралаш белгилер (баа жана Н, пропуск катары эсептелбейт): {lessons['mixed']}\",\n        f\"белгиленбеген сабактар (пропуск катары эсептелбейт): {lessons['unmarked']}\",\n        \"— менен толтурулган предмет блоктору: бул орунда предмет жок\" if len(subjects) < SUBJECT_LIMIT else \"бардык предметтер көрсөтүлдү\",\n    )))\n    params = [normalize(value) for value in params]\n    if len(params) != 24 or any(not value for value in params):\n        raise ValueError(\"Invalid Meta parameter count or empty value\")\n    preview = BODY\n    for index, value in enumerate(params, 1):\n        preview = preview.replace(\"{{\" + str(index) + \"}}\", value)\n    if len(preview) > BODY_LIMIT:\n        raise ValueError(\"Meta BODY capacity exceeded\")\n    return {\"parameters\": params, \"preview\": preview, \"characters\": len(preview), \"snapshot\": calculation}\n\n\ndef format_report(report):\n    if isinstance(report, str):\n        report = json.loads(report)\n    return render_meta(calculate(report))\n\n\n# Dify Code node entry point. The source above is embedded, not imported.\nTEMPLATE_NAME = \"student_monthsly_send_v5\"\n\ndef main(report, student_name=\"\", recipient_name=\"\", recipient_phone=\"\", group_name=\"\", month=\"\", send_enabled=\"false\"):\n    if str(send_enabled).strip().lower() != \"true\":\n        raise ValueError(\"AGRARIAN_SEND_ENABLED=false: no external HTTP request is allowed\")\n    if isinstance(report, str):\n        report = json.loads(report)\n    if not isinstance(report, dict):\n        raise ValueError(\"report must be a JSON object\")\n    for label, supplied, expected in (\n        (\"student_name\", student_name, report[\"student\"][\"full_name\"]),\n        (\"recipient_phone\", recipient_phone, report[\"student\"][\"parent_phone\"]),\n        (\"month\", month, report[\"period\"][\"month\"]),\n    ):\n        if normalize(supplied) != normalize(expected):\n            raise ValueError(label + \" differs from report\")\n    expected_group = report.get(\"main_group\", {}).get(\"name\") or report[\"group\"][\"course_name\"]\n    if normalize(group_name) != normalize(expected_group):\n        raise ValueError(\"group_name differs from report\")\n    phone = \"\".join(char for char in normalize(recipient_phone) if char.isdigit())\n    if not 8 <= len(phone) <= 15:\n        raise ValueError(\"Invalid recipient_phone\")\n    calculated = calculate(report)\n    rendered = render_meta(calculated)\n    whatsapp = {\n        \"messaging_product\": \"whatsapp\", \"to\": phone, \"type\": \"template\",\n        \"template\": {\"name\": TEMPLATE_NAME, \"language\": {\"code\": \"ky_KG\"},\n            \"components\": [{\"type\": \"body\", \"parameters\": [\n                {\"type\": \"text\", \"text\": value} for value in rendered[\"parameters\"]\n            ]}]},\n    }\n    backend = {\n        \"event\": \"student_monthly_report_result\", \"channel\": \"meta_whatsapp\",\n        \"report\": report, \"meta_request\": whatsapp,\n        \"rendered_text\": rendered[\"preview\"],\n    }\n    return {\n        \"whatsapp_payload\": json.dumps(whatsapp, ensure_ascii=False),\n        \"backend_payload\": json.dumps(backend, ensure_ascii=False),\n        **{\"parameter_\" + str(index): value for index, value in enumerate(rendered[\"parameters\"], 1)},\n    }\n",
         "code_language": "python3",
         "outputs": {
           "whatsapp_payload": {
@@ -168,10 +168,86 @@
           "parameter_5": {
             "type": "string",
             "children": null
+          },
+          "parameter_6": {
+            "type": "string",
+            "children": null
+          },
+          "parameter_7": {
+            "type": "string",
+            "children": null
+          },
+          "parameter_8": {
+            "type": "string",
+            "children": null
+          },
+          "parameter_9": {
+            "type": "string",
+            "children": null
+          },
+          "parameter_10": {
+            "type": "string",
+            "children": null
+          },
+          "parameter_11": {
+            "type": "string",
+            "children": null
+          },
+          "parameter_12": {
+            "type": "string",
+            "children": null
+          },
+          "parameter_13": {
+            "type": "string",
+            "children": null
+          },
+          "parameter_14": {
+            "type": "string",
+            "children": null
+          },
+          "parameter_15": {
+            "type": "string",
+            "children": null
+          },
+          "parameter_16": {
+            "type": "string",
+            "children": null
+          },
+          "parameter_17": {
+            "type": "string",
+            "children": null
+          },
+          "parameter_18": {
+            "type": "string",
+            "children": null
+          },
+          "parameter_19": {
+            "type": "string",
+            "children": null
+          },
+          "parameter_20": {
+            "type": "string",
+            "children": null
+          },
+          "parameter_21": {
+            "type": "string",
+            "children": null
+          },
+          "parameter_22": {
+            "type": "string",
+            "children": null
+          },
+          "parameter_23": {
+            "type": "string",
+            "children": null
+          },
+          "parameter_24": {
+            "type": "string",
+            "children": null
           }
         },
         "selected": true,
-        "title": "Аграрный · gate и пять параметров",
+        "title": "Аграрный · gate и 24 параметра",
         "type": "code",
         "variables": [
           {
