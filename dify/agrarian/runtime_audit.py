@@ -135,14 +135,17 @@ def main():
         transport, events = run(graph, report, scenario, scenario != "gate_false")
         if scenario == "gate_false":
             assert transport.calls == [], (scenario, events, transport.calls)
+            assert any("AGRARIAN_SEND_ENABLED=false" in event for event in events), events
         else:
             assert transport.calls.count("https://mock.invalid/meta") == 1, (scenario, events, transport.calls)
             assert transport.calls.count("https://mock.invalid/backend") == 1, (scenario, events, transport.calls)
+            assert len(transport.calls) == 2 and set(transport.calls) == {"https://mock.invalid/meta", "https://mock.invalid/backend"}
             expected = {"success": "accepted", "http_400": "failed", "timeout": "unknown", "without_id": "unknown", "callback_failure": "accepted"}[scenario]
             assert transport.callback and transport.callback["delivery"]["provider_status"] == expected, (scenario, events, transport.callback and {"status": transport.callback["delivery"].get("provider_status"), "code": transport.callback.get("meta_status_code")})
             expected_code = {"success": 200, "http_400": 400, "timeout": 0, "without_id": 200, "callback_failure": 200}[scenario]
             assert transport.callback["meta_status_code"] == expected_code
             assert transport.callback["delivery"]["report"]["correlation"] == report["correlation"]
+            assert events[-1] == ("GraphRunPartialSucceededEvent" if scenario == "callback_failure" else "GraphRunSucceededEvent"), events
         print(f"{scenario}: PASS outbound_calls={len(transport.calls)} events={events[-1] if events else 'none'}")
 
 

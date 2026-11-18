@@ -10,8 +10,16 @@
 
 `code_node.py` содержит самодостаточный Code-узел; `workflow_graph.json` содержит подготовленный граф. `prepare_graph.py` воспроизводит их из read-only скелета. [Обезличенные полные предпросмотры](../../docs/agrarian_formatter_previews.json) построены по трём локальным примерам. Они не подменяют проверку всех 103 production payload. Студент 236 остаётся отдельным исключением.
 
-## Состояние публикации
+## Проверка 18 ноября 2026
 
-На 18 ноября 2026 сохранённая console-сессия возвращает HTTP 401. Текущий draft не записан и workflow не опубликован. Приватные URL и токены отправителя/callback пока не подтверждены как настроенные в этом приложении. `sync_draft.py` в текущем виде рассчитан на первоначальный неопубликованный draft и требует доработки для guarded update существующего draft с сохранением secret IDs. Пустые значения не считаются настройкой.
+`audit_payloads.py` проверил read-only поток всех 104 октябрьских сборок из production backend: 103 готовых payload прошли, единственный `skipped` — студент 236. Проверены порядок 24 параметров, самостоятельный пересчёт всех числовых LessonRecord, категории 3 601 `graded`, 1 005 `absent`, 9 `mixed`, 2 747 `unmarked`, сохранность `lesson_details`, однострочность и точная подстановка в BODY. Максимальная длина с фактическими ФИО — 832 символа. Ошибок вместимости или локального ограничения 1024 символа нет. Предел 1024 — локальный guard, а не объявленное ограничение Meta. Персональные данные и телефоны проверка не печатает.
 
-Локальные тесты: `PYTHONPATH=dify/agrarian python3 -m unittest dify/agrarian/test_formatter.py -q`. `runtime_audit.py` содержит mock HTTP сценарии; запуск в отдельном контейнере пока не связался с Dify sandbox. Никаких реальных заданий не создано.
+GraphEngine mock-аудит пройден в `docker_ssrf_proxy_network` с `CODE_EXECUTION_ENDPOINT=http://sandbox:8194`. Причиной прежней недоступности был DNS: имя `sandbox` не разрешалось в `docker_default`. Работающие сервисы не менялись. Gate=false дал ноль HTTP; accepted, HTTP 400, timeout, ответ без ID и сбой callback после accepted дали по одному mock Meta и callback вызову. Meta не повторялся. В графе по-прежнему `AGRARIAN_SEND_ENABLED=false`.
+
+## Guarded publication
+
+`publish_checked.py` изменяет только приложение `a67fd500-51ca-486a-9088-7b9bda934563`. Он сверяет текущие настройки отправителя с приватным проверенным снимком, берёт непустые Meta URL/authorization от текущего опубликованного отправителя, callback URL из его действующего HTTP-узла и callback token из backend. Значения не выводятся. Скрипт проверяет tenant, draft ID, исходный граф, типы и ID переменных, сохраняет и перечитывает draft, затем публикует через console API и повторно проверяет граф, gate и отсутствие workflow runs. Существующие секреты и ID переменных должны сохраняться; любое расхождение останавливает запись.
+
+Сохранённая console-сессия на 18 ноября возвращала HTTP 401. Для запуска после локальных проверок нужен скрытый ввод через `enter_console_session.sh`. До успешного запуска `publish_checked.py` опубликованного аграрного workflow нет; пустые значения в текущем draft не считаются настроенными.
+
+Локальные тесты: `PYTHONPATH=dify/agrarian python3 -m unittest dify/agrarian/test_formatter.py -q`. GraphEngine mock: `docker run --rm --network docker_ssrf_proxy_network --entrypoint python -v /root/MWTabel:/audit:ro -e PYTHONPATH=/app/api -e CODE_EXECUTION_ENDPOINT=http://sandbox:8194 langgenius/dify-api:1.14.2 /audit/dify/agrarian/runtime_audit.py`.
