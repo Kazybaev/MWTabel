@@ -122,8 +122,11 @@ def main():
     if old_env['AGRARIAN_SEND_ENABLED'].get('value') != 'false':
         stop('existing draft gate changed')
     for name in KINDS:
-        if name != 'AGRARIAN_SEND_ENABLED' and old_env[name].get('value') not in ('', None):
-            stop('existing draft environment value changed: ' + name)
+        if name != 'AGRARIAN_SEND_ENABLED':
+            value = old_env[name].get('value')
+            allowed = ('', None, '*' * 20) if KINDS[name] == 'secret' else ('', None)
+            if value not in allowed:
+                stop('existing draft environment value changed: ' + name)
     env = []
     for name, item in old_env.items():
         updated = dict(item)
@@ -145,7 +148,7 @@ def main():
             stop('draft variable ID or nonempty value mismatch: ' + name)
         if name in ('AGRARIAN_SEND_ENABLED', 'META_MESSAGES_URL', 'BACKEND_REPORT_URL') and actual[name]['value'] != values[name]:
             stop('draft plain value mismatch: ' + name)
-        if KINDS[name] == 'secret' and actual[name]['value'] not in (values[name], '[__HIDDEN__]'):
+        if KINDS[name] == 'secret' and actual[name]['value'] not in (values[name], '[__HIDDEN__]', '*' * 20):
             stop('draft secret value was not retained: ' + name)
     if actual['AGRARIAN_SEND_ENABLED']['value'] != 'false':
         stop('draft send gate is not false')

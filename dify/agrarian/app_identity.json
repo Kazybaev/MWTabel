@@ -3,6 +3,7 @@
   "tenant_id": "08879bb4-93b4-4a7a-a8c5-a3f1c5306758",
   "app_id": "a67fd500-51ca-486a-9088-7b9bda934563",
   "draft_id": "e71b3bc1-3f02-45f6-80f1-12415aab906e",
-  "desired_graph_sha256": "963f72469941f453e47d65fd57a0061950738dc0e98a380a31fdf441dda775fb",
-  "published": false
+  "desired_graph_sha256": "629d40feed93efe394c2e19b1f2f2c4e0dae174f761b889c4da0de8a462f5c0a",
+  "published": true,
+  "published_workflow_id": "835ebd10-d71d-4beb-b0ed-f72c8eaad13b"
 }
