@@ -1,22 +1,8 @@
 import { useEffect, useMemo, useRef, useState } from "react";
-import {
-  CategoryScale,
-  Chart,
-  Filler,
-  Legend,
-  LinearScale,
-  LineController,
-  LineElement,
-  PointElement,
-  Tooltip,
-} from "chart.js";
-
 import { useResource } from "../lib/useResource";
 import { formatDate } from "../lib/format";
 import { sortGroupsByName } from "../lib/groupSort";
 import { Badge, Button, EmptyState, ErrorBlock, LoadingBlock, MetricCard, Panel } from "../components/Ui";
-
-Chart.register(CategoryScale, LinearScale, PointElement, LineElement, LineController, Filler, Tooltip, Legend);
 
 function formatStatAverage(value) {
   if (value === null || value === undefined || value === "") {
@@ -152,6 +138,8 @@ function ChartJsMonthChart({ months = [], scopes = [], selectedScope = "all", on
   const canvasRef = useRef(null);
   const chartRef = useRef(null);
   const [rangeMode, setRangeMode] = useState("last-1");
+  const [Chart, setChart] = useState(null);
+  const [chartError, setChartError] = useState(false);
   const visibleMonths = useMemo(() => (rangeMode === "last-3" ? months : months.slice(-1)), [months, rangeMode]);
   const chartSeries = useMemo(() => {
     const hasGrades = (month) => (month.daily_points || []).length > 0
@@ -180,8 +168,21 @@ function ChartJsMonthChart({ months = [], scopes = [], selectedScope = "all", on
   const hasVisibleGrades = chartSeries.length > 0;
 
   useEffect(() => {
+    if (!hasVisibleGrades || Chart) return undefined;
+    let cancelled = false;
+    import("../lib/studentChart")
+      .then((module) => {
+        if (!cancelled) setChart(() => module.Chart);
+      })
+      .catch(() => {
+        if (!cancelled) setChartError(true);
+      });
+    return () => { cancelled = true; };
+  }, [Chart, hasVisibleGrades]);
+
+  useEffect(() => {
     const canvas = canvasRef.current;
-    if (!canvas) {
+    if (!canvas || !Chart || !hasVisibleGrades) {
       return undefined;
     }
 
@@ -299,7 +300,7 @@ function ChartJsMonthChart({ months = [], scopes = [], selectedScope = "all", on
       chartRef.current?.destroy();
       chartRef.current = null;
     };
-  }, [chartSeries]);
+  }, [Chart, chartSeries, hasVisibleGrades]);
 
   return (
     <div className="student-chart-card">
@@ -325,6 +326,7 @@ function ChartJsMonthChart({ months = [], scopes = [], selectedScope = "all", on
       <div className="student-chart-card__canvas">
         <canvas ref={canvasRef} />
         {!hasVisibleGrades ? <p className="student-chart-card__empty">За выбранный период оценок пока нет.</p> : null}
+        {hasVisibleGrades && chartError && !Chart ? <p className="student-chart-card__empty">Не удалось загрузить график.</p> : null}
       </div>
     </div>
   );

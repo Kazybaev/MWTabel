@@ -244,6 +244,7 @@ def build_gradebook_rows(group, students, month_days, lessons_by_date):
     for record in records:
         records_map.setdefault((record.student_id, record.lesson.lesson_date), []).append(record)
     study_weekdays = get_group_study_weekdays(group)
+    today = timezone.localdate()
     rows = []
 
     for index, student in enumerate(students, start=1):
@@ -271,7 +272,7 @@ def build_gradebook_rows(group, students, month_days, lessons_by_date):
                     "records": day_records,
                     "grade": grade,
                     "tone": grade_tone(grade),
-                    "is_today": day == timezone.localdate(),
+                    "is_today": day == today,
                     "is_weekend": day.weekday() >= 5,
                     "is_study_day": day.weekday() in study_weekdays,
                 }
@@ -298,30 +299,39 @@ def serialize_choice_pairs(choices):
     return [{"value": value, "label": label} for value, label in choices]
 
 
-def build_gradebook_payload(group, user, selected_month):
-    can_edit = user.role in {User.ROLE_ADMIN, User.ROLE_MENTOR} and group.archived_at is None
-    previous_month, next_month = month_navigation(selected_month)
-    month_days = build_month_days(selected_month)
-    month_start, month_end = month_bounds(selected_month)
-    study_weekdays = get_group_study_weekdays(group)
-
+def gradebook_students(group, user):
     if user.role in {User.ROLE_ADMIN, User.ROLE_MENTOR}:
         relation = group.college_students if group.organization_type == "college" else group.students
-        students = list((relation if group.archived_at is not None else relation.filter(archived_at__isnull=True)).select_related("user"))
-    elif hasattr(user, "student_profile") and (
+        if group.archived_at is None:
+            relation = relation.filter(archived_at__isnull=True)
+        return list(relation.select_related("user"))
+    if hasattr(user, "student_profile") and (
         user.student_profile.group_id == group.pk
         or user.student_profile.college_groups.filter(pk=group.pk).exists()
     ):
-        students = [user.student_profile]
-    else:
-        raise PermissionDenied
+        return [user.student_profile]
+    raise PermissionDenied
 
+
+def gradebook_lessons(group, selected_month):
+    month_start, month_end = month_bounds(selected_month)
     lessons_by_date = {}
     for lesson in (
         group.lessons.filter(lesson_date__gte=month_start, lesson_date__lte=month_end)
         .order_by("lesson_date", "id")
     ):
         lessons_by_date.setdefault(lesson.lesson_date, lesson)
+    return lessons_by_date
+
+
+def build_gradebook_payload(group, user, selected_month):
+    can_edit = user.role in {User.ROLE_ADMIN, User.ROLE_MENTOR} and group.archived_at is None
+    previous_month, next_month = month_navigation(selected_month)
+    month_days = build_month_days(selected_month)
+    study_weekdays = get_group_study_weekdays(group)
+    today = timezone.localdate()
+    students = gradebook_students(group, user)
+    lessons_by_date = gradebook_lessons(group, selected_month)
 
     month_columns = [
         {
@@ -329,7 +339,7 @@ def build_gradebook_payload(group, user, selected_month):
             "label": f"{day.day:02d}",
             "weekday_label": ["Пн", "Вт", "Ср", "Чт", "Пт", "Сб", "Вс"][day.weekday()],
             "is_weekend": day.weekday() >= 5,
-            "is_today": day == timezone.localdate(),
+            "is_today": day == today,
             "is_study_day": day.weekday() in study_weekdays,
             "has_lesson": day in lessons_by_date,
         }
@@ -405,18 +415,20 @@ def build_gradebook_payload(group, user, selected_month):
     return payload, students, month_days, lessons_by_date
 
 
-def save_gradebook_entries(group, students, month_days, lessons_by_date, entries):
+def clean_gradebook_entries(entries, students, month_days):
     valid_grades = {choice[0] for choice in LessonRecord.GRADE_CHOICES}
     allowed_dates = set(month_days)
-    students_by_id = {student.pk: student for student in students}
-    grades_map = {}
+    student_ids = {student.pk for student in students}
+    cleaned = []
 
     for entry in entries:
+        if not isinstance(entry, dict):
+            raise ValidationError({"entries": "Каждая оценка должна быть объектом."})
         student_id = entry.get("student")
         raw_date = entry.get("date")
         grade = str(entry.get("grade", "")).strip()
 
-        if student_id not in students_by_id:
+        if type(student_id) is not int or student_id not in student_ids:
             raise ValidationError({"entries": "Передан студент вне выбранной группы."})
 
         try:
@@ -430,11 +442,18 @@ def save_gradebook_entries(group, students, month_days, lessons_by_date, entries
         if grade and grade not in valid_grades:
             raise ValidationError({"entries": f"Недопустимая оценка: {grade}"})
 
-        if grade:
-            grades_map[(student_id, lesson_date)] = grade
+        cleaned.append((student_id, lesson_date, grade))
+    return cleaned
 
+
+def save_gradebook_entries(group, students, month_days, lessons_by_date, entries):
+    grades_map = {
+        (student_id, lesson_date): grade
+        for student_id, lesson_date, grade in clean_gradebook_entries(entries, students, month_days)
+        if grade
+    }
     lesson_ids = [lesson.pk for lesson in lessons_by_date.values()]
-    student_ids = list(students_by_id)
+    student_ids = [student.pk for student in students]
     existing_records = {
         (record.student_id, record.lesson.lesson_date): record
         for record in LessonRecord.objects.filter(
@@ -473,6 +492,63 @@ def save_gradebook_entries(group, students, month_days, lessons_by_date, entries
         if lesson and not day_has_any_grade and not lesson.topic and not lesson.records.exists():
             lesson.delete()
             lessons_by_date.pop(day, None)
+
+
+def patch_gradebook_entries(group, students, selected_month, entries):
+    month_days = build_month_days(selected_month)
+    cleaned = clean_gradebook_entries(entries, students, month_days)
+    if any("grade" not in entry for entry in entries):
+        raise ValidationError({"entries": "Укажите оценку или пустую строку для удаления."})
+    changes = {
+        (student_id, lesson_date): grade
+        for student_id, lesson_date, grade in cleaned
+    }
+    lessons = gradebook_lessons(group, selected_month)
+    removed_dates = set()
+    for (student_id, lesson_date), grade in changes.items():
+        lesson = lessons.get(lesson_date)
+        if grade:
+            if lesson is None:
+                lesson = Lesson.objects.create(group=group, lesson_date=lesson_date)
+                lessons[lesson_date] = lesson
+            record, created = LessonRecord.objects.get_or_create(
+                student_id=student_id, lesson=lesson, sequence=1, defaults={"grade": grade},
+            )
+            if not created and record.grade != grade:
+                record.grade = grade
+                record.save(update_fields=["grade", "updated_at"])
+        elif lesson is not None:
+            deleted, _ = LessonRecord.objects.filter(student_id=student_id, lesson=lesson, sequence=1).delete()
+            if deleted:
+                removed_dates.add(lesson_date)
+
+    for lesson_date in removed_dates:
+        lesson = lessons[lesson_date]
+        if not lesson.topic and not lesson.records.exists():
+            lesson.delete()
+    if removed_dates:
+        lessons = gradebook_lessons(group, selected_month)
+
+    changed_students = {student_id for student_id, _ in changes}
+    rows = build_gradebook_rows(
+        group, [student for student in students if student.pk in changed_students], month_days, lessons,
+    )
+    return {
+        "lesson_dates": [day.isoformat() for day in lessons],
+        "rows": [
+            {
+                "student_id": row["student"].pk,
+                "attendance_count": row["attendance_count"],
+                "average_grade": row["average_grade"],
+                "cells": [
+                    {"date": cell["date"].isoformat(), "grade": cell["grade"]}
+                    for cell in row["cells"]
+                    if (row["student"].pk, cell["date"]) in changes
+                ],
+            }
+            for row in rows
+        ],
+    }
 
 
 def dispatch_due_reports_after_gradebook_save(students, selected_month):
@@ -1499,7 +1575,11 @@ class StudentProfileViewSet(viewsets.ModelViewSet):
 
     def get_queryset(self):
         organization = organization_for_request(self.request)
-        queryset = StudentProfile.objects.filter(organization_type=organization).select_related("user", "group", "group__mentor__user")
+        queryset = (
+            StudentProfile.objects.filter(organization_type=organization)
+            .select_related("user", "group__main_group", "group__mentor__user")
+            .prefetch_related("college_groups")
+        )
         if organization == "college":
             queryset = queryset.filter(college_branch=college_branch_for_request(self.request))
         if self.request.user.role == User.ROLE_ADMIN:
@@ -1736,7 +1816,7 @@ class GroupViewSet(viewsets.ModelViewSet):
             del group.students_count
         return Response(self.get_serializer(group).data)
 
-    @action(detail=True, methods=["get", "post"])
+    @action(detail=True, methods=["get", "post", "patch"])
     def gradebook(self, request, pk=None):
         group = self.get_object()
 
@@ -1759,10 +1839,19 @@ class GroupViewSet(viewsets.ModelViewSet):
         if not isinstance(entries, list):
             raise ValidationError({"entries": "Список оценок должен быть массивом."})
 
-        _, students, month_days, lessons_by_date = build_gradebook_payload(group, request.user, selected_month)
-        save_gradebook_entries(group, students, month_days, lessons_by_date, entries)
+        with transaction.atomic():
+            group = get_object_or_404(Group.objects.select_for_update(), pk=group.pk)
+            if group.archived_at is not None:
+                raise ValidationError({"entries": "Архивный табель доступен только для просмотра."})
+            students = gradebook_students(group, request.user)
+            if request.method == "PATCH":
+                payload = patch_gradebook_entries(group, students, selected_month, entries)
+            else:
+                save_gradebook_entries(
+                    group, students, build_month_days(selected_month), gradebook_lessons(group, selected_month), entries,
+                )
+                payload, _, _, _ = build_gradebook_payload(group, request.user, selected_month)
         report_results = dispatch_due_reports_after_gradebook_save(students, selected_month)
-        payload, _, _, _ = build_gradebook_payload(group, request.user, selected_month)
         if report_results:
             payload["report_dispatch_results"] = report_results
         return Response(payload, status=status.HTTP_200_OK)

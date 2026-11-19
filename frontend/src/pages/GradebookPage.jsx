@@ -1,179 +1,159 @@
-import { useCallback, useEffect, useEffectEvent, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 
 import { GradebookMatrix } from "../components/GradebookMatrix";
 import { AgrarianRecordModal } from "../components/AgrarianRecordModal";
 import { Button, EmptyState, ErrorBlock, LoadingBlock } from "../components/Ui";
-import { buildGradeMap, toMonthValue } from "../lib/format";
+import { toMonthValue } from "../lib/format";
 import { navigateTo } from "../lib/router";
 import { useResource } from "../lib/useResource";
 
-function buildEntriesFromDraft(draftGrades) {
-  return Object.entries(draftGrades)
-    .filter(([, value]) => value)
-    .map(([key, grade]) => {
-      const [student, date] = key.split("|");
+const activeSaves = new Map();
+
+function applySavedGrades(data, { lesson_dates, rows }) {
+  const lessonDates = new Set(lesson_dates);
+  const updates = new Map(rows.map((row) => [row.student_id, row]));
+  return {
+    ...data,
+    filled_days_count: lessonDates.size,
+    month_columns: data.month_columns.map((column) => ({
+      ...column,
+      has_lesson: lessonDates.has(column.date),
+    })),
+    rows: data.rows.map((row) => {
+      const update = updates.get(row.student.id);
+      if (!update) return row;
+      const grades = new Map(update.cells.map((cell) => [cell.date, cell.grade]));
       return {
-        student: Number(student),
-        date,
-        grade,
+        ...row,
+        average_grade: update.average_grade,
+        attendance_count: update.attendance_count,
+        cells: row.cells.map((cell) => grades.has(cell.date) ? { ...cell, grade: grades.get(cell.date) } : cell),
       };
-    });
+    }),
+  };
 }
 
-function hasDraftChanges(sourceGrades = {}, draftGrades = {}) {
-  const keys = new Set([...Object.keys(sourceGrades), ...Object.keys(draftGrades)]);
-
-  for (const key of keys) {
-    if ((sourceGrades[key] || "") !== (draftGrades[key] || "")) {
-      return true;
+function removeSavedDrafts(current, entries, pending) {
+  const next = { ...current };
+  for (const [key, { student, date }] of entries) {
+    if (pending.has(key)) continue;
+    const grades = { ...next[student] };
+    delete grades[date];
+    if (Object.keys(grades).length) {
+      next[student] = grades;
+    } else {
+      delete next[student];
     }
   }
-
-  return false;
+  return next;
 }
 
-function serializeGradeMap(gradeMap = {}) {
-  return JSON.stringify(
-    Object.entries(gradeMap).sort(([leftKey], [rightKey]) => leftKey.localeCompare(rightKey)),
-  );
-}
-
-export function GradebookPage({ api, sessionToken, user, groupId, routeMonth, onNotice, mode = "group", archived = false }) {
+export function GradebookPage({ user, groupId, routeMonth, mode = "group", archived = false, ...props }) {
   const resolvedGroupId = mode === "student" ? user.group_id : groupId;
   const monthValue = routeMonth || toMonthValue();
-  const lockedGradebook = mode === "student" || user.role === "MENTOR" || user.role === "ADMIN";
+  return (
+    <GradebookMonth
+      key={`${resolvedGroupId}/${monthValue}/${mode}/${archived}`}
+      {...props}
+      user={user}
+      groupId={resolvedGroupId}
+      monthValue={monthValue}
+      mode={mode}
+      archived={archived}
+    />
+  );
+}
+
+function GradebookMonth({ api, sessionToken, user, groupId, monthValue, onNotice, mode, archived }) {
   const [draftGrades, setDraftGrades] = useState({});
-  const [persistedGrades, setPersistedGrades] = useState({});
   const [saveStatus, setSaveStatus] = useState("synced");
   const [agrarianTarget, setAgrarianTarget] = useState(null);
-  const saveTimerRef = useRef(null);
-  const saveRequestIdRef = useRef(0);
-  const latestDraftRef = useRef({});
-  const routePath = mode === "student" ? "/my-grades" : `/groups/${resolvedGroupId}/gradebook`;
-  const { data, error, loading, reload, setData } = useResource(
-    () => {
-      if (!resolvedGroupId) {
-        return Promise.resolve(null);
-      }
-      return api(`/api/groups/${resolvedGroupId}/gradebook/?month=${monthValue}${archived ? "&archived=1" : ""}`);
-    },
-    [sessionToken, resolvedGroupId, monthValue, archived],
-  );
+  const queueRef = useRef({ pending: new Map(), timer: null, inFlight: null, flush: null, mounted: true });
+  const endpoint = `/api/groups/${groupId}/gradebook/`;
+  const saveKey = `${endpoint}${monthValue}`;
+  const routePath = mode === "student" ? "/my-grades" : `/groups/${groupId}/gradebook`;
+  const { data, error, loading, reload, setData } = useResource(async () => {
+    if (!groupId) return null;
 
-  useEffect(() => {
-    if (!data?.rows) {
-      return;
+    // A quick return to the same month must wait for the previous screen's save.
+    while (activeSaves.has(saveKey)) {
+      await activeSaves.get(saveKey);
     }
-
-    const nextGrades = buildGradeMap(data.rows);
-    latestDraftRef.current = nextGrades;
-    setDraftGrades(nextGrades);
-    setPersistedGrades(nextGrades);
-    setSaveStatus("synced");
-  }, [data]);
-
-  // Keep only a reference here; the draft is serialized once per save, not on every edit.
-  useEffect(() => {
-    latestDraftRef.current = draftGrades;
-  }, [draftGrades]);
+    return api(`${endpoint}?month=${monthValue}${archived ? "&archived=1" : ""}`);
+  }, [sessionToken]);
 
   useEffect(() => {
+    const queue = queueRef.current;
+    queue.mounted = true;
     return () => {
-      if (saveTimerRef.current) {
-        window.clearTimeout(saveTimerRef.current);
-      }
+      queue.mounted = false;
+      queue.flush?.();
     };
   }, []);
+
+  const flush = useCallback(() => {
+    const queue = queueRef.current;
+    window.clearTimeout(queue.timer);
+    queue.timer = null;
+    if (queue.inFlight || !queue.pending.size) return;
+
+    const entries = queue.pending;
+    queue.pending = new Map();
+    if (queue.mounted) setSaveStatus("saving");
+    const request = Promise.resolve().then(async () => {
+      let saved = false;
+      try {
+        const payload = await api(endpoint, {
+          method: "PATCH",
+          body: { month: monthValue, entries: [...entries.values()] },
+        });
+        saved = true;
+        if (queue.mounted) {
+          const unsaved = new Set(queue.pending.keys());
+          setData((current) => applySavedGrades(current, payload));
+          setDraftGrades((current) => removeSavedDrafts(current, entries, unsaved));
+          setSaveStatus(queue.pending.size ? "pending" : "synced");
+        }
+      } catch (error) {
+        queue.pending = new Map([...entries, ...queue.pending]);
+        window.clearTimeout(queue.timer);
+        queue.timer = null;
+        if (queue.mounted) setSaveStatus("error");
+        onNotice({ tone: "danger", message: error.message });
+      } finally {
+        queue.inFlight = null;
+        activeSaves.delete(saveKey);
+        if (saved && queue.pending.size && queue.timer === null) {
+          queue.flush();
+        }
+      }
+    });
+    queue.inFlight = request;
+    activeSaves.set(saveKey, request);
+  }, [api, endpoint, monthValue, onNotice, saveKey, setData]);
+
+  const handleGradeChange = useCallback((student, date, grade) => {
+    const queue = queueRef.current;
+    queue.pending.set(`${student}|${date}`, { student, date, grade });
+    queue.flush = flush;
+    setDraftGrades((current) => ({
+      ...current,
+      [student]: { ...current[student], [date]: grade },
+    }));
+    setSaveStatus("pending");
+    window.clearTimeout(queue.timer);
+    queue.timer = window.setTimeout(flush, 300);
+  }, [flush]);
+
+  const handleOpenAgrarianCell = useCallback((student, cell) => {
+    setAgrarianTarget({ student, groupId, date: cell.date, entries: cell.grade_entries || [] });
+  }, [groupId]);
 
   function handleMonthNavigation(nextMonth) {
     navigateTo(routePath, { month: nextMonth });
   }
 
-  const handleGradeChange = useCallback((studentId, date, grade) => {
-    setDraftGrades((current) => ({
-      ...current,
-      [`${studentId}|${date}`]: grade,
-    }));
-  }, []);
-
-  const handleOpenAgrarianCell = useCallback(
-    (student, cell) =>
-      setAgrarianTarget({
-        student,
-        groupId: resolvedGroupId,
-        date: cell.date,
-        entries: cell.grade_entries || [],
-      }),
-    [resolvedGroupId],
-  );
-
-  const persistSnapshot = useEffectEvent(async (snapshot, requestId) => {
-    if (!resolvedGroupId || !data?.can_edit || data?.agrarian_features) {
-      return;
-    }
-
-    const snapshotSignature = serializeGradeMap(snapshot);
-    setSaveStatus("saving");
-
-    try {
-      const payload = await api(`/api/groups/${resolvedGroupId}/gradebook/`, {
-        method: "POST",
-        body: {
-          month: monthValue,
-          entries: buildEntriesFromDraft(snapshot),
-        },
-      });
-      setPersistedGrades(snapshot);
-
-      if (saveRequestIdRef.current === requestId && serializeGradeMap(latestDraftRef.current) === snapshotSignature) {
-        setData(payload);
-        setSaveStatus("synced");
-      }
-    } catch (saveError) {
-      if (saveRequestIdRef.current === requestId) {
-        setSaveStatus("error");
-      }
-      onNotice({
-        tone: "danger",
-        message: saveError.message,
-      });
-    }
-  });
-
-  const dirty = hasDraftChanges(persistedGrades, draftGrades);
-
-  useEffect(() => {
-    if (saveTimerRef.current) {
-      window.clearTimeout(saveTimerRef.current);
-      saveTimerRef.current = null;
-    }
-
-    if (!resolvedGroupId || !data?.can_edit) {
-      return undefined;
-    }
-
-    if (!dirty) {
-      setSaveStatus((current) => (current === "error" ? current : "synced"));
-      return undefined;
-    }
-
-    setSaveStatus("pending");
-    const snapshot = { ...draftGrades };
-    const requestId = saveRequestIdRef.current + 1;
-    saveRequestIdRef.current = requestId;
-    saveTimerRef.current = window.setTimeout(() => {
-      persistSnapshot(snapshot, requestId);
-    }, 450);
-
-    return () => {
-      if (saveTimerRef.current) {
-        window.clearTimeout(saveTimerRef.current);
-        saveTimerRef.current = null;
-      }
-    };
-  }, [data?.can_edit, dirty, draftGrades, monthValue, persistSnapshot, resolvedGroupId]);
-
-  if (!resolvedGroupId) {
+  if (!groupId) {
     return (
       <EmptyState
         title="Группа не назначена"
@@ -196,29 +176,31 @@ export function GradebookPage({ api, sessionToken, user, groupId, routeMonth, on
 
   return (
     <>
-    <GradebookMatrix
-      data={data}
-      draftGrades={draftGrades}
-      onGradeChange={handleGradeChange}
-      saveStatus={saveStatus}
-      monthValue={monthValue}
-      onMonthChange={handleMonthNavigation}
-      onMonthStep={handleMonthNavigation}
-      dirty={dirty}
-      mentorMode={user.role === "MENTOR"}
-      adminMode={user.role === "ADMIN"}
-      lockedMode={lockedGradebook}
-      studentMode={mode === "student"}
-      onOpenAgrarianCell={handleOpenAgrarianCell}
-    />
-    <AgrarianRecordModal
-      api={api}
-      target={agrarianTarget}
-      gradeChoices={data.grade_choices}
-      onClose={() => setAgrarianTarget(null)}
-      onChanged={reload}
-      onNotice={onNotice}
-    />
+      <GradebookMatrix
+        data={data}
+        draftGrades={draftGrades}
+        onGradeChange={handleGradeChange}
+        onRetrySave={flush}
+        saveStatus={saveStatus}
+        monthValue={monthValue}
+        onMonthChange={handleMonthNavigation}
+        onMonthStep={handleMonthNavigation}
+        mentorMode={user.role === "MENTOR"}
+        adminMode={user.role === "ADMIN"}
+        lockedMode={mode === "student" || user.role === "MENTOR" || user.role === "ADMIN"}
+        studentMode={mode === "student"}
+        onOpenAgrarianCell={handleOpenAgrarianCell}
+      />
+      {agrarianTarget ? (
+        <AgrarianRecordModal
+          api={api}
+          target={agrarianTarget}
+          gradeChoices={data.grade_choices}
+          onClose={() => setAgrarianTarget(null)}
+          onChanged={reload}
+          onNotice={onNotice}
+        />
+      ) : null}
     </>
   );
 }

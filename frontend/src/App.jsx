@@ -1,4 +1,4 @@
-import { Suspense, lazy, useEffect, useEffectEvent, useState, startTransition } from "react";
+import { Suspense, lazy, useCallback, useEffect, useEffectEvent, useRef, useState, startTransition } from "react";
 
 import "./App.css";
 import { AppShell } from "./components/AppShell";
@@ -86,7 +86,8 @@ function App() {
   const [notice, setNotice] = useState(null);
   const [authLoading, setAuthLoading] = useState(false);
   const [authError, setAuthError] = useState("");
-  const [bootstrapping, setBootstrapping] = useState(Boolean(readStoredSession()?.access));
+  const [bootstrapping, setBootstrapping] = useState(() => Boolean(readStoredSession()?.access));
+  const profileToken = useRef(null);
 
   useEffect(() => {
     const nextTheme = theme === "dark" ? "dark" : "light";
@@ -94,7 +95,7 @@ function App() {
     window.localStorage.setItem("tabel.theme", nextTheme);
   }, [theme]);
 
-  function updateSession(nextSession) {
+  const updateSession = useCallback((nextSession) => {
     if (!nextSession) {
       clearStoredSession();
       setSession(null);
@@ -103,17 +104,17 @@ function App() {
 
     writeStoredSession(nextSession);
     setSession(nextSession);
-  }
+  }, []);
 
-  const handleUnauthorized = useEffectEvent(() => {
+  const handleUnauthorized = useCallback(() => {
     clearStoredSession();
     setSession(null);
     setMeta(emptyMeta);
     setNotice(buildNotice("Сессия завершилась. Войдите снова.", "danger"));
     startTransition(() => navigateTo("/login"));
-  });
+  }, []);
 
-  async function callApi(path, options = {}) {
+  const callApi = useCallback((path, options = {}) => {
     return apiRequest(path, {
       ...options,
       session,
@@ -122,7 +123,7 @@ function App() {
       onSessionChange: updateSession,
       onUnauthorized: handleUnauthorized,
     });
-  }
+  }, [session, organization, collegeBranch, updateSession, handleUnauthorized]);
 
   function changeOrganization(value) {
     window.localStorage.setItem("tabel.organization", value);
@@ -138,9 +139,11 @@ function App() {
 
   const syncUserProfile = useEffectEvent(async () => {
     if (!session?.access) {
+      profileToken.current = null;
       setBootstrapping(false);
       return;
     }
+    if (profileToken.current === session.access) return;
 
     try {
       const user = await apiRequest("/api/me/", {
@@ -155,7 +158,11 @@ function App() {
       }
       window.localStorage.setItem("tabel.organization", userOrganization);
       setOrganization(userOrganization);
-      updateSession({ ...session, user });
+      const currentSession = readStoredSession();
+      if (currentSession) {
+        profileToken.current = currentSession.access;
+        updateSession({ ...currentSession, user });
+      }
     } catch {
       // handled by apiRequest
     } finally {
@@ -215,11 +222,14 @@ function App() {
     });
   });
 
-  useEffect(() => {
+  const initializeHash = useEffectEvent(() => {
     if (!window.location.hash) {
       navigateTo(session?.access ? defaultPathForUser(session.user) : "/login");
     }
+  });
 
+  useEffect(() => {
+    initializeHash();
     window.addEventListener("hashchange", handleHashChange);
     return () => {
       window.removeEventListener("hashchange", handleHashChange);
@@ -269,10 +279,7 @@ function App() {
         method: "POST",
         body: credentials,
       });
-      const user = await apiRequest("/api/me/", {
-        session: nextSession,
-      });
-      const finalSession = { ...nextSession, user };
+      const { user } = nextSession;
       const userOrganization = organizationForUser(user, { useStored: false });
       if (user.college_branch) {
         window.localStorage.setItem("tabel.collegeBranch", user.college_branch);
@@ -280,7 +287,8 @@ function App() {
       }
       window.localStorage.setItem("tabel.organization", userOrganization);
       setOrganization(userOrganization);
-      updateSession(finalSession);
+      profileToken.current = nextSession.access;
+      updateSession(nextSession);
       setNotice(buildNotice("Вы вошли в систему.", "success"));
       startTransition(() => navigateTo(defaultPathForUser(user)));
     } catch (error) {

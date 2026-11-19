@@ -2991,6 +2991,17 @@
   display: none;
 }
 
+.grade-cell-trigger {
+  display: block;
+  font-family: inherit;
+  font-size: inherit;
+}
+
+.grade-cell-trigger:focus-visible {
+  outline: 2px solid #489fe8;
+  outline-offset: -2px;
+}
+
 .grade-select:focus {
   color: var(--ink-strong);
   box-shadow: inset 0 0 0 2px rgba(72, 159, 232, 0.52);

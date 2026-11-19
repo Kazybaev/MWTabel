@@ -1,4 +1,4 @@
-import { useDeferredValue, useState } from "react";
+import { useDeferredValue, useMemo, useState } from "react";
 
 import { sortGroupsByName } from "../lib/groupSort";
 import { useResource } from "../lib/useResource";
@@ -34,6 +34,8 @@ function normalizePhoneSearch(value) {
   return String(value || "").replace(/\D/g, "");
 }
 
+const STUDENT_PAGE_SIZE = 50;
+
 export function StudentsPage({ api, sessionToken, user, onNotice, organization = "academy" }) {
   const { data, error, loading, reload } = useResource(() => api("/api/students/"), [sessionToken]);
   const { data: groups } = useResource(
@@ -45,12 +47,23 @@ export function StudentsPage({ api, sessionToken, user, onNotice, organization =
     [sessionToken, organization, user.role],
   );
   const [search, setSearch] = useState("");
+  const [visibleCount, setVisibleCount] = useState(STUDENT_PAGE_SIZE);
   const [editorOpen, setEditorOpen] = useState(false);
   const [draft, setDraft] = useState(createEmptyStudent(organization));
   const [editingId, setEditingId] = useState(null);
   const [saving, setSaving] = useState(false);
   const [archiveTarget, setArchiveTarget] = useState(null);
   const deferredSearch = useDeferredValue(search);
+  const searchIndex = useMemo(() => (data || []).map((student) => ({
+    student,
+    text: `${student.full_name} ${student.username} ${student.main_group_name || ""} ${student.group_name} ${student.parent_name} ${student.parent_phone}`.toLowerCase(),
+    phone: normalizePhoneSearch(student.parent_phone),
+  })), [data]);
+  const students = useMemo(() => {
+    const query = deferredSearch.trim().toLowerCase();
+    const phone = normalizePhoneSearch(query);
+    return searchIndex.filter((item) => item.text.includes(query) || (phone && item.phone.includes(phone)));
+  }, [deferredSearch, searchIndex]);
 
   if (!["ADMIN", "MENTOR"].includes(user.role)) {
     return <EmptyState title="Раздел закрыт" description="У вас нет доступа к списку студентов." />;
@@ -147,16 +160,6 @@ export function StudentsPage({ api, sessionToken, user, onNotice, organization =
     }
   }
 
-  const students = (data || []).filter((student) => {
-    const query = deferredSearch.trim().toLowerCase();
-    const phoneQuery = normalizePhoneSearch(query);
-    const haystack =
-      `${student.full_name} ${student.username} ${student.main_group_name || ""} ${student.group_name} ${student.parent_name} ${student.parent_phone}`.toLowerCase();
-    const phoneHaystack = normalizePhoneSearch(student.parent_phone);
-
-    return haystack.includes(query) || (phoneQuery && phoneHaystack.includes(phoneQuery));
-  });
-
   if (loading) {
     return <LoadingBlock label="Загружаем студентов..." />;
   }
@@ -176,7 +179,10 @@ export function StudentsPage({ api, sessionToken, user, onNotice, organization =
             <input
               className="search-input"
               value={search}
-              onChange={(event) => setSearch(event.target.value)}
+              onChange={(event) => {
+                setSearch(event.target.value);
+                setVisibleCount(STUDENT_PAGE_SIZE);
+              }}
               placeholder="Поиск по имени, группе, родителю или телефону"
             />
             {user.role === "ADMIN" ? <Button onClick={openCreate}>Добавить студента</Button> : null}
@@ -185,7 +191,7 @@ export function StudentsPage({ api, sessionToken, user, onNotice, organization =
       >
         {students.length ? (
           <div className="list-stack">
-            {students.map((student) => (
+            {students.slice(0, visibleCount).map(({ student }) => (
               <div key={student.id} className="list-card list-card--actions">
                 <div>
                   <strong>{student.full_name}</strong>
@@ -214,6 +220,11 @@ export function StudentsPage({ api, sessionToken, user, onNotice, organization =
                 </div>
               </div>
             ))}
+            {students.length > visibleCount ? (
+              <Button variant="ghost" onClick={() => setVisibleCount((count) => count + STUDENT_PAGE_SIZE)}>
+                Показать ещё ({students.length - visibleCount})
+              </Button>
+            ) : null}
           </div>
         ) : (
           <EmptyState title="Студенты не найдены" description="Попробуйте изменить поисковый запрос." />

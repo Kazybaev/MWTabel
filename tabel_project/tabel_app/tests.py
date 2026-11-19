@@ -220,6 +220,51 @@ class TabelApiTests(APITestCase):
         record = LessonRecord.objects.get(student=self.student, lesson=self.lesson)
         self.assertEqual(record.grade, "Н")
 
+    def test_gradebook_patch_updates_only_submitted_cells(self):
+        target = LessonRecord.objects.create(student=self.student, lesson=self.lesson, grade="4", comment="Keep")
+        untouched = LessonRecord.objects.create(student=self.second_student, lesson=self.lesson, grade="5")
+        client = self.auth_client("mentor", "mentor-pass-123")
+        url = f"/api/groups/{self.group.pk}/gradebook/"
+        entry = {"student": self.student.pk, "date": self.lesson.lesson_date.isoformat(), "grade": "Н"}
+        payload = {"month": self.lesson.lesson_date.strftime("%Y-%m"), "entries": [entry]}
+        response = client.patch(url, payload, format="json")
+
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.assertEqual(response.data["rows"], [{
+            "student_id": self.student.pk,
+            "attendance_count": 0,
+            "average_grade": 0.0,
+            "cells": [{"date": entry["date"], "grade": "Н"}],
+        }])
+        target.refresh_from_db()
+        self.assertEqual((target.grade, target.comment), ("Н", "Keep"))
+        untouched.refresh_from_db()
+        self.assertEqual(untouched.grade, "5")
+
+        entry["grade"] = ""
+        response = client.patch(url, payload, format="json")
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.assertFalse(LessonRecord.objects.filter(pk=target.pk).exists())
+        self.assertTrue(LessonRecord.objects.filter(pk=untouched.pk).exists())
+        self.assertIn(entry["date"], response.data["lesson_dates"])
+
+    def test_gradebook_patch_validates_all_entries_before_writing(self):
+        client = self.auth_client("mentor", "mentor-pass-123")
+        day = self.lesson.lesson_date.isoformat()
+        response = client.patch(
+            f"/api/groups/{self.group.pk}/gradebook/",
+            {
+                "month": day[:7],
+                "entries": [
+                    {"student": self.student.pk, "date": day, "grade": "5"},
+                    {"student": self.second_student.pk, "date": day},
+                ],
+            },
+            format="json",
+        )
+        self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
+        self.assertFalse(LessonRecord.objects.filter(lesson=self.lesson).exists())
+
     def test_student_can_view_only_own_grade_row(self):
         LessonRecord.objects.create(student=self.student, lesson=self.lesson, grade="4", comment="Good")
         LessonRecord.objects.create(student=self.second_student, lesson=self.lesson, grade="5", comment="Great")

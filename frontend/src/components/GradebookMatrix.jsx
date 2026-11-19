@@ -1,12 +1,9 @@
-import { memo, useRef } from "react";
+import { memo, useCallback, useRef, useState } from "react";
+import { flushSync } from "react-dom";
 
 import { formatMonthLabel } from "../lib/format";
 import { AgrarianGradeCellContent } from "./AgrarianGradeCellContent";
 import { Button, Panel } from "./Ui";
-
-function cellKey(studentId, date) {
-  return `${studentId}|${date}`;
-}
 
 function resolveGradeTone(grade, fallbackTone = "empty") {
   return (
@@ -44,8 +41,9 @@ function buildPanelDescription(data, compactGroupMode) {
   return data.page_copy;
 }
 
-function GradebookCell({ row, cell, value, canEdit, agrarianFeatures, gradeChoices, onGradeChange, onOpenAgrarianCell }) {
+function GradebookCell({ row, cell, value, canEdit, agrarianFeatures, gradeChoices, editorRef, editing, onEdit, onGradeChange, onOpenAgrarianCell }) {
   const tone = value ? resolveGradeTone(value, "empty") : "empty";
+  const label = canEdit && !agrarianFeatures ? `Оценка для ${row.student.full_name} на ${cell.date}` : undefined;
   return (
     <td
       className={[
@@ -71,26 +69,25 @@ function GradebookCell({ row, cell, value, canEdit, agrarianFeatures, gradeChoic
             count={cell.grade_count}
           />
         </button>
-      ) : canEdit ? (
+      ) : editing ? (
         <select
-          className={[
-            "grade-select",
-            `grade-select--${tone}`,
-            value ? "grade-select--filled" : "grade-select--empty",
-          ]
-            .filter(Boolean)
-            .join(" ")}
+          ref={editorRef}
+          className="grade-select"
           value={value}
           onChange={(event) => onGradeChange(row.student.id, cell.date, event.target.value)}
-          aria-label={`Оценка для ${row.student.full_name} на ${cell.date}`}
+          aria-label={label}
         >
-          <option value=""></option>
+          <option value="">Без оценки</option>
           {gradeChoices.map((choice) => (
             <option key={choice.value} value={choice.value}>
               {choice.label}
             </option>
           ))}
         </select>
+      ) : canEdit ? (
+        <button type="button" className="grade-select grade-cell-trigger" aria-label={`${label}: ${value || "без оценки"}`} onClick={() => onEdit(row.student.id, cell.date)}>
+          {value}
+        </button>
       ) : (
         <span>{value || ""}</span>
       )}
@@ -98,7 +95,7 @@ function GradebookCell({ row, cell, value, canEdit, agrarianFeatures, gradeChoic
   );
 }
 
-function GradebookRowView({ row, draftGrades, ...cellProps }) {
+const GradebookRow = memo(function GradebookRow({ row, grades, activeDate, ...cellProps }) {
   return (
     <tr>
       <td className="gradebook-table__sticky gradebook-table__sticky--index">{row.index}</td>
@@ -114,50 +111,24 @@ function GradebookRowView({ row, draftGrades, ...cellProps }) {
           key={cell.date}
           row={row}
           cell={cell}
-          value={draftGrades[cellKey(row.student.id, cell.date)] ?? ""}
+          value={grades?.[cell.date] ?? cell.grade ?? ""}
+          editing={activeDate === cell.date}
           {...cellProps}
         />
       ))}
     </tr>
   );
-}
-
-// A row only re-renders when its own data or one of its own draft values changes,
-// so editing one grade no longer re-renders every select in the month matrix.
-function areRowPropsEqual(prev, next) {
-  if (
-    prev.row !== next.row ||
-    prev.canEdit !== next.canEdit ||
-    prev.agrarianFeatures !== next.agrarianFeatures ||
-    prev.gradeChoices !== next.gradeChoices ||
-    prev.onGradeChange !== next.onGradeChange ||
-    prev.onOpenAgrarianCell !== next.onOpenAgrarianCell
-  ) {
-    return false;
-  }
-
-  if (prev.draftGrades === next.draftGrades) {
-    return true;
-  }
-
-  const studentId = next.row.student.id;
-  return next.row.cells.every((cell) => {
-    const key = cellKey(studentId, cell.date);
-    return prev.draftGrades[key] === next.draftGrades[key];
-  });
-}
-
-const GradebookRow = memo(GradebookRowView, areRowPropsEqual);
+});
 
 export function GradebookMatrix({
   data,
   draftGrades,
   onGradeChange,
+  onRetrySave,
   saveStatus = "synced",
   monthValue,
   onMonthChange,
   onMonthStep,
-  dirty,
   mentorMode = false,
   adminMode = false,
   lockedMode = false,
@@ -165,12 +136,25 @@ export function GradebookMatrix({
   onOpenAgrarianCell,
 }) {
   const scrollContainerRef = useRef(null);
+  const editorRef = useRef(null);
+  const [activeCell, setActiveCell] = useState(null);
+  const openEditor = useCallback((studentId, date) => {
+    flushSync(() => setActiveCell({ studentId, date }));
+    const editor = editorRef.current;
+    if (!editor) return;
+    editor.focus({ preventScroll: true });
+    try {
+      editor.showPicker?.();
+    } catch {
+      // A focused native select also supports keyboard input.
+    }
+  }, []);
   const saveMessage =
     {
       pending: "Есть изменения. Сохраняем автоматически...",
       saving: "Сохраняем изменения...",
-      error: "Не удалось сохранить. Следующее изменение попробует снова.",
-      synced: dirty ? "Изменения готовы к сохранению..." : "Все изменения сохраняются автоматически.",
+      error: "Не удалось сохранить изменения.",
+      synced: "Все изменения сохраняются автоматически.",
     }[saveStatus] || "Все изменения сохраняются автоматически.";
 
   function scrollTable(direction) {
@@ -288,7 +272,10 @@ export function GradebookMatrix({
                 <GradebookRow
                   key={row.student.id}
                   row={row}
-                  draftGrades={draftGrades}
+                  grades={draftGrades[row.student.id]}
+                  activeDate={activeCell?.studentId === row.student.id ? activeCell.date : null}
+                  editorRef={editorRef}
+                  onEdit={openEditor}
                   canEdit={data.can_edit}
                   agrarianFeatures={data.agrarian_features}
                   gradeChoices={data.grade_choices}
@@ -302,7 +289,8 @@ export function GradebookMatrix({
 
         {data.can_edit && !data.agrarian_features ? (
           <div className="gradebook-toolbar">
-            <span className={`gradebook-toolbar__status gradebook-toolbar__status--${saveStatus}`}>{saveMessage}</span>
+            <span role="status" className={`gradebook-toolbar__status gradebook-toolbar__status--${saveStatus}`}>{saveMessage}</span>
+            {saveStatus === "error" ? <Button variant="ghost" onClick={onRetrySave}>Повторить</Button> : null}
           </div>
         ) : null}
       </Panel>
