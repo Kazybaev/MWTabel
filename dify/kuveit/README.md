@@ -48,13 +48,18 @@ missing subject slot, the proposed formatter sends `—` in all five fields.
 ## Publication gate
 
 The workflow's Meta request contains the template name and 24 values. The
-user supplied the parameter layout, but the literal static BODY has not been
-provided, and a read through the available Meta token did not return the
-business account/template. The exact rendered text and the template's
-`APPROVED` status in the sender account remain unverified. The fourth slot's
-five `—` values are explicitly explained in parameter 24 for three-subject
-reports. Do not publish until the literal BODY and Meta approval are verified.
-Do not change the Meta template as part of this patch.
+user-provided BODY is saved in `meta_body.user_provided.txt`. On 2026-11-07,
+a direct Meta read using the published Kuwait workflow's credential returned
+HTTP 200 for WABA `2097917931058144` and template `student_monthsly_send_v5`
+(`ky_KG`), ID `2053563205335543`, status `APPROVED`. The returned BODY matched
+the saved text. The fourth slot's five `—` values are explained in parameter
+24 for three-subject reports. On 2026-11-07, the formatter was saved to the
+exact Kuwait draft and published as workflow
+`213e4bf4-8cd9-408a-858b-db918f4c6bef`. The published code matches
+`formatter.py`; the backend callback secret decrypts to the same value as in
+the previous published workflow, and the Meta authorization is unchanged.
+The new workflow had zero runs at verification. Do not change the Meta
+template as part of this patch.
 
 The private published graph and three batch-11 payloads can be supplied to
 `runtime_audit.py` in a Dify 1.14.2 container. The audit replaces the code,
