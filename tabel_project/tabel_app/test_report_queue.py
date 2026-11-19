@@ -102,7 +102,8 @@ class MonthlyReportQueueTests(TestCase):
     def test_worker_updates_the_correlated_attempt_to_accepted(self, mocked_dify):
         batch = self.enqueue()
 
-        def accepted_callback(inputs, user_key):
+        def accepted_callback(inputs, user_key, workflow_route):
+            self.assertEqual(workflow_route, "academy")
             correlation = inputs["report"]["correlation"]
             self.assertEqual(correlation["batch_item_id"], batch.items.get().pk)
             record_meta_delivery_callback(
@@ -468,6 +469,9 @@ class MonthlyReportQueueConcurrencyTests(TransactionTestCase):
         worker_gate = patch.dict(os.environ, {"REPORT_LEGACY_QUEUE_REVIEWED": "true"})
         worker_gate.start()
         self.addCleanup(worker_gate.stop)
+        route_key = patch.dict(os.environ, {"DIFY_ACADEMY_API_KEY": "academy-test-key", "DIFY_API_KEY": "shared-test-key"})
+        route_key.start()
+        self.addCleanup(route_key.stop)
         self.admin = User.objects.create_user(username="concurrent-admin", role=User.ROLE_ADMIN)
         mentor_user = User.objects.create_user(username="concurrent-mentor", role=User.ROLE_MENTOR)
         mentor = MentorProfile.objects.create(user=mentor_user)
@@ -543,7 +547,7 @@ class MonthlyReportQueueConcurrencyTests(TransactionTestCase):
             client.force_authenticate(user=self.admin)
             response = client.post(
                 "/api/reports/send-all/",
-                {"month": "2026-08", "student_ids": [self.student.pk]},
+                {"organization": "academy", "month": "2026-08", "student_ids": [self.student.pk]},
                 format="json",
             )
             self.assertEqual(response.status_code, 202)

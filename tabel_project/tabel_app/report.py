@@ -21,6 +21,8 @@ from .models import (
     WahaParentReportBatchItem,
     WahaTestReportBatchItem,
 )
+from .report_routing import get_route_api_key, workflow_route_for_student
+from .report_delivery import format_academy_attendance_status, record_dify_provider_result
 
 
 ABSENCE_GRADE = "\u041d"
@@ -95,24 +97,6 @@ def is_absence_grade(grade: str | None) -> bool:
     return normalized in ABSENCE_GRADE_VALUES
 
 
-def calculate_average_grade(grades, *, empty_value=None):
-    """Return the average where every absence counts as a zero grade."""
-    total_points = 0
-    marked_count = 0
-
-    for value in grades:
-        grade = (value or "").strip()
-        if grade.isdigit():
-            total_points += int(grade)
-            marked_count += 1
-        elif is_absence_grade(grade):
-            marked_count += 1
-
-    if not marked_count:
-        return empty_value
-    return round(total_points / marked_count, 1)
-
-
 def get_group_study_weekdays(group: Group) -> set[int]:
     if group.study_days == Group.MON_WED_SAT:
         return {0, 2, 5}
@@ -148,14 +132,59 @@ def get_student_trigger_lesson(student: StudentProfile, month_start: date) -> Le
     )
 
 
-def get_student_report_groups(student: StudentProfile) -> list[Group]:
+def archive_allows_month(archived_at: datetime | None, month_start: date) -> bool:
+    return archived_at is None or archived_at.date() >= month_start
+
+
+def get_student_report_groups(student: StudentProfile, month_start: date | None = None) -> list[Group]:
     """Return all subjects for a college student, or the single academy group."""
     if student.organization_type != "college":
         return [student.group]
-    groups = list(student.college_groups.filter(archived_at__isnull=True).select_related("mentor__user").order_by("course_name", "id"))
-    if student.group_id and student.group.archived_at is None and all(group.pk != student.group_id for group in groups):
-        groups.insert(0, student.group)
-    return groups or [student.group]
+
+    groups = []
+    for group in student.college_groups.select_related("mentor__user").order_by("course_name", "id"):
+        if group.organization_type != student.organization_type or group.college_branch != student.college_branch:
+            continue
+        if month_start is None:
+            eligible = group.archived_at is None
+        else:
+            eligible = archive_allows_month(group.archived_at, month_start)
+            if eligible and group.archived_at is not None:
+                start, end = month_bounds(month_start)
+                eligible = Lesson.objects.filter(group=group, lesson_date__range=(start, end)).exists()
+        if eligible:
+            groups.append(group)
+    if student.group_id and student.group.organization_type == student.organization_type and student.group.college_branch == student.college_branch and all(group.pk != student.group_id for group in groups):
+        primary = student.group
+        if month_start is None:
+            eligible = primary.archived_at is None
+        else:
+            eligible = archive_allows_month(primary.archived_at, month_start)
+            if eligible and primary.archived_at is not None:
+                start, end = month_bounds(month_start)
+                eligible = Lesson.objects.filter(group=primary, lesson_date__range=(start, end)).exists()
+        if eligible:
+            groups.insert(0, primary)
+    return groups
+
+
+def student_has_month_report_activity(student: StudentProfile, month_start: date) -> bool:
+    """Require period evidence when a college student or primary group is archived."""
+    if student.organization_type != "college":
+        return student.archived_at is None and student.group.archived_at is None
+    if not archive_allows_month(student.archived_at, month_start) or not archive_allows_month(student.group.archived_at, month_start):
+        return False
+    if student.organization_type != student.group.organization_type or student.college_branch != student.group.college_branch:
+        return False
+    if student.archived_at is None and student.group.archived_at is None:
+        return True
+    groups = get_student_report_groups(student, month_start)
+    if not groups:
+        return False
+    start, end = month_bounds(month_start)
+    return LessonRecord.objects.filter(
+        student=student, lesson__group__in=groups, lesson__lesson_date__range=(start, end),
+    ).exists()
 
 
 def has_student_trigger_lesson_record(student: StudentProfile, trigger_lesson: Lesson) -> bool:
@@ -166,7 +195,7 @@ def get_month_lessons_for_student(student: StudentProfile, month_start: date) ->
     month_start, month_end = month_bounds(month_start)
     return list(
         Lesson.objects.filter(
-            group__in=get_student_report_groups(student),
+            group__in=get_student_report_groups(student, month_start),
             lesson_date__gte=month_start,
             lesson_date__lte=month_end,
         ).select_related("group").order_by("lesson_date", "id")
@@ -178,7 +207,7 @@ def get_month_records_for_student(student: StudentProfile, month_start: date) ->
     return list(
         LessonRecord.objects.filter(
             student=student,
-            lesson__group__in=get_student_report_groups(student),
+            lesson__group__in=get_student_report_groups(student, month_start),
             lesson__lesson_date__gte=month_start,
             lesson__lesson_date__lte=month_end,
         )
@@ -192,18 +221,18 @@ def build_student_month_report(
     month_start: date | datetime | None = None,
     trigger_date: date | None = None,
 ) -> dict[str, Any]:
-    if student.archived_at is not None or student.group.archived_at is not None:
+    month_start = normalize_month_start(month_start)
+    if not student_has_month_report_activity(student, month_start):
         return {
             "student_id": student.pk,
             "student_name": student.user.full_name,
             "status": "skipped",
             "reason": "archived_student_or_group",
         }
-    month_start = normalize_month_start(month_start)
     month_start, month_end = month_bounds(month_start)
     lessons = get_month_lessons_for_student(student, month_start)
     records = get_month_records_for_student(student, month_start)
-    groups = get_student_report_groups(student)
+    groups = get_student_report_groups(student, month_start)
     trigger_date = trigger_date or max(
         (day for group in groups if (day := get_group_last_lesson_date(group, month_start)) is not None),
         default=None,
@@ -226,6 +255,10 @@ def build_student_month_report(
 
     for lesson in lessons:
         lesson_records = records_by_lesson_id.get(lesson.pk, [])
+        if student.organization_type != "college" and len(lesson_records) > 1:
+            raise ReportConfigurationError(
+                "В данных академии найдено больше одной оценки за занятие; отправка отчёта остановлена."
+            )
         grades = [(record.grade or "").strip() for record in lesson_records]
         has_attendance = any(grade and not is_absence_grade(grade) for grade in grades)
         has_absence = any(is_absence_grade(grade) for grade in grades)
@@ -273,14 +306,14 @@ def build_student_month_report(
     total_lessons = len(lessons)
     marked_lessons_count = len(records_by_lesson_id)
     unmarked_count = max(total_lessons - marked_lessons_count, 0)
-    average_grade = calculate_average_grade(
-        (record.grade for record in records),
-        empty_value=0,
-    )
+    average_grade = round(sum(numeric_grades) / len(numeric_grades), 1) if numeric_grades else 0
     attendance_rate = round((attendance_count / total_lessons) * 100, 1) if total_lessons else  0
 
     mentor_user = student.group.mentor.user
     payload = {
+        "organization": student.organization_type,
+        "college_branch": student.college_branch if student.organization_type == "college" else None,
+        "workflow_route": workflow_route_for_student(student),
         "student": {
             "id": student.pk,
             "user_id": student.user_id,
@@ -337,6 +370,8 @@ def build_student_month_report(
         },
         "lessons": lesson_rows,
     }
+    if student.organization_type == "academy":
+        payload["summary"]["attendance_status_text"] = format_academy_attendance_status(payload["summary"])
     if student.organization_type == "college":
         payload["main_group"] = {
             "id": student.group.main_group_id,
@@ -397,7 +432,7 @@ def build_dify_inputs(report_payload: dict[str, Any]) -> dict[str, Any]:
     inputs = {
         "report": report_payload,
         "student_name": report_payload["student"]["full_name"],
-        "recipient_name": report_payload["student"]["parent_name"] or report_payload["student"]["full_name"],
+        "recipient_name": report_payload["student"]["parent_name"],
         "recipient_phone": report_payload["student"]["parent_phone"],
         "group_name": report_payload.get("main_group", {}).get("name") or report_payload["group"]["course_name"],
         "mentor_name": report_payload["mentor"]["full_name"],
@@ -438,10 +473,11 @@ def get_dify_user_agent() -> str:
     ).strip()
 
 
-def run_dify_workflow(inputs: dict[str, Any], user_key: str) -> dict[str, Any]:
-    api_key = os.getenv("DIFY_API_KEY", "").strip()
-    if not api_key:
-        raise ReportConfigurationError("DIFY_API_KEY must be configured.")
+def run_dify_workflow(inputs: dict[str, Any], user_key: str, workflow_route: str) -> dict[str, Any]:
+    try:
+        api_key = get_route_api_key(workflow_route)
+    except ValueError as exc:
+        raise ReportConfigurationError(str(exc)) from exc
 
     callback_token = os.getenv("BACKEND_REPORT_CALLBACK_TOKEN", "").strip()
     if len(callback_token) < 32:
@@ -535,9 +571,13 @@ def send_student_month_report(
     resend_succeeded: bool = False,
     batch_item: MonthlyStudentReportBatchItem | None = None,
     retry_failed_confirmed: bool = False,
+    expected_workflow_route: str | None = None,
 ) -> dict[str, Any]:
     run_date = normalize_run_date(run_date)
     month_start = normalize_month_start(month_start or run_date)
+    workflow_route = workflow_route_for_student(student)
+    if expected_workflow_route is not None and expected_workflow_route != workflow_route:
+        raise ReportConfigurationError("Маршрут задания не совпадает с проверенной принадлежностью студента.")
     trigger_date = get_group_last_lesson_date(student.group, month_start)
     trigger_lesson = get_student_trigger_lesson(student, month_start)
 
@@ -750,7 +790,9 @@ def send_student_month_report(
         response_payload = run_dify_workflow(
             build_dify_inputs(report_payload),
             build_dispatch_user_key(student, month_start),
+            workflow_route,
         )
+        record_dify_provider_result(response_payload=response_payload, report_payload=report_payload)
     except Exception as exc:
         logger.error(
             "Report delivery failed for student='%s', month='%s': %s",

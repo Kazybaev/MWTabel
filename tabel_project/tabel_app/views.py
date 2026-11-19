@@ -38,8 +38,8 @@ from .models import (
     WahaTestReportBatch,
 )
 from .report_delivery import build_report_conversations, record_meta_delivery_callback, serialize_report_attempt
+from .grade_calculation import calculate_average_grade
 from .report import (
-    calculate_average_grade,
     force_send_all_monthly_reports,
     is_absence_grade,
     send_student_month_report,
@@ -47,6 +47,7 @@ from .report import (
 from .organization import college_branch_for_request, organization_for_request, require_agrarian_college
 from .rating import build_student_rating
 from .report_queue import enqueue_monthly_report_batch, serialize_report_batch
+from .report_routing import ensure_route_configured, workflow_route_for_context
 from .waha_reports import (
     WahaTestConfigurationError,
     enqueue_waha_test_batch,
@@ -1265,8 +1266,18 @@ class ReportDispatchOptionsAPIView(APIView):
         if college_branch:
             groups = groups.filter(college_branch=college_branch)
             students = students.filter(college_branch=college_branch)
+        workflow_route = workflow_route_for_context(organization, college_branch)
+        try:
+            ensure_route_configured(workflow_route)
+            route_ready, route_error = True, ""
+        except ValueError as exc:
+            route_ready, route_error = False, str(exc)
         return Response({
             "organization": organization,
+            "college_branch": college_branch,
+            "workflow_route": workflow_route,
+            "ready": route_ready,
+            "unavailable_reason": route_error,
             "groups": [{"id": group.pk, "name": group.course_name} for group in groups],
             "students": [{"id": student.pk, "name": student.user.full_name, "group_id": student.group_id, "group_name": student.group.course_name} for student in students],
         })
@@ -1282,18 +1293,31 @@ class ForceSendAllReportsAPIView(APIView):
         serializer = ReportBulkDispatchRequestSerializer(data=request.data)
         serializer.is_valid(raise_exception=True)
         organization = organization_for_request(request)
-        if organization == "college" and (serializer.validated_data.get("group_ids") or serializer.validated_data.get("student_ids")):
-            raise ValidationError("Для колледжа доступна только отправка всем студентам.")
+        if serializer.validated_data["organization"] != organization:
+            raise ValidationError({"organization": "Организация запроса не совпадает с выбранной организацией."})
+        college_branch = college_branch_for_request(request) if organization == "college" else None
+        requested_branch = serializer.validated_data.get("college_branch")
+        if organization == "college" and requested_branch != college_branch:
+            raise ValidationError({"college_branch": "Колледж запроса не совпадает с выбранным колледжем."})
+        if organization != "college" and requested_branch is not None:
+            raise ValidationError({"college_branch": "Для академии колледж указывать нельзя."})
+        try:
+            ensure_route_configured(workflow_route_for_context(organization, college_branch))
+        except ValueError as exc:
+            raise ValidationError({"detail": str(exc)}) from exc
         month_start = parse_month_value(serializer.validated_data.get("month")) or timezone.localdate().replace(day=1)
-        batch = enqueue_monthly_report_batch(
-            created_by=request.user,
-            month=month_start,
-            organization_type=organization,
-            college_branch=college_branch_for_request(request) if organization == "college" else None,
-            group_ids=serializer.validated_data.get("group_ids"),
-            student_ids=serializer.validated_data.get("student_ids"),
-            confirm_retry_failed=serializer.validated_data.get("confirm_retry_failed", False),
-        )
+        try:
+            batch = enqueue_monthly_report_batch(
+                created_by=request.user,
+                month=month_start,
+                organization_type=organization,
+                college_branch=college_branch,
+                group_ids=serializer.validated_data.get("group_ids"),
+                student_ids=serializer.validated_data.get("student_ids"),
+                confirm_retry_failed=serializer.validated_data.get("confirm_retry_failed", False),
+            )
+        except ValueError as exc:
+            raise ValidationError({"detail": str(exc)}) from exc
         return Response(serialize_report_batch(batch), status=status.HTTP_202_ACCEPTED)
 
 

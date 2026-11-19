@@ -93,11 +93,13 @@
 .report-chat__sidebar {
   border-color: rgba(23,81,69,.09);
   background: rgba(255,255,255,.28);
+  backdrop-filter: blur(20px) saturate(135%);
 }
 .report-chat__thread { background: rgba(240,237,226,.38); }
 .report-chat__thread-head {
   border-color: rgba(23,81,69,.08);
   background: rgba(255,255,255,.56);
+  backdrop-filter: blur(20px) saturate(140%);
   box-shadow: inset 0 1px 0 rgba(255,255,255,.9);
 }
 .report-chat__filters input,
@@ -105,6 +107,7 @@
   border-color: rgba(255,255,255,.82);
   background: linear-gradient(145deg, rgba(255,255,255,.72), rgba(255,255,255,.38));
   box-shadow: inset 0 1px 0 #fff, 0 8px 18px rgba(17,61,52,.07);
+  backdrop-filter: blur(14px);
 }
 .report-chat__conversation {
   border-color: rgba(255,255,255,.18);
@@ -125,6 +128,7 @@
 .report-chat__message {
   border-color: rgba(255,255,255,.88);
   background: linear-gradient(145deg, rgba(255,255,255,.82), rgba(255,255,255,.46));
+  backdrop-filter: blur(18px) saturate(140%);
   box-shadow: 0 14px 34px rgba(25,58,51,.09), inset 0 1px 0 #fff;
 }
 .report-chat__summary span,
@@ -137,6 +141,7 @@
 .report-chat__bulk-error,
 .report-chat__error {
   border-color: rgba(255,255,255,.78);
+  backdrop-filter: blur(16px) saturate(140%);
   box-shadow: inset 0 1px 0 rgba(255,255,255,.8), 0 10px 24px rgba(21,58,50,.08);
 }
 

@@ -1,0 +1,867 @@
+app:
+  description: 'Академия: monthly_send, Meta student_weekly_reports_v4. Отправка по умолчанию выключена. Требуется проверка
+    backend.'
+  icon: 🤖
+  icon_background: '#FFEAD5'
+  icon_type: emoji
+  mode: workflow
+  name: monthly_send
+  use_icon_as_answer_icon: false
+dependencies: []
+kind: app
+version: 0.6.0
+workflow:
+  conversation_variables: []
+  environment_variables:
+  - description: ACADEMY_SEND_ENABLED
+    id: aa29865b-11b5-5c26-9680-db935bdbb2e7
+    name: ACADEMY_SEND_ENABLED
+    selector:
+    - env
+    - ACADEMY_SEND_ENABLED
+    value: 'false'
+    value_type: string
+  - description: META_WHATSAPP_ACCESS_TOKEN
+    id: c716bc8d-0e2b-5cfa-90d6-9094df3aa224
+    name: META_WHATSAPP_ACCESS_TOKEN
+    selector:
+    - env
+    - META_WHATSAPP_ACCESS_TOKEN
+    value: ''
+    value_type: secret
+  - description: BACKEND_REPORT_CALLBACK_TOKEN
+    id: 3d3cc19a-cd7c-532f-83d0-de430871cb0f
+    name: BACKEND_REPORT_CALLBACK_TOKEN
+    selector:
+    - env
+    - BACKEND_REPORT_CALLBACK_TOKEN
+    value: ''
+    value_type: secret
+  - description: META_MESSAGES_URL
+    id: a07208e8-f25f-5ed7-a040-457d96f65395
+    name: META_MESSAGES_URL
+    selector:
+    - env
+    - META_MESSAGES_URL
+    value: https://graph.facebook.com/v25.0/1002651699602573/messages
+    value_type: string
+  - description: BACKEND_REPORT_URL
+    id: 5b4fd0a2-1bc0-568f-9804-165c0fdbb6db
+    name: BACKEND_REPORT_URL
+    selector:
+    - env
+    - BACKEND_REPORT_URL
+    value: https://portalmotionweb.com/api/report-logs/
+    value_type: string
+  features:
+    file_upload:
+      allowed_file_extensions:
+      - .JPG
+      - .JPEG
+      - .PNG
+      - .GIF
+      - .WEBP
+      - .SVG
+      allowed_file_types:
+      - image
+      allowed_file_upload_methods:
+      - local_file
+      - remote_url
+      enabled: false
+      fileUploadConfig:
+        attachment_image_file_size_limit: 2
+        audio_file_size_limit: 50
+        batch_count_limit: 5
+        file_size_limit: 15
+        file_upload_limit: 20
+        image_file_batch_limit: 10
+        image_file_size_limit: 10
+        single_chunk_attachment_limit: 10
+        video_file_size_limit: 100
+        workflow_file_upload_limit: 10
+      image:
+        enabled: false
+        number_limits: 3
+        transfer_methods:
+        - local_file
+        - remote_url
+      number_limits: 3
+    opening_statement: ''
+    retriever_resource:
+      enabled: true
+    sensitive_word_avoidance:
+      enabled: false
+    speech_to_text:
+      enabled: false
+    suggested_questions: []
+    suggested_questions_after_answer:
+      enabled: false
+    text_to_speech:
+      enabled: false
+      language: ''
+      voice: ''
+  graph:
+    edges:
+    - data:
+        isInIteration: false
+        isInLoop: false
+        sourceType: start
+        targetType: code
+      id: 1782295814445-source-1782296762177-target
+      selected: false
+      source: '1782295814445'
+      sourceHandle: source
+      target: '1782296762177'
+      targetHandle: target
+      type: custom
+      zIndex: 0
+    - data:
+        isInIteration: false
+        isInLoop: false
+        sourceType: code
+        targetType: code
+      id: 1782296762177-source-1791954000004-target
+      selected: false
+      source: '1782296762177'
+      sourceHandle: source
+      target: '1791954000004'
+      targetHandle: target
+      type: custom
+      zIndex: 0
+    - data:
+        isInIteration: false
+        isInLoop: false
+        sourceType: code
+        targetType: iteration
+      id: 1791954000004-source-1791954000002-target
+      selected: false
+      source: '1791954000004'
+      sourceHandle: source
+      target: '1791954000002'
+      targetHandle: target
+      type: custom
+      zIndex: 0
+    - data:
+        isInIteration: true
+        isInLoop: false
+        iteration_id: '1791954000002'
+        sourceType: iteration-start
+        targetType: http-request
+      id: 1791954000002start-source-1782296965320-target
+      selected: false
+      source: 1791954000002start
+      sourceHandle: source
+      target: '1782296965320'
+      targetHandle: target
+      type: custom
+      zIndex: 1002
+    - data:
+        isInIteration: true
+        isInLoop: false
+        iteration_id: '1791954000002'
+        sourceType: http-request
+        targetType: code
+      id: 1782296965320-source-1791954000003-target
+      selected: false
+      source: '1782296965320'
+      sourceHandle: source
+      target: '1791954000003'
+      targetHandle: target
+      type: custom
+      zIndex: 1002
+    - data:
+        isInIteration: false
+        isInLoop: false
+        sourceType: iteration
+        targetType: code
+      id: 1791954000002-source-1791954000005-target
+      selected: false
+      source: '1791954000002'
+      sourceHandle: source
+      target: '1791954000005'
+      targetHandle: target
+      type: custom
+      zIndex: 0
+    - data:
+        isInIteration: false
+        isInLoop: false
+        sourceType: code
+        targetType: code
+      id: 1791954000005-source-1791954000001-target
+      selected: false
+      source: '1791954000005'
+      sourceHandle: source
+      target: '1791954000001'
+      targetHandle: target
+      type: custom
+      zIndex: 0
+    - data:
+        isInIteration: false
+        isInLoop: false
+        sourceType: code
+        targetType: http-request
+      id: 1791954000001-source-1784567000001-target
+      selected: false
+      source: '1791954000001'
+      sourceHandle: source
+      target: '1784567000001'
+      targetHandle: target
+      type: custom
+      zIndex: 0
+    - data:
+        isInIteration: false
+        isInLoop: false
+        sourceType: http-request
+        targetType: end
+      id: 1784567000001-source-1784202796519-target
+      selected: false
+      source: '1784567000001'
+      sourceHandle: source
+      target: '1784202796519'
+      targetHandle: target
+      type: custom
+      zIndex: 0
+    nodes:
+    - data:
+        selected: false
+        title: Начало
+        type: start
+        variables:
+        - default: ''
+          hint: ''
+          label: student_name
+          options: []
+          placeholder: ''
+          required: true
+          type: text-input
+          variable: student_name
+        - default: ''
+          hint: ''
+          label: recipient_name
+          options: []
+          placeholder: ''
+          required: true
+          type: text-input
+          variable: recipient_name
+        - default: ''
+          hint: ''
+          label: recipient_phone
+          options: []
+          placeholder: ''
+          required: true
+          type: text-input
+          variable: recipient_phone
+        - default: ''
+          hint: ''
+          label: group_name
+          options: []
+          placeholder: ''
+          required: true
+          type: text-input
+          variable: group_name
+        - default: ''
+          hint: ''
+          label: mentor_name
+          options: []
+          placeholder: ''
+          required: true
+          type: text-input
+          variable: mentor_name
+        - default: ''
+          hint: ''
+          label: month
+          options: []
+          placeholder: ''
+          required: true
+          type: text-input
+          variable: month
+        - default: ''
+          hint: ''
+          label: average_grade
+          options: []
+          placeholder: ''
+          required: true
+          type: number
+          variable: average_grade
+        - default: ''
+          hint: ''
+          label: attendance_count
+          options: []
+          placeholder: ''
+          required: true
+          type: number
+          variable: attendance_count
+        - default: ''
+          hint: ''
+          label: absence_count
+          options: []
+          placeholder: ''
+          required: true
+          type: number
+          variable: absence_count
+        - default: ''
+          hint: ''
+          label: attendance_rate
+          options: []
+          placeholder: ''
+          required: true
+          type: number
+          variable: attendance_rate
+        - default: ''
+          hint: ''
+          label: total_five
+          options: []
+          placeholder: ''
+          required: true
+          type: number
+          variable: total_five
+        - default: ''
+          hint: ''
+          label: total_four
+          options: []
+          placeholder: ''
+          required: true
+          type: number
+          variable: total_four
+        - default: ''
+          hint: ''
+          label: total_three
+          options: []
+          placeholder: ''
+          required: true
+          type: number
+          variable: total_three
+        - default: ''
+          hint: ''
+          label: total_two
+          options: []
+          placeholder: ''
+          required: true
+          type: number
+          variable: total_two
+        - default: ''
+          hint: ''
+          label: report
+          options: []
+          placeholder: ''
+          required: true
+          type: json_object
+          variable: report
+      height: 471
+      id: '1782295814445'
+      position:
+        x: 0
+        y: 0
+      positionAbsolute:
+        x: 0
+        y: 0
+      selected: true
+      sourcePosition: right
+      targetPosition: left
+      type: custom
+      width: 242
+    - data:
+        code: "\"\"\"Academy formatter for monthly_send / student_weekly_reports_v4. No HTTP.\"\"\"\n\nimport json\nimport math\nimport re\n\n\nTEMPLATE_NAME = \"student_weekly_reports_v4\"\nMONTH_NAMES = {\n    \"01\": \"Январь\", \"02\": \"Февраль\", \"03\": \"Март\", \"04\": \"Апрель\",\n    \"05\": \"Май\", \"06\": \"Июнь\", \"07\": \"Июль\", \"08\": \"Август\",\n    \"09\": \"Сентябрь\", \"10\": \"Октябрь\", \"11\": \"Ноябрь\", \"12\": \"Декабрь\",\n}\n\n\ndef text(value, field, required=False):\n    if value is None:\n        value = \"\"\n    if not isinstance(value, str):\n        raise ValueError(f\"{field}: требуется строка.\")\n    result = \" \".join(value.split())\n    if required and not result:\n        raise ValueError(f\"{field}: обязательное поле не заполнено.\")\n    return result\n\n\ndef number(value, field, integer=False):\n    if isinstance(value, bool) or not isinstance(value, (int, float, str)):\n        raise ValueError(f\"{field}: требуется неотрицательное число.\")\n    try:\n        result = float(value)\n    except (ValueError, OverflowError):\n        raise ValueError(f\"{field}: требуется неотрицательное число.\")\n    if not math.isfinite(result) or result < 0:\n        raise ValueError(f\"{field}: требуется конечное неотрицательное число.\")\n    if integer and not result.is_integer():\n        raise ValueError(f\"{field}: требуется целое число.\")\n    return int(result) if result.is_integer() else result\n\n\ndef phone(value):\n    value = text(value, \"recipient_phone\", required=True)\n    if not re.fullmatch(r\"\\+?[0-9 ()-]+\", value):\n        raise ValueError(\"recipient_phone: некорректная запись номера.\")\n    result = re.sub(r\"[^0-9]\", \"\", value)\n    if not re.fullmatch(r\"[1-9][0-9]{7,14}\", result):\n        raise ValueError(\"recipient_phone: нужен код страны и от 8 до 15 цифр.\")\n    return result\n\n\ndef build_payload(**kwargs):\n    student_name = text(kwargs.get(\"student_name\"), \"student_name\", required=True)\n    group_name = text(kwargs.get(\"group_name\"), \"group_name\", required=True)\n    recipient_name = text(kwargs.get(\"recipient_name\"), \"recipient_name\")\n    mentor_name = text(kwargs.get(\"mentor_name\"), \"mentor_name\")\n    clean_phone = phone(kwargs.get(\"recipient_phone\"))\n    month = text(kwargs.get(\"month\"), \"month\", required=True)\n    if not re.fullmatch(r\"[0-9]{4}-(0[1-9]|1[0-2])\", month):\n        raise ValueError(\"month: требуется YYYY-MM, например 2026-09.\")\n    if month.startswith(\"0000-\"):\n        raise ValueError(\"month: некорректный год.\")\n    report = kwargs.get(\"report\")\n    if not isinstance(report, dict):\n        raise ValueError(\"report должен быть JSON-объектом.\")\n    if report.get(\"organization\") not in (None, \"academy\"):\n        raise ValueError(\"Workflow предназначен для академии.\")\n    if report.get(\"main_group\") or report.get(\"subjects\"):\n        raise ValueError(\"Колледжный формат не поддерживается workflow академии.\")\n    period = report.get(\"period\") or {}\n    if not isinstance(period, dict):\n        raise ValueError(\"report.period должен быть объектом.\")\n    for nested_month in (report.get(\"month\"), period.get(\"month\")):\n        if nested_month is not None and nested_month != month:\n            raise ValueError(\"month не совпадает с месяцем в report.\")\n    student = report.get(\"student\") or {}\n    if not isinstance(student, dict):\n        raise ValueError(\"report.student должен быть объектом.\")\n    if student.get(\"full_name\") and text(student[\"full_name\"], \"report.student.full_name\") != student_name:\n        raise ValueError(\"student_name не совпадает с именем в report.student.\")\n    if student.get(\"parent_phone\") and phone(student[\"parent_phone\"]) != clean_phone:\n        raise ValueError(\"recipient_phone не совпадает с номером в report.student.\")\n\n    counts = {\n        key: number(kwargs.get(key), key, integer=True)\n        for key in (\"total_five\", \"total_four\", \"total_three\", \"total_two\", \"attendance_count\", \"absence_count\")\n    }\n    average_grade = number(kwargs.get(\"average_grade\"), \"average_grade\")\n    attendance_rate = number(kwargs.get(\"attendance_rate\"), \"attendance_rate\")\n    if attendance_rate > 100:\n        raise ValueError(\"attendance_rate должен быть от 0 до 100.\")\n\n    grade_lines = [\n        f\"“{score}” – {counts[key]} даана\"\n        for score, key in ((5, \"total_five\"), (4, \"total_four\"), (3, \"total_three\"), (2, \"total_two\"))\n    ]\n    absence_count = counts[\"absence_count\"]\n    summary = report.get(\"summary\")\n    if not isinstance(summary, dict):\n        raise ValueError(\"report.summary должен быть объектом.\")\n    if number(summary.get(\"absence_count\"), \"report.summary.absence_count\", integer=True) != absence_count:\n        raise ValueError(\"absence_count не совпадает с report.summary.\")\n    unmarked_count = number(summary.get(\"unmarked_count\"), \"report.summary.unmarked_count\", integer=True)\n    total_lessons = number(summary.get(\"total_lessons\"), \"report.summary.total_lessons\", integer=True)\n    marked_lessons = number(summary.get(\"marked_lessons_count\"), \"report.summary.marked_lessons_count\", integer=True)\n    if marked_lessons + unmarked_count != total_lessons:\n        raise ValueError(\"Количество отмеченных и неотмеченных занятий не совпадает с итогом.\")\n    absence_text = (\n        f\"Белгиленген калуулар (Н): {absence_count}; \"\n        f\"белги коюлбаган сабактар: {unmarked_count}.\"\n    )\n    if summary.get(\"attendance_status_text\") != absence_text:\n        raise ValueError(\"Текст посещаемости не совпадает с report.summary.\")\n    values = [group_name, student_name, MONTH_NAMES[month[-2:]], *grade_lines, absence_text]\n    whatsapp = {\n        \"messaging_product\": \"whatsapp\",\n        \"to\": clean_phone,\n        \"type\": \"template\",\n        \"template\": {\n            \"name\": TEMPLATE_NAME,\n            \"language\": {\"code\": \"ky_KG\"},\n            \"components\": [{\"type\": \"body\", \"parameters\": [{\"type\": \"text\", \"text\": value} for value in values]}],\n        },\n    }\n    backend = {\n        \"event\": \"student_monthly_report_result\",\n        \"channel\": \"meta_whatsapp\",\n        \"student_name\": student_name,\n        \"recipient_name\": recipient_name,\n        \"recipient_phone\": clean_phone,\n        \"group_name\": group_name,\n        \"mentor_name\": mentor_name,\n        \"month\": month,\n        \"average_grade\": average_grade,\n        \"attendance_rate\": attendance_rate,\n        **counts,\n        \"report\": report,\n        \"meta_request\": whatsapp,\n    }\n    return {\n        \"clean_phone\": clean_phone,\n        \"grade_line_1\": grade_lines[0],\n        \"grade_line_2\": grade_lines[1],\n        \"grade_line_3\": grade_lines[2],\n        \"grade_line_4\": grade_lines[3],\n        \"absence_text\": absence_text,\n        \"backend_payload\": json.dumps(backend, ensure_ascii=False, allow_nan=False),\n        \"whatsapp_payload\": json.dumps(whatsapp, ensure_ascii=False, allow_nan=False),\n    }\n\n\ndef main(send_enabled=\"false\", **kwargs):\n    if str(send_enabled).strip().lower() != \"true\":\n        raise ValueError(\"Отправка академии выключена: ACADEMY_SEND_ENABLED=false.\")\n    return build_payload(**kwargs)\n"
+        code_language: python3
+        outputs:
+          clean_phone:
+            children: null
+            type: string
+          grade_line_1:
+            children: null
+            type: string
+          grade_line_2:
+            children: null
+            type: string
+          grade_line_3:
+            children: null
+            type: string
+          grade_line_4:
+            children: null
+            type: string
+          absence_text:
+            children: null
+            type: string
+          backend_payload:
+            children: null
+            type: string
+          whatsapp_payload:
+            children: null
+            type: string
+        selected: false
+        title: Академия · проверить и собрать JSON
+        type: code
+        variables:
+        - value_selector:
+          - '1782295814445'
+          - recipient_phone
+          value_type: string
+          variable: recipient_phone
+        - value_selector:
+          - '1782295814445'
+          - student_name
+          value_type: string
+          variable: student_name
+        - value_selector:
+          - '1782295814445'
+          - recipient_name
+          value_type: string
+          variable: recipient_name
+        - value_selector:
+          - '1782295814445'
+          - group_name
+          value_type: string
+          variable: group_name
+        - value_selector:
+          - '1782295814445'
+          - mentor_name
+          value_type: string
+          variable: mentor_name
+        - value_selector:
+          - '1782295814445'
+          - month
+          value_type: string
+          variable: month
+        - value_selector:
+          - '1782295814445'
+          - average_grade
+          value_type: number
+          variable: average_grade
+        - value_selector:
+          - '1782295814445'
+          - attendance_count
+          value_type: number
+          variable: attendance_count
+        - value_selector:
+          - '1782295814445'
+          - absence_count
+          value_type: number
+          variable: absence_count
+        - value_selector:
+          - '1782295814445'
+          - attendance_rate
+          value_type: number
+          variable: attendance_rate
+        - value_selector:
+          - '1782295814445'
+          - total_five
+          value_type: number
+          variable: total_five
+        - value_selector:
+          - '1782295814445'
+          - total_four
+          value_type: number
+          variable: total_four
+        - value_selector:
+          - '1782295814445'
+          - total_three
+          value_type: number
+          variable: total_three
+        - value_selector:
+          - '1782295814445'
+          - total_two
+          value_type: number
+          variable: total_two
+        - value_selector:
+          - '1782295814445'
+          - report
+          value_type: object
+          variable: report
+        - variable: send_enabled
+          value_selector:
+          - env
+          - ACADEMY_SEND_ENABLED
+          value_type: string
+      height: 50
+      id: '1782296762177'
+      position:
+        x: 300
+        y: 0
+      positionAbsolute:
+        x: 300
+        y: 0
+      selected: true
+      sourcePosition: right
+      targetPosition: left
+      type: custom
+      width: 241
+    - data:
+        code: "def main():\n    return {'once': [1]}\n"
+        code_language: python3
+        outputs:
+          once:
+            children: null
+            type: array[number]
+        selected: false
+        title: Один запрос · итератор
+        type: code
+        variables: []
+      height: 50
+      id: '1791954000004'
+      position:
+        x: 600
+        y: 0
+      positionAbsolute:
+        x: 600
+        y: 0
+      selected: false
+      sourcePosition: right
+      targetPosition: left
+      type: custom
+      width: 241
+    - data:
+        error_handle_mode: continue-on-error
+        is_parallel: false
+        iterator_input_type: array[number]
+        iterator_selector:
+        - '1791954000004'
+        - once
+        output_selector:
+        - '1791954000003'
+        - response
+        output_type: array[string]
+        selected: false
+        start_node_id: 1791954000002start
+        title: Один запрос · без повтора
+        type: iteration
+      height: 220
+      id: '1791954000002'
+      position:
+        x: 900
+        y: 0
+      positionAbsolute:
+        x: 900
+        y: 0
+      selected: false
+      sourcePosition: right
+      targetPosition: left
+      type: custom
+      width: 540
+    - data:
+        isInIteration: true
+        selected: false
+        title: Старт одного запроса
+        type: iteration-start
+      draggable: false
+      height: 48
+      id: 1791954000002start
+      parentId: '1791954000002'
+      position:
+        x: 24
+        y: 68
+      positionAbsolute:
+        x: 924
+        y: 68
+      selectable: false
+      sourcePosition: right
+      targetPosition: left
+      type: custom-iteration-start
+      width: 44
+    - data:
+        authorization:
+          type: api-key
+          config:
+            type: bearer
+            api_key: '{{#env.META_WHATSAPP_ACCESS_TOKEN#}}'
+        body:
+          data:
+          - id: key-value-483
+            key: ''
+            type: text
+            value: '{{#1782296762177.whatsapp_payload#}}'
+          type: raw-text
+        headers: Content-Type:application/json
+        method: post
+        params: ''
+        retry_config:
+          max_retries: 3
+          retry_enabled: false
+          retry_interval: 100
+        selected: true
+        ssl_verify: true
+        timeout:
+          max_connect_timeout: 10
+          max_read_timeout: 30
+          max_write_timeout: 30
+        title: WhatsApp · один запрос
+        type: http-request
+        url: '{{#env.META_MESSAGES_URL#}}'
+        variables: []
+      height: 151
+      id: '1782296965320'
+      parentId: '1791954000002'
+      position:
+        x: 600
+        y: 0
+      positionAbsolute:
+        x: 600
+        y: 0
+      selected: true
+      sourcePosition: right
+      targetPosition: left
+      type: custom
+      width: 241
+    - data:
+        code: "import json\n\ndef main(status_code=0, body=''):\n    return {'response': json.dumps({'status_code': status_code, 'body': body})}\n"
+        code_language: python3
+        outputs:
+          response:
+            children: null
+            type: string
+        selected: false
+        title: Сохранить ответ Meta
+        type: code
+        variables:
+        - variable: status_code
+          value_selector:
+          - '1782296965320'
+          - status_code
+          value_type: number
+        - variable: body
+          value_selector:
+          - '1782296965320'
+          - body
+          value_type: string
+      height: 50
+      id: '1791954000003'
+      parentId: '1791954000002'
+      position:
+        x: 310
+        y: 68
+      positionAbsolute:
+        x: 1210
+        y: 68
+      selected: false
+      sourcePosition: right
+      targetPosition: left
+      type: custom
+      width: 220
+    - data:
+        code: "import json\n\ndef main(responses=None):\n    if isinstance(responses, list) and len(responses) == 1 and isinstance(responses[0], str):\n        try:\n            response = json.loads(responses[0])\n            return {'status_code': response['status_code'], 'body': response['body']}\n        except (ValueError, TypeError, KeyError):\n            pass\n    return {'status_code': 0, 'body': ''}\n"
+        code_language: python3
+        outputs:
+          status_code:
+            children: null
+            type: number
+          body:
+            children: null
+            type: string
+        selected: false
+        title: Ответ или неизвестный результат
+        type: code
+        variables:
+        - variable: responses
+          value_selector:
+          - '1791954000002'
+          - output
+          value_type: array[string]
+      height: 50
+      id: '1791954000005'
+      position:
+        x: 1480
+        y: 0
+      positionAbsolute:
+        x: 1480
+        y: 0
+      selected: false
+      sourcePosition: right
+      targetPosition: left
+      type: custom
+      width: 241
+    - data:
+        type: code
+        title: WhatsApp · результат запроса
+        selected: false
+        code_language: python3
+        code: "\"\"\"Classify one existing HTTP response. Never send or retry a message.\"\"\"\n\nimport json\n\n\ndef main(status_code=0,\
+          \ body=\"\", backend_payload=\"{}\"):\n    try:\n        status = int(status_code)\n    except (TypeError, ValueError,\
+          \ OverflowError):\n        status = 0\n    result = json.loads(backend_payload)\n    response = None\n    try:\n\
+          \        parsed = json.loads(body) if isinstance(body, str) else body\n        if isinstance(parsed, dict):\n  \
+          \          response = parsed\n    except (TypeError, ValueError):\n        pass\n    message_id = \"\"\n    error_code\
+          \ = \"\"\n    outcome = \"unknown\"\n    reason = \"Результат запроса не определён; автоматический повтор запрещён.\"\
+          \n    if response:\n        messages = response.get(\"messages\")\n        error = response.get(\"error\")\n   \
+          \     if isinstance(error, dict):\n            error_code = str(error.get(\"code\", \"\"))\n        if (\n     \
+          \       200 <= status < 300\n            and \"error\" not in response\n            and isinstance(messages, list)\n\
+          \            and len(messages) == 1\n            and isinstance(messages[0], dict)\n            and isinstance(messages[0].get(\"\
+          id\"), str)\n            and messages[0][\"id\"].strip()\n        ):\n            message_id = messages[0][\"id\"\
+          ].strip()\n            outcome = \"accepted\"\n            reason = \"Сообщение принято провайдером; доставка не\
+          \ подтверждена.\"\n        elif 400 <= status < 500 and isinstance(error, dict):\n            outcome = \"failed\"\
+          \n            reason = \"Провайдер отклонил запрос; автоматический повтор выключен.\"\n    result.update({\n   \
+          \     \"provider_status\": outcome,\n        \"provider_message_id\": message_id,\n        \"provider_http_status\"\
+          : status,\n        \"provider_error_code\": error_code,\n        \"delivery_confirmed\": False,\n        \"outcome_reason\"\
+          : reason,\n    })\n    return {\n        \"provider_status\": outcome,\n        \"provider_message_id\": message_id,\n\
+          \        \"provider_http_status\": status,\n        \"provider_error_code\": error_code,\n        \"outcome_reason\"\
+          : reason,\n        \"backend_payload\": json.dumps(result, ensure_ascii=False),\n        \"callback_payload\": json.dumps({\n\
+          \            \"delivery\": result,\n            \"meta_status_code\": status,\n            \"meta_response\": response\
+          \ or {},\n        }, ensure_ascii=False),\n    }\n"
+        variables:
+        - variable: status_code
+          value_selector:
+          - '1791954000005'
+          - status_code
+          value_type: number
+        - variable: body
+          value_selector:
+          - '1791954000005'
+          - body
+          value_type: string
+        - variable: backend_payload
+          value_selector:
+          - '1782296762177'
+          - backend_payload
+          value_type: string
+        outputs:
+          provider_status:
+            children: null
+            type: string
+          provider_message_id:
+            children: null
+            type: string
+          provider_http_status:
+            children: null
+            type: number
+          provider_error_code:
+            children: null
+            type: string
+          outcome_reason:
+            children: null
+            type: string
+          backend_payload:
+            children: null
+            type: string
+          callback_payload:
+            children: null
+            type: string
+      height: 50
+      id: '1791954000001'
+      position:
+        x: 900
+        y: 0
+      positionAbsolute:
+        x: 900
+        y: 0
+      selected: true
+      sourcePosition: right
+      targetPosition: left
+      type: custom
+      width: 241
+    - data:
+        authorization:
+          type: api-key
+          config:
+            type: bearer
+            api_key: '{{#env.BACKEND_REPORT_CALLBACK_TOKEN#}}'
+        body:
+          data:
+          - id: key-value-backend-001
+            key: ''
+            type: text
+            value: '{{#1791954000001.callback_payload#}}'
+          type: raw-text
+        default_value:
+        - key: body
+          type: string
+          value: ''
+        - key: status_code
+          type: number
+          value: '0'
+        - key: headers
+          type: object
+          value: '{}'
+        - key: files
+          type: array[file]
+          value: '[]'
+        error_strategy: default-value
+        headers: Content-Type:application/json
+        method: post
+        params: ''
+        retry_config:
+          max_retries: 3
+          retry_enabled: false
+          retry_interval: 1000
+        selected: false
+        ssl_verify: true
+        timeout:
+          max_connect_timeout: 10
+          max_read_timeout: 30
+          max_write_timeout: 30
+        title: Backend · сохранить отчёт
+        type: http-request
+        url: '{{#env.BACKEND_REPORT_URL#}}'
+        variables: []
+      height: 171
+      id: '1784567000001'
+      position:
+        x: 1200
+        y: 0
+      positionAbsolute:
+        x: 1200
+        y: 0
+      selected: true
+      sourcePosition: right
+      targetPosition: left
+      type: custom
+      width: 241
+    - data:
+        outputs:
+        - variable: absence_text
+          value_selector:
+          - '1782296762177'
+          - absence_text
+          value_type: string
+        - variable: clean_phone
+          value_selector:
+          - '1782296762177'
+          - clean_phone
+          value_type: string
+        - variable: provider_status
+          value_selector:
+          - '1791954000001'
+          - provider_status
+          value_type: string
+        - variable: provider_message_id
+          value_selector:
+          - '1791954000001'
+          - provider_message_id
+          value_type: string
+        - variable: provider_http_status
+          value_selector:
+          - '1791954000001'
+          - provider_http_status
+          value_type: number
+        - variable: outcome_reason
+          value_selector:
+          - '1791954000001'
+          - outcome_reason
+          value_type: string
+        - variable: backend_payload
+          value_selector:
+          - '1791954000001'
+          - backend_payload
+          value_type: string
+        - variable: callback_status_code
+          value_selector:
+          - '1784567000001'
+          - status_code
+          value_type: number
+        selected: false
+        title: Вывод
+        type: end
+      height: 113
+      id: '1784202796519'
+      position:
+        x: 1500
+        y: 0
+      positionAbsolute:
+        x: 1500
+        y: 0
+      selected: true
+      sourcePosition: right
+      targetPosition: left
+      type: custom
+      width: 241
+    viewport:
+      x: 92.00581877162352
+      y: 209.4002097046065
+      zoom: 0.44751253546398584
+  rag_pipeline_variables: []

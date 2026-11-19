@@ -14,12 +14,15 @@ from django.utils import timezone
 from .models import (
     MonthlyStudentReportBatch,
     MonthlyStudentReportBatchItem,
+    MonthlyStudentReportAttempt,
     MonthlyStudentReportDispatch,
     StudentProfile,
     User,
     WahaParentReportBatchItem,
     WahaTestReportBatchItem,
 )
+from .report import get_student_report_groups, student_has_month_report_activity
+from .report_routing import workflow_route_for_context, workflow_route_for_student
 
 
 def report_dedupe_key(*, student: StudentProfile, month: date, organization_type: str) -> str:
@@ -48,10 +51,9 @@ def enqueue_monthly_report_batch(
     student_ids: list[int] | None = None,
     confirm_retry_failed: bool = False,
 ) -> MonthlyStudentReportBatch:
+    workflow_route = workflow_route_for_context(organization_type, college_branch)
     with transaction.atomic():
         students = StudentProfile.objects.select_for_update().filter(
-            archived_at__isnull=True,
-            group__archived_at__isnull=True,
             organization_type=organization_type,
         ).select_related("group")
         if college_branch is not None:
@@ -60,7 +62,21 @@ def enqueue_monthly_report_batch(
             students = students.filter(group_id__in=group_ids)
         if student_ids:
             students = students.filter(pk__in=student_ids)
-        students_to_queue = list(students.order_by("group__course_name", "user__full_name", "pk"))
+        students_to_queue = [
+            student for student in students.order_by("group__course_name", "user__full_name", "pk")
+            if student_has_month_report_activity(student, month)
+        ]
+        requested_student_ids = set(student_ids or [])
+        requested_group_ids = set(group_ids or [])
+        selected_student_ids = {student.pk for student in students_to_queue}
+        selected_group_ids = {student.group_id for student in students_to_queue}
+        if requested_student_ids and selected_student_ids != requested_student_ids:
+            raise ValueError("Выбранные студенты не принадлежат выбранной организации и группе.")
+        if requested_group_ids:
+            if selected_group_ids != requested_group_ids:
+                raise ValueError("Выбранные группы не принадлежат выбранной организации.")
+        if any(workflow_route_for_student(student) != workflow_route for student in students_to_queue):
+            raise ValueError("Выбранные студенты относятся к другому маршруту отчётов.")
         student_ids_to_queue = [student.pk for student in students_to_queue]
         existing_dispatches = {
             dispatch.student_id: dispatch
@@ -109,6 +125,7 @@ def enqueue_monthly_report_batch(
             created_by=created_by,
             confirm_retry_failed=confirm_retry_failed,
             requested_filters={
+                "workflow_route": workflow_route,
                 "college_branch": college_branch,
                 "group_ids": group_ids or [],
                 "student_ids": student_ids or [],
@@ -123,6 +140,15 @@ def enqueue_monthly_report_batch(
             if dispatch and dispatch.status in MonthlyStudentReportDispatch.SUCCESSFUL_STATUSES:
                 item_status = MonthlyStudentReportBatchItem.STATUS_SKIPPED
                 error_message = "Already accepted or delivered."
+            elif dispatch and MonthlyStudentReportAttempt.objects.filter(dispatch=dispatch).filter(
+                Q(status__in=("pending", "accepted", "delivered", "succeeded"))
+                | Q(message_status="unknown")
+            ).exists():
+                item_status = MonthlyStudentReportBatchItem.STATUS_SKIPPED
+                error_message = "A delivery attempt is active, accepted, delivered, or unknown; review before retry."
+            elif workflow_route == "kuwait" and len(get_student_report_groups(student, month)) > 4:
+                item_status = MonthlyStudentReportBatchItem.STATUS_SKIPPED
+                error_message = "More than four subjects in the reporting month; review before Kuwait Meta send."
             elif dispatch and dispatch.status == MonthlyStudentReportDispatch.STATUS_FAILED and not confirm_retry_failed:
                 item_status = MonthlyStudentReportBatchItem.STATUS_SKIPPED
                 error_message = "Retrying a failed attempt requires explicit confirmation."
@@ -278,6 +304,18 @@ def process_claimed_report_item(item_id: int, worker_token: uuid.UUID) -> dict[s
     if item.status != MonthlyStudentReportBatchItem.STATUS_PROCESSING or item.worker_token != worker_token:
         return {"status": "skipped", "reason": "claim_lost", "item_id": item.pk}
 
+    requested_filters = item.batch.requested_filters if isinstance(item.batch.requested_filters, dict) else {}
+    workflow_route = requested_filters.get("workflow_route")
+    if not workflow_route:
+        item.requires_operator_review = True
+        item.save(update_fields=["requires_operator_review", "updated_at"])
+        _finish_item(
+            item,
+            MonthlyStudentReportBatchItem.STATUS_FAILED,
+            "Маршрут старого задания не определён; требуется ручная проверка без автоматического повтора.",
+        )
+        return {"status": "failed", "reason": "missing_workflow_route", "item_id": item.pk}
+
     if item.attempt_id:
         if item.attempt.status in MonthlyStudentReportDispatch.SUCCESSFUL_STATUSES:
             mapped = (
@@ -311,16 +349,23 @@ def process_claimed_report_item(item_id: int, worker_token: uuid.UUID) -> dict[s
         _finish_item(item, MonthlyStudentReportBatchItem.STATUS_SKIPPED, "Another delivery attempt is pending review.")
         return {"status": "skipped", "reason": "send_already_in_progress", "item_id": item.pk}
 
-    result = send_student_month_report(
-        item.student,
-        run_date=timezone.localdate(),
-        month_start=item.month,
-        force=item.batch.confirm_retry_failed,
-        bypass_schedule=True,
-        resend_succeeded=False,
-        batch_item=item,
-        retry_failed_confirmed=item.batch.confirm_retry_failed,
-    )
+    try:
+        result = send_student_month_report(
+            item.student,
+            run_date=timezone.localdate(),
+            month_start=item.month,
+            force=item.batch.confirm_retry_failed,
+            bypass_schedule=True,
+            resend_succeeded=False,
+            batch_item=item,
+            retry_failed_confirmed=item.batch.confirm_retry_failed,
+            expected_workflow_route=workflow_route,
+        )
+    except Exception as exc:
+        item.requires_operator_review = True
+        item.save(update_fields=["requires_operator_review", "updated_at"])
+        _finish_item(item, MonthlyStudentReportBatchItem.STATUS_FAILED, str(exc))
+        return {"status": "failed", "reason": str(exc), "item_id": item.pk}
     item.refresh_from_db()
     if item.status in (MonthlyStudentReportBatchItem.STATUS_ACCEPTED, MonthlyStudentReportBatchItem.STATUS_DELIVERED):
         _finish_item(item, item.status)
