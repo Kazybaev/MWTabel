@@ -102,20 +102,21 @@ def build_student_rating(
     participants_queryset = StudentProfile.objects.filter(
         organization_type=organization_type,
         archived_at__isnull=True,
-        group__archived_at__isnull=True,
         user__is_active=True,
     ).select_related("user", "group", "group__main_group")
-    records_queryset = LessonRecord.objects.filter(
-        student__organization_type=organization_type,
-        student__archived_at__isnull=True,
-        lesson__group__organization_type=organization_type,
-    )
+
+    lesson_scope = {"lesson__group__organization_type": organization_type}
     if organization_type == ORGANIZATION_COLLEGE:
+        # The primary subject can be archived while a student continues in other subjects.
         participants_queryset = participants_queryset.filter(college_branch=college_branch)
-        records_queryset = records_queryset.filter(
-            student__college_branch=college_branch,
-            lesson__group__college_branch=college_branch,
-        )
+        lesson_scope["lesson__group__college_branch"] = college_branch
+    else:
+        participants_queryset = participants_queryset.filter(group__archived_at__isnull=True)
+
+    records_queryset = LessonRecord.objects.filter(
+        student_id__in=participants_queryset.order_by().values("pk"),
+        **lesson_scope,
+    ).order_by()
 
     if period == PERIOD_MONTH:
         month_start, month_end = month_bounds(today.replace(day=1))

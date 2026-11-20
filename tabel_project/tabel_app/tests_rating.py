@@ -59,8 +59,8 @@ class StudentRatingTests(APITestCase):
             college_branch=group.college_branch,
         )
 
-    def grade(self, student, grade, lesson_date=None, sequence=1):
-        lesson, _ = Lesson.objects.get_or_create(group=student.group, lesson_date=lesson_date or self.today)
+    def grade(self, student, grade, lesson_date=None, sequence=1, group=None):
+        lesson, _ = Lesson.objects.get_or_create(group=group or student.group, lesson_date=lesson_date or self.today)
         return LessonRecord.objects.create(student=student, lesson=lesson, grade=grade, sequence=sequence)
 
     def headers(self, organization=ORGANIZATION_ACADEMY, branch=COLLEGE_BRANCH_KUWAIT):
@@ -104,6 +104,60 @@ class StudentRatingTests(APITestCase):
         self.assertEqual([entry["full_name"] for entry in agrarian["top"]], ["Aziz"])
         self.assertEqual(kuwait["scope_label"], "Кувейтский колледж")
         self.assertEqual(agrarian["scope_label"], "Аграрный колледж")
+
+    def test_college_top_includes_active_students_with_archived_primary_subjects(self):
+        branch = COLLEGE_BRANCH_KUWAIT
+        english = self.make_group("English", ORGANIZATION_COLLEGE, branch)
+        german = self.make_group("German", ORGANIZATION_COLLEGE, branch)
+        cyber = self.make_group("Cybersecurity", ORGANIZATION_COLLEGE, branch)
+        it = self.make_group("IT", ORGANIZATION_COLLEGE, branch)
+        second_cohort = self.make_group("Second cohort", ORGANIZATION_COLLEGE, branch)
+        current_students = [self.kuwait_student] + [
+            self.make_student(f"current-{i}", f"Current {i}", second_cohort) for i in range(2)
+        ]
+        continuing_students = [
+            self.make_student(f"continuing-{i}", f"Continuing {i}", cyber) for i in range(10)
+        ]
+        for student in continuing_students:
+            student.college_groups.add(cyber, english, german, it)
+
+        archived = self.make_student("archived-college", "Archived", cyber)
+        archived.college_groups.add(cyber)
+        self.client.force_authenticate(self.admin)
+        headers = self.headers(ORGANIZATION_COLLEGE, branch)
+        response = self.client.post(f"/api/groups/{cyber.pk}/archive/", {}, format="json", **headers)
+        self.assertEqual(response.status_code, 200)
+        archived.refresh_from_db()
+        self.assertIsNotNone(archived.archived_at)
+
+        student = continuing_students[0]
+        previous_month = self.today.replace(day=1) - timedelta(days=1)
+        self.grade(student, "5", group=english)
+        self.grade(student, "4", group=german)
+        self.grade(student, "Н", group=it)
+        self.grade(student, "5", lesson_date=previous_month, group=cyber)
+        self.grade(student, "5", group=self.agrarian_group)
+        self.grade(student, "5", group=self.academy_group)
+        for subject in (cyber, english, it):
+            self.grade(continuing_students[1], "5", lesson_date=previous_month, group=subject)
+
+        self.client.force_authenticate(student.user)
+        month = self.client.get("/api/rating/?period=month", **headers)
+        all_time = self.client.get("/api/rating/?period=all", **headers)
+        expected_names = {person.user.full_name for person in current_students + continuing_students}
+        for response in (month, all_time):
+            self.assertEqual(response.status_code, 200)
+            self.assertEqual(response.data["participants_count"], 13)
+            self.assertEqual(len(response.data["top"]), 13)
+            self.assertEqual({entry["full_name"] for entry in response.data["top"]}, expected_names)
+
+        self.assertEqual(month.data["me"]["points"], 6)
+        self.assertEqual(month.data["me"]["grades_count"], 2)
+        self.assertEqual(month.data["me"]["absences_count"], 1)
+        self.assertEqual(all_time.data["me"]["points"], 11)
+        self.assertEqual(all_time.data["me"]["grades_count"], 3)
+        self.assertEqual(month.data["top"][0]["full_name"], student.user.full_name)
+        self.assertEqual(all_time.data["top"][0]["full_name"], continuing_students[1].user.full_name)
 
     def test_new_grade_today_shows_upward_movement(self):
         earlier = timezone.now() - timedelta(days=2)
